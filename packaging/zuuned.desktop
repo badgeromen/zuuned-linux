@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Zuuned
+GenericName=Zune Manager
+Comment=The full-stack Zune manager — music, video, photos, and mixtapes over a native MTPZ stack
+Exec=zuuned
+Icon=zuuned
+Terminal=false
+Categories=AudioVideo;Audio;Player;Music;
+Keywords=zune;mtp;music;sync;mixtape;
+StartupWMClass=Zuuned

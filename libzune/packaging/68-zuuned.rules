@@ -1,0 +1,14 @@
+# Zuuned: exclusive media-manager access for the active desktop user.
+# Install these same bytes as BOTH 68-zuuned.rules and 72-zuuned.rules.
+# 68 suppresses libmtp's 69 probe; 72 reapplies exclusions after generic rules.
+# Both run before systemd's 73-seat-late ACL setup. ENV does not support :=.
+# Install into /etc/udev/rules.d or /usr/lib/udev/rules.d, reload, then replug.
+
+ACTION=="remove", GOTO="zuuned_end"
+SUBSYSTEM!="usb", GOTO="zuuned_end"
+ENV{DEVTYPE}!="usb_device", GOTO="zuuned_end"
+
+# Zune 4/8/16/30/80/120 and Zune HD; never change unrelated USB devices.
+ATTR{idVendor}=="045e", ATTR{idProduct}=="0710|063e", TAG+="uaccess", ENV{MTP_NO_PROBE}="1", ENV{ID_MTP_DEVICE}="", ENV{ID_GPHOTO2}="", ENV{ID_GPHOTO}=""
+
+LABEL="zuuned_end"

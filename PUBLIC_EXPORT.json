@@ -1,0 +1,17 @@
+{
+  "format": 1,
+  "historyIncluded": false,
+  "privateCredentialsIncluded": false,
+  "bundledApiDefaultsIncluded": true,
+  "files": 553,
+  "excluded": [
+    ".gitmodules",
+    "libzune",
+    "libzune/src/mtpz_keys.h",
+    "libzune/vendor/ffmpeg-include/libavcodec",
+    "libzune/vendor/ffmpeg-include/libavformat",
+    "libzune/vendor/ffmpeg-include/libavutil",
+    "libzune/vendor/ffmpeg-include/libswresample",
+    "libzune/vendor/ffmpeg-include/libswscale"
+  ]
+}

@@ -1,0 +1,10 @@
+
+# CLI test harness binary
+zunetool
+
+# Build artifacts — per-platform, never committed (macOS .o files in a
+# Linux checkout break ar and block branch switches)
+obj/
+*.a
+*.so
+*.dylib

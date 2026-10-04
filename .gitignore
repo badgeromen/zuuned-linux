@@ -1,0 +1,13 @@
+build/
+.cache/
+compile_commands.json
+
+Zuuned-x86_64.AppImage
+build-appimage/
+packaging/appimage-tools/
+
+# Private authentication material must never enter the public repository.
+/libzune/src/mtpz_keys.h
+.mtpz-data
+*.pem
+*.key

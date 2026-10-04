@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ZUUNED · customize studies</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body data-direction="sleeve" data-kind="album">
+  <svg class="svg-defs" aria-hidden="true"><defs>
+    <filter id="paper-noise"><feTurbulence type="fractalNoise" baseFrequency=".79" numOctaves="3" stitchTiles="stitch"/><feColorMatrix type="saturate" values="0"/></filter>
+  </defs></svg>
+  <header class="board-header">
+    <div class="board-brand"><span class="wordmark">zuuned</span><span class="board-label">CUSTOMIZE / DESIGN STUDIES</span></div>
+    <nav class="directions" aria-label="Visual direction">
+      <button data-direction="sleeve" aria-pressed="true"><span>01</span> sleeve</button>
+      <button data-direction="afterhours" aria-pressed="false"><span>02</span> after hours</button>
+      <button data-direction="bootleg" aria-pressed="false"><span>03</span> bootleg</button>
+    </nav>
+  </header>
+
+  <main>
+    <section class="study-intro">
+      <div><p class="eyebrow" id="direction-label">01 / SLEEVE</p><h1 id="direction-title">Open the sleeve. Make it yours.</h1><p id="direction-description">Big artwork. Quiet liner notes. A little ink on the edges.</p></div>
+      <div class="specimen-control"><span class="eyebrow">TRY IT WITH</span><nav class="specimens" aria-label="Sample item"><button data-kind="album" aria-pressed="true">album</button><button data-kind="artist" aria-pressed="false">artist</button><button data-kind="movie" aria-pressed="false">movie</button><button data-kind="series" aria-pressed="false">series</button></nav></div>
+    </section>
+
+    <section class="app-stage" aria-label="Interactive ZUUNED preview">
+      <div class="ambient-app" aria-hidden="true"><div class="ambient-title">music</div><div class="ambient-nav">LIBRARY<span>music</span><span>videos</span><span>photos</span><span>playlists</span></div><div class="ambient-gallery"></div><div class="ambient-device">ZUNE<span>● connected</span></div></div>
+      <div class="stage-shade"></div>
+      <button class="reopen" id="reopen" hidden><span class="marker">make it yours</span><span>open customize ↗</span></button>
+
+      <section class="editor" id="editor" aria-labelledby="editor-title">
+        <div class="editor-wall" aria-hidden="true"></div>
+        <header class="editor-header"><div><span class="eyebrow">YOUR COLLECTION / YOUR CALL</span><h2 id="editor-title">make it yours<span class="heading-dot">.</span></h2></div><button class="icon-button" id="close" aria-label="Close customization">×</button></header>
+        <div class="editor-body">
+          <aside class="sleeve">
+            <div class="sleeve-top"><span id="item-kind" class="eyebrow">ALBUM / 001</span><span class="status-badge" id="status-badge">original</span></div>
+            <div class="art-assembly">
+              <div class="vinyl" aria-hidden="true"><span></span></div>
+              <div class="paper-slip" aria-hidden="true">from your collection</div>
+              <button class="hero-art" id="hero-art" aria-label="Choose artwork"><span class="hero-image art-image"></span><span class="cover-type"><span class="cover-name">AFTER THE<br>LAST TRAIN</span><span class="cover-artist">SOFT STATIC</span></span><span class="hero-action">change the artwork <b>↗</b></span></button>
+              <span class="hand-note" aria-hidden="true">your version ↗</span>
+            </div>
+            <div class="sleeve-caption"><h3 id="preview-title">After the Last Train</h3><p id="preview-subtitle">Soft Static · 2008 · 11 tracks</p></div>
+          </aside>
+
+          <div class="workspace">
+            <nav class="pivots" aria-label="Customize tabs" role="tablist"><button id="identity-tab" data-tab="identity" role="tab" aria-selected="false" aria-controls="identity-pane" tabindex="-1">identity</button><button id="artwork-tab" data-tab="artwork" role="tab" aria-selected="true" aria-controls="artwork-pane">artwork</button></nav>
+            <section class="pane" id="artwork-pane" role="tabpanel" aria-labelledby="artwork-tab">
+              <div class="pane-heading"><h3>Find its face.</h3><p>Something that feels like <em>this</em> record.</p></div>
+              <nav class="source-tabs" id="art-sources" aria-label="Artwork source"></nav>
+              <div class="online-art" id="online-art"><div class="search-line"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg><input id="art-query" aria-label="Search artwork" value="Soft Static — After the Last Train"><button id="art-search" aria-label="Search artwork">search ↗</button></div><div class="gallery-meta"><span id="gallery-label">alternate covers</span><span id="gallery-count">04 found</span></div><div class="art-gallery" id="art-gallery"></div><p class="selection-note" id="selection-note">Pick a cover. See it on the sleeve.</p></div>
+              <div class="upload-area" id="upload-area" hidden><span class="upload-marker">bring your own.</span><p>A cover you made. A photo you love.<br>Drop an image here, or choose one.</p><button class="secondary-button" id="choose-file">choose an image ↗</button><span>JPEG, PNG, WebP · up to 20 MB</span></div>
+              <input type="file" id="file-input" accept="image/jpeg,image/png,image/webp" hidden>
+            </section>
+            <section class="pane" id="identity-pane" role="tabpanel" aria-labelledby="identity-tab" hidden>
+              <div class="pane-heading"><h3>Tell its story.</h3><p id="identity-description">The right name. The right artist. Your liner notes.</p></div>
+              <nav class="source-tabs" aria-label="Identity mode"><button data-mode="manual" aria-pressed="true">write it yourself</button><button data-mode="match" aria-pressed="false">find a match</button></nav>
+              <form id="identity-form" autocomplete="off"><div class="identity-fields" id="identity-fields"></div></form>
+              <div id="identity-match" hidden><div class="search-line"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></svg><input id="match-query" aria-label="Search identity"><button id="match-search">search ↗</button></div><nav class="match-providers" id="match-providers" aria-label="Identity database"></nav><div id="match-results" class="match-results"></div><p class="selection-note">Choose the right identity. Your artwork stays yours.</p></div>
+            </section>
+          </div>
+        </div>
+        <footer class="editor-footer"><div class="save-note"><span class="save-dot"></span><span id="save-note">Your picks stay yours.</span></div><button class="reset-button" id="reset">reset to auto</button><div class="footer-actions"><button class="cancel-button" id="cancel">cancel</button><button class="apply-button" id="apply">apply changes <span>↗</span></button></div></footer>
+      </section>
+      <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    </section>
+
+    <section class="study-footer"><p><span class="live-dot"></span> INTERACTIVE STUDY <span class="footer-divider">/</span> Sample media. Edits stay in this preview.</p><button id="toggle-font" aria-pressed="false">try the graffiti face ↗</button></section>
+    <section class="direction-notes" aria-label="Design rationale"><div><span>THE FEEL</span><p id="note-feel">An open record sleeve, floating above your collection.</p></div><div><span>THE MOVEMENT</span><p id="note-motion">Art lifts into place. The tools hold still.</p></div><div><span>THE PROMISE</span><p>Identity and artwork stay independent. Nothing commits until Apply.</p></div></section>
+  </main>
+  <script src="mockup.js"></script>
+</body>
+</html>

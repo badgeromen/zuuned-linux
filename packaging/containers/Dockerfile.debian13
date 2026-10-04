@@ -1,0 +1,20 @@
+# Build dependencies are isolated from the development desktop. No USB devices
+# or user media are passed to this image. Runtime/USB gates are separate.
+FROM debian:13-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential ca-certificates curl git cmake ninja-build pkg-config nodejs ripgrep \
+    qt6-base-dev qt6-declarative-dev qt6-5compat-dev qt6-shadertools-dev libqt6opengl6-dev \
+    qml6-module-qtquick qml6-module-qtquick-controls qml6-module-qtquick-dialogs \
+    qml6-module-qtquick-layouts qml6-module-qtquick-window \
+    qml6-module-qtcore qml6-module-qtqml qml6-module-qtqml-models qml6-module-qtquick-templates \
+    qml6-module-qtqml-workerscript qml6-module-qt5compat-graphicaleffects qml6-module-qttest \
+    libusb-1.0-0-dev libgcrypt20-dev libsqlite3-dev libmpv-dev \
+    libavcodec-dev libavformat-dev libavutil-dev libswscale-dev \
+    libswresample-dev libmp3lame-dev ffmpeg \
+    file binutils patchelf desktop-file-utils strace xvfb xauth \
+    mesa-utils libgl1-mesa-dri libegl-mesa0 dbus-x11 \
+    && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    qt6-xdgdesktopportal-platformtheme \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /work

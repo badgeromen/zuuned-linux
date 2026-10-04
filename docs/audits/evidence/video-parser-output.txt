@@ -1,0 +1,20 @@
+parse [tv] /tv/Show/Season 2/Show E03.mkv => category='tv' series='Show' S1E3
+parse [tv] /tv/Show/Specials/Show E03.mkv => category='tv' series='Show' S1E3
+parse [tv] /tv/Show/Season 2/Show 2x03.mkv => category='tv' series='Show' S1E0
+parse [tv] /tv/Show/Season 2/03 - Title.mkv => category='tv' series='Show' S1E0
+parse [tv] /tv/Show/Season 2/03-Title.mkv => category='tv' series='Show' S1E3
+parse [tv] /tv/Show/Season 2/Show.S02E03E04.mkv => category='tv' series='Show' S2E3
+parse [tv] /tv/Breaking.Bad.S01E01.mkv => category='tv' series='tv' S1E1
+parse [tv] /tv/The.Wire.S01E01.mkv => category='tv' series='tv' S1E1
+parse [all] /media/Show/S01E01.mkv => category='tv' series='media' S1E1
+parse [all] /media/Star Wars Episode 4.mkv => category='tv' series='Star Wars' S1E4
+parse [movies] /movies/Star Wars Episode 4.mkv => category='movie' series='' S0E0
+parse [tv] /tv/Show/Season.2/Show.S02E03.mkv => category='tv' series='Season 2' S2E3
+query 1917.mkv => cleaned='1917' actualTMDBQuery='' year='1917'
+query 1984.mkv => cleaned='1984' actualTMDBQuery='' year='1984'
+query 2001 A Space Odyssey.mkv => cleaned='2001 A Space Odyssey' actualTMDBQuery='A Space Odyssey' year='2001'
+query Blade Runner 2049.mkv => cleaned='Blade Runner 2049' actualTMDBQuery='Blade Runner' year='2049'
+query 1917 (2019).mkv => cleaned='1917 2019' actualTMDBQuery='1917' year='2019'
+query The Final Cut (2004).mkv => cleaned='The 2004' actualTMDBQuery='The' year='2004'
+query Mission Impossible - FALLOUT.mkv => cleaned='Mission Impossible' actualTMDBQuery='Mission Impossible' year=''
+candidate Dark (2017): correct=0.800 unrelated=0.600 threshold=0.550

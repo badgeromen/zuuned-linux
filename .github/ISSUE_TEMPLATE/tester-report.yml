@@ -1,0 +1,54 @@
+name: Tester bug report
+description: Report a problem with a Zuuned Linux testing build.
+title: "[Tester] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Export a report using **Settings → Health → export debug report**.
+        Review it before attaching it: media names and paths may remain. Do not
+        attach passwords, API keys, your database or a complete app profile.
+        Issues and attachments may be public. Use your existing private testing
+        channel for sensitive details.
+  - type: input
+    id: build
+    attributes:
+      label: Release and build
+      description: AppImage filename/release plus Settings → About version, or AppImage --version output.
+    validations:
+      required: true
+  - type: input
+    id: desktop
+    attributes:
+      label: Linux and desktop
+      description: Distribution/version, desktop environment, X11 or Wayland, and GPU if relevant.
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Zune model
+      description: Include whether a Zune was connected, or write “not applicable”.
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: List the actions in order and whether the problem happens every time.
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
+  - type: input
+    id: time
+    attributes:
+      label: Approximate time and time zone
+      description: Helps match your actions to timestamps in the report.
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Debug report and screenshots
+      description: Drag the reviewed .txt report here. If the app cannot start, attach reviewed terminal output instead. Explain if you are sending logs privately.

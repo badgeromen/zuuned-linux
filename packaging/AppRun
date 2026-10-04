@@ -1,0 +1,19 @@
+#!/bin/sh
+set -eu
+zuuned_appdir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+# libzune's photo preparation/thumbnail fallback executes ffmpeg through PATH.
+# Keep both executables and their libraries inside this same AppImage.
+export PATH="$zuuned_appdir/usr/bin:$PATH"
+export LD_LIBRARY_PATH="$zuuned_appdir/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export QT_PLUGIN_PATH="$zuuned_appdir/usr/plugins"
+export QML_IMPORT_PATH="$zuuned_appdir/usr/qml"
+export QML2_IMPORT_PATH="$zuuned_appdir/usr/qml"
+unset QT_QPA_PLATFORM_PLUGIN_PATH
+# The candidate ships xcb and runs on Wayland desktops through XWayland.
+# Explicit platform overrides remain available for isolated testing.
+export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}"
+# File/folder dialogs are provided by the host desktop portal. Ship the plugin
+# built for this Qt instead of inheriting gtk3/qt6ct/KDE plugins from another Qt
+# installation. The portal backend and its appearance remain the user's own.
+export QT_QPA_PLATFORMTHEME=xdgdesktopportal
+exec "$zuuned_appdir/usr/bin/zuuned" "$@"

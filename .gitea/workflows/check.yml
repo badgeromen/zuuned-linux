@@ -1,0 +1,20 @@
+name: Native software gates
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  native:
+    # Register this label with the image built from Dockerfile.debian13.
+    # No USB devices, desktop profile, Docker socket or release credentials.
+    runs-on: zuuned-debian13
+    timeout-minutes: 45
+    steps:
+      - uses: https://github.com/actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - name: Build and isolated regression gates
+        env:
+          ZUUNED_CI_LOGS: '1'
+        run: bash ci/check.sh

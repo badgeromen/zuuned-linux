@@ -1,0 +1,2588 @@
+{
+  "family": "Specimen Alien",
+  "version": "1.000",
+  "scope": "Printable ASCII, Latin-1 Supplement, Latin Extended-A, selected typography/math/currency/arrows and combining marks",
+  "lowercase": "Unicase: lowercase uses capital letterforms, deliberately",
+  "mappedCharacters": 368,
+  "glyphs": 342,
+  "required": [
+    "U+0020",
+    "U+0021",
+    "U+0022",
+    "U+0023",
+    "U+0024",
+    "U+0025",
+    "U+0026",
+    "U+0027",
+    "U+0028",
+    "U+0029",
+    "U+002A",
+    "U+002B",
+    "U+002C",
+    "U+002D",
+    "U+002E",
+    "U+002F",
+    "U+0030",
+    "U+0031",
+    "U+0032",
+    "U+0033",
+    "U+0034",
+    "U+0035",
+    "U+0036",
+    "U+0037",
+    "U+0038",
+    "U+0039",
+    "U+003A",
+    "U+003B",
+    "U+003C",
+    "U+003D",
+    "U+003E",
+    "U+003F",
+    "U+0040",
+    "U+0041",
+    "U+0042",
+    "U+0043",
+    "U+0044",
+    "U+0045",
+    "U+0046",
+    "U+0047",
+    "U+0048",
+    "U+0049",
+    "U+004A",
+    "U+004B",
+    "U+004C",
+    "U+004D",
+    "U+004E",
+    "U+004F",
+    "U+0050",
+    "U+0051",
+    "U+0052",
+    "U+0053",
+    "U+0054",
+    "U+0055",
+    "U+0056",
+    "U+0057",
+    "U+0058",
+    "U+0059",
+    "U+005A",
+    "U+005B",
+    "U+005C",
+    "U+005D",
+    "U+005E",
+    "U+005F",
+    "U+0060",
+    "U+0061",
+    "U+0062",
+    "U+0063",
+    "U+0064",
+    "U+0065",
+    "U+0066",
+    "U+0067",
+    "U+0068",
+    "U+0069",
+    "U+006A",
+    "U+006B",
+    "U+006C",
+    "U+006D",
+    "U+006E",
+    "U+006F",
+    "U+0070",
+    "U+0071",
+    "U+0072",
+    "U+0073",
+    "U+0074",
+    "U+0075",
+    "U+0076",
+    "U+0077",
+    "U+0078",
+    "U+0079",
+    "U+007A",
+    "U+007B",
+    "U+007C",
+    "U+007D",
+    "U+007E",
+    "U+00A0",
+    "U+00A1",
+    "U+00A2",
+    "U+00A3",
+    "U+00A4",
+    "U+00A5",
+    "U+00A6",
+    "U+00A7",
+    "U+00A8",
+    "U+00A9",
+    "U+00AA",
+    "U+00AB",
+    "U+00AC",
+    "U+00AD",
+    "U+00AE",
+    "U+00AF",
+    "U+00B0",
+    "U+00B1",
+    "U+00B2",
+    "U+00B3",
+    "U+00B4",
+    "U+00B5",
+    "U+00B6",
+    "U+00B7",
+    "U+00B8",
+    "U+00B9",
+    "U+00BA",
+    "U+00BB",
+    "U+00BC",
+    "U+00BD",
+    "U+00BE",
+    "U+00BF",
+    "U+00C0",
+    "U+00C1",
+    "U+00C2",
+    "U+00C3",
+    "U+00C4",
+    "U+00C5",
+    "U+00C6",
+    "U+00C7",
+    "U+00C8",
+    "U+00C9",
+    "U+00CA",
+    "U+00CB",
+    "U+00CC",
+    "U+00CD",
+    "U+00CE",
+    "U+00CF",
+    "U+00D0",
+    "U+00D1",
+    "U+00D2",
+    "U+00D3",
+    "U+00D4",
+    "U+00D5",
+    "U+00D6",
+    "U+00D7",
+    "U+00D8",
+    "U+00D9",
+    "U+00DA",
+    "U+00DB",
+    "U+00DC",
+    "U+00DD",
+    "U+00DE",
+    "U+00DF",
+    "U+00E0",
+    "U+00E1",
+    "U+00E2",
+    "U+00E3",
+    "U+00E4",
+    "U+00E5",
+    "U+00E6",
+    "U+00E7",
+    "U+00E8",
+    "U+00E9",
+    "U+00EA",
+    "U+00EB",
+    "U+00EC",
+    "U+00ED",
+    "U+00EE",
+    "U+00EF",
+    "U+00F0",
+    "U+00F1",
+    "U+00F2",
+    "U+00F3",
+    "U+00F4",
+    "U+00F5",
+    "U+00F6",
+    "U+00F7",
+    "U+00F8",
+    "U+00F9",
+    "U+00FA",
+    "U+00FB",
+    "U+00FC",
+    "U+00FD",
+    "U+00FE",
+    "U+00FF",
+    "U+0100",
+    "U+0101",
+    "U+0102",
+    "U+0103",
+    "U+0104",
+    "U+0105",
+    "U+0106",
+    "U+0107",
+    "U+0108",
+    "U+0109",
+    "U+010A",
+    "U+010B",
+    "U+010C",
+    "U+010D",
+    "U+010E",
+    "U+010F",
+    "U+0110",
+    "U+0111",
+    "U+0112",
+    "U+0113",
+    "U+0114",
+    "U+0115",
+    "U+0116",
+    "U+0117",
+    "U+0118",
+    "U+0119",
+    "U+011A",
+    "U+011B",
+    "U+011C",
+    "U+011D",
+    "U+011E",
+    "U+011F",
+    "U+0120",
+    "U+0121",
+    "U+0122",
+    "U+0123",
+    "U+0124",
+    "U+0125",
+    "U+0126",
+    "U+0127",
+    "U+0128",
+    "U+0129",
+    "U+012A",
+    "U+012B",
+    "U+012C",
+    "U+012D",
+    "U+012E",
+    "U+012F",
+    "U+0130",
+    "U+0131",
+    "U+0132",
+    "U+0133",
+    "U+0134",
+    "U+0135",
+    "U+0136",
+    "U+0137",
+    "U+0138",
+    "U+0139",
+    "U+013A",
+    "U+013B",
+    "U+013C",
+    "U+013D",
+    "U+013E",
+    "U+013F",
+    "U+0140",
+    "U+0141",
+    "U+0142",
+    "U+0143",
+    "U+0144",
+    "U+0145",
+    "U+0146",
+    "U+0147",
+    "U+0148",
+    "U+0149",
+    "U+014A",
+    "U+014B",
+    "U+014C",
+    "U+014D",
+    "U+014E",
+    "U+014F",
+    "U+0150",
+    "U+0151",
+    "U+0152",
+    "U+0153",
+    "U+0154",
+    "U+0155",
+    "U+0156",
+    "U+0157",
+    "U+0158",
+    "U+0159",
+    "U+015A",
+    "U+015B",
+    "U+015C",
+    "U+015D",
+    "U+015E",
+    "U+015F",
+    "U+0160",
+    "U+0161",
+    "U+0162",
+    "U+0163",
+    "U+0164",
+    "U+0165",
+    "U+0166",
+    "U+0167",
+    "U+0168",
+    "U+0169",
+    "U+016A",
+    "U+016B",
+    "U+016C",
+    "U+016D",
+    "U+016E",
+    "U+016F",
+    "U+0170",
+    "U+0171",
+    "U+0172",
+    "U+0173",
+    "U+0174",
+    "U+0175",
+    "U+0176",
+    "U+0177",
+    "U+0178",
+    "U+0179",
+    "U+017A",
+    "U+017B",
+    "U+017C",
+    "U+017D",
+    "U+017E",
+    "U+017F",
+    "U+0300",
+    "U+0301",
+    "U+0302",
+    "U+0303",
+    "U+0304",
+    "U+0306",
+    "U+0307",
+    "U+0308",
+    "U+030A",
+    "U+030B",
+    "U+030C",
+    "U+0327",
+    "U+0328",
+    "U+1E9E",
+    "U+2013",
+    "U+2014",
+    "U+2018",
+    "U+2019",
+    "U+201A",
+    "U+201C",
+    "U+201D",
+    "U+201E",
+    "U+2020",
+    "U+2021",
+    "U+2022",
+    "U+2026",
+    "U+2030",
+    "U+2039",
+    "U+203A",
+    "U+20AC",
+    "U+2117",
+    "U+2122",
+    "U+2190",
+    "U+2191",
+    "U+2192",
+    "U+2193",
+    "U+2194",
+    "U+2212",
+    "U+221A",
+    "U+221E",
+    "U+2248",
+    "U+2260",
+    "U+2264",
+    "U+2265",
+    "U+2605",
+    "U+2606",
+    "U+2665",
+    "U+2713",
+    "U+2715"
+  ],
+  "characters": [
+    {
+      "code": "U+0020",
+      "character": " ",
+      "name": "SPACE",
+      "glyph": "space"
+    },
+    {
+      "code": "U+0021",
+      "character": "!",
+      "name": "EXCLAMATION MARK",
+      "glyph": "uni0021"
+    },
+    {
+      "code": "U+0022",
+      "character": "\"",
+      "name": "QUOTATION MARK",
+      "glyph": "uni0022"
+    },
+    {
+      "code": "U+0023",
+      "character": "#",
+      "name": "NUMBER SIGN",
+      "glyph": "uni0023"
+    },
+    {
+      "code": "U+0024",
+      "character": "$",
+      "name": "DOLLAR SIGN",
+      "glyph": "uni0024"
+    },
+    {
+      "code": "U+0025",
+      "character": "%",
+      "name": "PERCENT SIGN",
+      "glyph": "uni0025"
+    },
+    {
+      "code": "U+0026",
+      "character": "&",
+      "name": "AMPERSAND",
+      "glyph": "uni0026"
+    },
+    {
+      "code": "U+0027",
+      "character": "'",
+      "name": "APOSTROPHE",
+      "glyph": "uni0027"
+    },
+    {
+      "code": "U+0028",
+      "character": "(",
+      "name": "LEFT PARENTHESIS",
+      "glyph": "uni0028"
+    },
+    {
+      "code": "U+0029",
+      "character": ")",
+      "name": "RIGHT PARENTHESIS",
+      "glyph": "uni0029"
+    },
+    {
+      "code": "U+002A",
+      "character": "*",
+      "name": "ASTERISK",
+      "glyph": "uni002A"
+    },
+    {
+      "code": "U+002B",
+      "character": "+",
+      "name": "PLUS SIGN",
+      "glyph": "uni002B"
+    },
+    {
+      "code": "U+002C",
+      "character": ",",
+      "name": "COMMA",
+      "glyph": "uni002C"
+    },
+    {
+      "code": "U+002D",
+      "character": "-",
+      "name": "HYPHEN-MINUS",
+      "glyph": "uni002D"
+    },
+    {
+      "code": "U+002E",
+      "character": ".",
+      "name": "FULL STOP",
+      "glyph": "uni002E"
+    },
+    {
+      "code": "U+002F",
+      "character": "/",
+      "name": "SOLIDUS",
+      "glyph": "uni002F"
+    },
+    {
+      "code": "U+0030",
+      "character": "0",
+      "name": "DIGIT ZERO",
+      "glyph": "uni0030"
+    },
+    {
+      "code": "U+0031",
+      "character": "1",
+      "name": "DIGIT ONE",
+      "glyph": "uni0031"
+    },
+    {
+      "code": "U+0032",
+      "character": "2",
+      "name": "DIGIT TWO",
+      "glyph": "uni0032"
+    },
+    {
+      "code": "U+0033",
+      "character": "3",
+      "name": "DIGIT THREE",
+      "glyph": "uni0033"
+    },
+    {
+      "code": "U+0034",
+      "character": "4",
+      "name": "DIGIT FOUR",
+      "glyph": "uni0034"
+    },
+    {
+      "code": "U+0035",
+      "character": "5",
+      "name": "DIGIT FIVE",
+      "glyph": "uni0035"
+    },
+    {
+      "code": "U+0036",
+      "character": "6",
+      "name": "DIGIT SIX",
+      "glyph": "uni0036"
+    },
+    {
+      "code": "U+0037",
+      "character": "7",
+      "name": "DIGIT SEVEN",
+      "glyph": "uni0037"
+    },
+    {
+      "code": "U+0038",
+      "character": "8",
+      "name": "DIGIT EIGHT",
+      "glyph": "uni0038"
+    },
+    {
+      "code": "U+0039",
+      "character": "9",
+      "name": "DIGIT NINE",
+      "glyph": "uni0039"
+    },
+    {
+      "code": "U+003A",
+      "character": ":",
+      "name": "COLON",
+      "glyph": "uni003A"
+    },
+    {
+      "code": "U+003B",
+      "character": ";",
+      "name": "SEMICOLON",
+      "glyph": "uni003B"
+    },
+    {
+      "code": "U+003C",
+      "character": "<",
+      "name": "LESS-THAN SIGN",
+      "glyph": "uni003C"
+    },
+    {
+      "code": "U+003D",
+      "character": "=",
+      "name": "EQUALS SIGN",
+      "glyph": "uni003D"
+    },
+    {
+      "code": "U+003E",
+      "character": ">",
+      "name": "GREATER-THAN SIGN",
+      "glyph": "uni003E"
+    },
+    {
+      "code": "U+003F",
+      "character": "?",
+      "name": "QUESTION MARK",
+      "glyph": "uni003F"
+    },
+    {
+      "code": "U+0040",
+      "character": "@",
+      "name": "COMMERCIAL AT",
+      "glyph": "uni0040"
+    },
+    {
+      "code": "U+0041",
+      "character": "A",
+      "name": "LATIN CAPITAL LETTER A",
+      "glyph": "A"
+    },
+    {
+      "code": "U+0042",
+      "character": "B",
+      "name": "LATIN CAPITAL LETTER B",
+      "glyph": "B"
+    },
+    {
+      "code": "U+0043",
+      "character": "C",
+      "name": "LATIN CAPITAL LETTER C",
+      "glyph": "C"
+    },
+    {
+      "code": "U+0044",
+      "character": "D",
+      "name": "LATIN CAPITAL LETTER D",
+      "glyph": "D"
+    },
+    {
+      "code": "U+0045",
+      "character": "E",
+      "name": "LATIN CAPITAL LETTER E",
+      "glyph": "E"
+    },
+    {
+      "code": "U+0046",
+      "character": "F",
+      "name": "LATIN CAPITAL LETTER F",
+      "glyph": "F"
+    },
+    {
+      "code": "U+0047",
+      "character": "G",
+      "name": "LATIN CAPITAL LETTER G",
+      "glyph": "G"
+    },
+    {
+      "code": "U+0048",
+      "character": "H",
+      "name": "LATIN CAPITAL LETTER H",
+      "glyph": "H"
+    },
+    {
+      "code": "U+0049",
+      "character": "I",
+      "name": "LATIN CAPITAL LETTER I",
+      "glyph": "I"
+    },
+    {
+      "code": "U+004A",
+      "character": "J",
+      "name": "LATIN CAPITAL LETTER J",
+      "glyph": "J"
+    },
+    {
+      "code": "U+004B",
+      "character": "K",
+      "name": "LATIN CAPITAL LETTER K",
+      "glyph": "K"
+    },
+    {
+      "code": "U+004C",
+      "character": "L",
+      "name": "LATIN CAPITAL LETTER L",
+      "glyph": "L"
+    },
+    {
+      "code": "U+004D",
+      "character": "M",
+      "name": "LATIN CAPITAL LETTER M",
+      "glyph": "M"
+    },
+    {
+      "code": "U+004E",
+      "character": "N",
+      "name": "LATIN CAPITAL LETTER N",
+      "glyph": "N"
+    },
+    {
+      "code": "U+004F",
+      "character": "O",
+      "name": "LATIN CAPITAL LETTER O",
+      "glyph": "O"
+    },
+    {
+      "code": "U+0050",
+      "character": "P",
+      "name": "LATIN CAPITAL LETTER P",
+      "glyph": "P"
+    },
+    {
+      "code": "U+0051",
+      "character": "Q",
+      "name": "LATIN CAPITAL LETTER Q",
+      "glyph": "Q"
+    },
+    {
+      "code": "U+0052",
+      "character": "R",
+      "name": "LATIN CAPITAL LETTER R",
+      "glyph": "R"
+    },
+    {
+      "code": "U+0053",
+      "character": "S",
+      "name": "LATIN CAPITAL LETTER S",
+      "glyph": "S"
+    },
+    {
+      "code": "U+0054",
+      "character": "T",
+      "name": "LATIN CAPITAL LETTER T",
+      "glyph": "T"
+    },
+    {
+      "code": "U+0055",
+      "character": "U",
+      "name": "LATIN CAPITAL LETTER U",
+      "glyph": "U"
+    },
+    {
+      "code": "U+0056",
+      "character": "V",
+      "name": "LATIN CAPITAL LETTER V",
+      "glyph": "V"
+    },
+    {
+      "code": "U+0057",
+      "character": "W",
+      "name": "LATIN CAPITAL LETTER W",
+      "glyph": "W"
+    },
+    {
+      "code": "U+0058",
+      "character": "X",
+      "name": "LATIN CAPITAL LETTER X",
+      "glyph": "X"
+    },
+    {
+      "code": "U+0059",
+      "character": "Y",
+      "name": "LATIN CAPITAL LETTER Y",
+      "glyph": "Y"
+    },
+    {
+      "code": "U+005A",
+      "character": "Z",
+      "name": "LATIN CAPITAL LETTER Z",
+      "glyph": "Z"
+    },
+    {
+      "code": "U+005B",
+      "character": "[",
+      "name": "LEFT SQUARE BRACKET",
+      "glyph": "uni005B"
+    },
+    {
+      "code": "U+005C",
+      "character": "\\",
+      "name": "REVERSE SOLIDUS",
+      "glyph": "uni005C"
+    },
+    {
+      "code": "U+005D",
+      "character": "]",
+      "name": "RIGHT SQUARE BRACKET",
+      "glyph": "uni005D"
+    },
+    {
+      "code": "U+005E",
+      "character": "^",
+      "name": "CIRCUMFLEX ACCENT",
+      "glyph": "uni005E"
+    },
+    {
+      "code": "U+005F",
+      "character": "_",
+      "name": "LOW LINE",
+      "glyph": "uni005F"
+    },
+    {
+      "code": "U+0060",
+      "character": "`",
+      "name": "GRAVE ACCENT",
+      "glyph": "uni0060"
+    },
+    {
+      "code": "U+0061",
+      "character": "a",
+      "name": "LATIN SMALL LETTER A",
+      "glyph": "A"
+    },
+    {
+      "code": "U+0062",
+      "character": "b",
+      "name": "LATIN SMALL LETTER B",
+      "glyph": "B"
+    },
+    {
+      "code": "U+0063",
+      "character": "c",
+      "name": "LATIN SMALL LETTER C",
+      "glyph": "C"
+    },
+    {
+      "code": "U+0064",
+      "character": "d",
+      "name": "LATIN SMALL LETTER D",
+      "glyph": "D"
+    },
+    {
+      "code": "U+0065",
+      "character": "e",
+      "name": "LATIN SMALL LETTER E",
+      "glyph": "E"
+    },
+    {
+      "code": "U+0066",
+      "character": "f",
+      "name": "LATIN SMALL LETTER F",
+      "glyph": "F"
+    },
+    {
+      "code": "U+0067",
+      "character": "g",
+      "name": "LATIN SMALL LETTER G",
+      "glyph": "G"
+    },
+    {
+      "code": "U+0068",
+      "character": "h",
+      "name": "LATIN SMALL LETTER H",
+      "glyph": "H"
+    },
+    {
+      "code": "U+0069",
+      "character": "i",
+      "name": "LATIN SMALL LETTER I",
+      "glyph": "I"
+    },
+    {
+      "code": "U+006A",
+      "character": "j",
+      "name": "LATIN SMALL LETTER J",
+      "glyph": "J"
+    },
+    {
+      "code": "U+006B",
+      "character": "k",
+      "name": "LATIN SMALL LETTER K",
+      "glyph": "K"
+    },
+    {
+      "code": "U+006C",
+      "character": "l",
+      "name": "LATIN SMALL LETTER L",
+      "glyph": "L"
+    },
+    {
+      "code": "U+006D",
+      "character": "m",
+      "name": "LATIN SMALL LETTER M",
+      "glyph": "M"
+    },
+    {
+      "code": "U+006E",
+      "character": "n",
+      "name": "LATIN SMALL LETTER N",
+      "glyph": "N"
+    },
+    {
+      "code": "U+006F",
+      "character": "o",
+      "name": "LATIN SMALL LETTER O",
+      "glyph": "O"
+    },
+    {
+      "code": "U+0070",
+      "character": "p",
+      "name": "LATIN SMALL LETTER P",
+      "glyph": "P"
+    },
+    {
+      "code": "U+0071",
+      "character": "q",
+      "name": "LATIN SMALL LETTER Q",
+      "glyph": "Q"
+    },
+    {
+      "code": "U+0072",
+      "character": "r",
+      "name": "LATIN SMALL LETTER R",
+      "glyph": "R"
+    },
+    {
+      "code": "U+0073",
+      "character": "s",
+      "name": "LATIN SMALL LETTER S",
+      "glyph": "S"
+    },
+    {
+      "code": "U+0074",
+      "character": "t",
+      "name": "LATIN SMALL LETTER T",
+      "glyph": "T"
+    },
+    {
+      "code": "U+0075",
+      "character": "u",
+      "name": "LATIN SMALL LETTER U",
+      "glyph": "U"
+    },
+    {
+      "code": "U+0076",
+      "character": "v",
+      "name": "LATIN SMALL LETTER V",
+      "glyph": "V"
+    },
+    {
+      "code": "U+0077",
+      "character": "w",
+      "name": "LATIN SMALL LETTER W",
+      "glyph": "W"
+    },
+    {
+      "code": "U+0078",
+      "character": "x",
+      "name": "LATIN SMALL LETTER X",
+      "glyph": "X"
+    },
+    {
+      "code": "U+0079",
+      "character": "y",
+      "name": "LATIN SMALL LETTER Y",
+      "glyph": "Y"
+    },
+    {
+      "code": "U+007A",
+      "character": "z",
+      "name": "LATIN SMALL LETTER Z",
+      "glyph": "Z"
+    },
+    {
+      "code": "U+007B",
+      "character": "{",
+      "name": "LEFT CURLY BRACKET",
+      "glyph": "uni007B"
+    },
+    {
+      "code": "U+007C",
+      "character": "|",
+      "name": "VERTICAL LINE",
+      "glyph": "uni007C"
+    },
+    {
+      "code": "U+007D",
+      "character": "}",
+      "name": "RIGHT CURLY BRACKET",
+      "glyph": "uni007D"
+    },
+    {
+      "code": "U+007E",
+      "character": "~",
+      "name": "TILDE",
+      "glyph": "uni007E"
+    },
+    {
+      "code": "U+00A0",
+      "character": "\u00a0",
+      "name": "NO-BREAK SPACE",
+      "glyph": "space"
+    },
+    {
+      "code": "U+00A1",
+      "character": "\u00a1",
+      "name": "INVERTED EXCLAMATION MARK",
+      "glyph": "uni00A1"
+    },
+    {
+      "code": "U+00A2",
+      "character": "\u00a2",
+      "name": "CENT SIGN",
+      "glyph": "uni00A2"
+    },
+    {
+      "code": "U+00A3",
+      "character": "\u00a3",
+      "name": "POUND SIGN",
+      "glyph": "uni00A3"
+    },
+    {
+      "code": "U+00A4",
+      "character": "\u00a4",
+      "name": "CURRENCY SIGN",
+      "glyph": "uni00A4"
+    },
+    {
+      "code": "U+00A5",
+      "character": "\u00a5",
+      "name": "YEN SIGN",
+      "glyph": "uni00A5"
+    },
+    {
+      "code": "U+00A6",
+      "character": "\u00a6",
+      "name": "BROKEN BAR",
+      "glyph": "uni00A6"
+    },
+    {
+      "code": "U+00A7",
+      "character": "\u00a7",
+      "name": "SECTION SIGN",
+      "glyph": "uni00A7"
+    },
+    {
+      "code": "U+00A8",
+      "character": "\u00a8",
+      "name": "DIAERESIS",
+      "glyph": "uni00A8"
+    },
+    {
+      "code": "U+00A9",
+      "character": "\u00a9",
+      "name": "COPYRIGHT SIGN",
+      "glyph": "uni00A9"
+    },
+    {
+      "code": "U+00AA",
+      "character": "\u00aa",
+      "name": "FEMININE ORDINAL INDICATOR",
+      "glyph": "uni00AA"
+    },
+    {
+      "code": "U+00AB",
+      "character": "\u00ab",
+      "name": "LEFT-POINTING DOUBLE ANGLE QUOTATION MARK",
+      "glyph": "uni00AB"
+    },
+    {
+      "code": "U+00AC",
+      "character": "\u00ac",
+      "name": "NOT SIGN",
+      "glyph": "uni00AC"
+    },
+    {
+      "code": "U+00AD",
+      "character": "\u00ad",
+      "name": "SOFT HYPHEN",
+      "glyph": "uni00AD"
+    },
+    {
+      "code": "U+00AE",
+      "character": "\u00ae",
+      "name": "REGISTERED SIGN",
+      "glyph": "uni00AE"
+    },
+    {
+      "code": "U+00AF",
+      "character": "\u00af",
+      "name": "MACRON",
+      "glyph": "uni00AF"
+    },
+    {
+      "code": "U+00B0",
+      "character": "\u00b0",
+      "name": "DEGREE SIGN",
+      "glyph": "uni00B0"
+    },
+    {
+      "code": "U+00B1",
+      "character": "\u00b1",
+      "name": "PLUS-MINUS SIGN",
+      "glyph": "uni00B1"
+    },
+    {
+      "code": "U+00B2",
+      "character": "\u00b2",
+      "name": "SUPERSCRIPT TWO",
+      "glyph": "uni00B2"
+    },
+    {
+      "code": "U+00B3",
+      "character": "\u00b3",
+      "name": "SUPERSCRIPT THREE",
+      "glyph": "uni00B3"
+    },
+    {
+      "code": "U+00B4",
+      "character": "\u00b4",
+      "name": "ACUTE ACCENT",
+      "glyph": "uni00B4"
+    },
+    {
+      "code": "U+00B5",
+      "character": "\u00b5",
+      "name": "MICRO SIGN",
+      "glyph": "uni00B5"
+    },
+    {
+      "code": "U+00B6",
+      "character": "\u00b6",
+      "name": "PILCROW SIGN",
+      "glyph": "uni00B6"
+    },
+    {
+      "code": "U+00B7",
+      "character": "\u00b7",
+      "name": "MIDDLE DOT",
+      "glyph": "uni00B7"
+    },
+    {
+      "code": "U+00B8",
+      "character": "\u00b8",
+      "name": "CEDILLA",
+      "glyph": "uni00B8"
+    },
+    {
+      "code": "U+00B9",
+      "character": "\u00b9",
+      "name": "SUPERSCRIPT ONE",
+      "glyph": "uni00B9"
+    },
+    {
+      "code": "U+00BA",
+      "character": "\u00ba",
+      "name": "MASCULINE ORDINAL INDICATOR",
+      "glyph": "uni00BA"
+    },
+    {
+      "code": "U+00BB",
+      "character": "\u00bb",
+      "name": "RIGHT-POINTING DOUBLE ANGLE QUOTATION MARK",
+      "glyph": "uni00BB"
+    },
+    {
+      "code": "U+00BC",
+      "character": "\u00bc",
+      "name": "VULGAR FRACTION ONE QUARTER",
+      "glyph": "uni00BC"
+    },
+    {
+      "code": "U+00BD",
+      "character": "\u00bd",
+      "name": "VULGAR FRACTION ONE HALF",
+      "glyph": "uni00BD"
+    },
+    {
+      "code": "U+00BE",
+      "character": "\u00be",
+      "name": "VULGAR FRACTION THREE QUARTERS",
+      "glyph": "uni00BE"
+    },
+    {
+      "code": "U+00BF",
+      "character": "\u00bf",
+      "name": "INVERTED QUESTION MARK",
+      "glyph": "uni00BF"
+    },
+    {
+      "code": "U+00C0",
+      "character": "\u00c0",
+      "name": "LATIN CAPITAL LETTER A WITH GRAVE",
+      "glyph": "uni00C0"
+    },
+    {
+      "code": "U+00C1",
+      "character": "\u00c1",
+      "name": "LATIN CAPITAL LETTER A WITH ACUTE",
+      "glyph": "uni00C1"
+    },
+    {
+      "code": "U+00C2",
+      "character": "\u00c2",
+      "name": "LATIN CAPITAL LETTER A WITH CIRCUMFLEX",
+      "glyph": "uni00C2"
+    },
+    {
+      "code": "U+00C3",
+      "character": "\u00c3",
+      "name": "LATIN CAPITAL LETTER A WITH TILDE",
+      "glyph": "uni00C3"
+    },
+    {
+      "code": "U+00C4",
+      "character": "\u00c4",
+      "name": "LATIN CAPITAL LETTER A WITH DIAERESIS",
+      "glyph": "uni00C4"
+    },
+    {
+      "code": "U+00C5",
+      "character": "\u00c5",
+      "name": "LATIN CAPITAL LETTER A WITH RING ABOVE",
+      "glyph": "uni00C5"
+    },
+    {
+      "code": "U+00C6",
+      "character": "\u00c6",
+      "name": "LATIN CAPITAL LETTER AE",
+      "glyph": "uni00C6"
+    },
+    {
+      "code": "U+00C7",
+      "character": "\u00c7",
+      "name": "LATIN CAPITAL LETTER C WITH CEDILLA",
+      "glyph": "uni00C7"
+    },
+    {
+      "code": "U+00C8",
+      "character": "\u00c8",
+      "name": "LATIN CAPITAL LETTER E WITH GRAVE",
+      "glyph": "uni00C8"
+    },
+    {
+      "code": "U+00C9",
+      "character": "\u00c9",
+      "name": "LATIN CAPITAL LETTER E WITH ACUTE",
+      "glyph": "uni00C9"
+    },
+    {
+      "code": "U+00CA",
+      "character": "\u00ca",
+      "name": "LATIN CAPITAL LETTER E WITH CIRCUMFLEX",
+      "glyph": "uni00CA"
+    },
+    {
+      "code": "U+00CB",
+      "character": "\u00cb",
+      "name": "LATIN CAPITAL LETTER E WITH DIAERESIS",
+      "glyph": "uni00CB"
+    },
+    {
+      "code": "U+00CC",
+      "character": "\u00cc",
+      "name": "LATIN CAPITAL LETTER I WITH GRAVE",
+      "glyph": "uni00CC"
+    },
+    {
+      "code": "U+00CD",
+      "character": "\u00cd",
+      "name": "LATIN CAPITAL LETTER I WITH ACUTE",
+      "glyph": "uni00CD"
+    },
+    {
+      "code": "U+00CE",
+      "character": "\u00ce",
+      "name": "LATIN CAPITAL LETTER I WITH CIRCUMFLEX",
+      "glyph": "uni00CE"
+    },
+    {
+      "code": "U+00CF",
+      "character": "\u00cf",
+      "name": "LATIN CAPITAL LETTER I WITH DIAERESIS",
+      "glyph": "uni00CF"
+    },
+    {
+      "code": "U+00D0",
+      "character": "\u00d0",
+      "name": "LATIN CAPITAL LETTER ETH",
+      "glyph": "uni00D0"
+    },
+    {
+      "code": "U+00D1",
+      "character": "\u00d1",
+      "name": "LATIN CAPITAL LETTER N WITH TILDE",
+      "glyph": "uni00D1"
+    },
+    {
+      "code": "U+00D2",
+      "character": "\u00d2",
+      "name": "LATIN CAPITAL LETTER O WITH GRAVE",
+      "glyph": "uni00D2"
+    },
+    {
+      "code": "U+00D3",
+      "character": "\u00d3",
+      "name": "LATIN CAPITAL LETTER O WITH ACUTE",
+      "glyph": "uni00D3"
+    },
+    {
+      "code": "U+00D4",
+      "character": "\u00d4",
+      "name": "LATIN CAPITAL LETTER O WITH CIRCUMFLEX",
+      "glyph": "uni00D4"
+    },
+    {
+      "code": "U+00D5",
+      "character": "\u00d5",
+      "name": "LATIN CAPITAL LETTER O WITH TILDE",
+      "glyph": "uni00D5"
+    },
+    {
+      "code": "U+00D6",
+      "character": "\u00d6",
+      "name": "LATIN CAPITAL LETTER O WITH DIAERESIS",
+      "glyph": "uni00D6"
+    },
+    {
+      "code": "U+00D7",
+      "character": "\u00d7",
+      "name": "MULTIPLICATION SIGN",
+      "glyph": "uni00D7"
+    },
+    {
+      "code": "U+00D8",
+      "character": "\u00d8",
+      "name": "LATIN CAPITAL LETTER O WITH STROKE",
+      "glyph": "uni00D8"
+    },
+    {
+      "code": "U+00D9",
+      "character": "\u00d9",
+      "name": "LATIN CAPITAL LETTER U WITH GRAVE",
+      "glyph": "uni00D9"
+    },
+    {
+      "code": "U+00DA",
+      "character": "\u00da",
+      "name": "LATIN CAPITAL LETTER U WITH ACUTE",
+      "glyph": "uni00DA"
+    },
+    {
+      "code": "U+00DB",
+      "character": "\u00db",
+      "name": "LATIN CAPITAL LETTER U WITH CIRCUMFLEX",
+      "glyph": "uni00DB"
+    },
+    {
+      "code": "U+00DC",
+      "character": "\u00dc",
+      "name": "LATIN CAPITAL LETTER U WITH DIAERESIS",
+      "glyph": "uni00DC"
+    },
+    {
+      "code": "U+00DD",
+      "character": "\u00dd",
+      "name": "LATIN CAPITAL LETTER Y WITH ACUTE",
+      "glyph": "uni00DD"
+    },
+    {
+      "code": "U+00DE",
+      "character": "\u00de",
+      "name": "LATIN CAPITAL LETTER THORN",
+      "glyph": "uni00DE"
+    },
+    {
+      "code": "U+00DF",
+      "character": "\u00df",
+      "name": "LATIN SMALL LETTER SHARP S",
+      "glyph": "uni00DF"
+    },
+    {
+      "code": "U+00E0",
+      "character": "\u00e0",
+      "name": "LATIN SMALL LETTER A WITH GRAVE",
+      "glyph": "uni00E0"
+    },
+    {
+      "code": "U+00E1",
+      "character": "\u00e1",
+      "name": "LATIN SMALL LETTER A WITH ACUTE",
+      "glyph": "uni00E1"
+    },
+    {
+      "code": "U+00E2",
+      "character": "\u00e2",
+      "name": "LATIN SMALL LETTER A WITH CIRCUMFLEX",
+      "glyph": "uni00E2"
+    },
+    {
+      "code": "U+00E3",
+      "character": "\u00e3",
+      "name": "LATIN SMALL LETTER A WITH TILDE",
+      "glyph": "uni00E3"
+    },
+    {
+      "code": "U+00E4",
+      "character": "\u00e4",
+      "name": "LATIN SMALL LETTER A WITH DIAERESIS",
+      "glyph": "uni00E4"
+    },
+    {
+      "code": "U+00E5",
+      "character": "\u00e5",
+      "name": "LATIN SMALL LETTER A WITH RING ABOVE",
+      "glyph": "uni00E5"
+    },
+    {
+      "code": "U+00E6",
+      "character": "\u00e6",
+      "name": "LATIN SMALL LETTER AE",
+      "glyph": "uni00E6"
+    },
+    {
+      "code": "U+00E7",
+      "character": "\u00e7",
+      "name": "LATIN SMALL LETTER C WITH CEDILLA",
+      "glyph": "uni00E7"
+    },
+    {
+      "code": "U+00E8",
+      "character": "\u00e8",
+      "name": "LATIN SMALL LETTER E WITH GRAVE",
+      "glyph": "uni00E8"
+    },
+    {
+      "code": "U+00E9",
+      "character": "\u00e9",
+      "name": "LATIN SMALL LETTER E WITH ACUTE",
+      "glyph": "uni00E9"
+    },
+    {
+      "code": "U+00EA",
+      "character": "\u00ea",
+      "name": "LATIN SMALL LETTER E WITH CIRCUMFLEX",
+      "glyph": "uni00EA"
+    },
+    {
+      "code": "U+00EB",
+      "character": "\u00eb",
+      "name": "LATIN SMALL LETTER E WITH DIAERESIS",
+      "glyph": "uni00EB"
+    },
+    {
+      "code": "U+00EC",
+      "character": "\u00ec",
+      "name": "LATIN SMALL LETTER I WITH GRAVE",
+      "glyph": "uni00EC"
+    },
+    {
+      "code": "U+00ED",
+      "character": "\u00ed",
+      "name": "LATIN SMALL LETTER I WITH ACUTE",
+      "glyph": "uni00ED"
+    },
+    {
+      "code": "U+00EE",
+      "character": "\u00ee",
+      "name": "LATIN SMALL LETTER I WITH CIRCUMFLEX",
+      "glyph": "uni00EE"
+    },
+    {
+      "code": "U+00EF",
+      "character": "\u00ef",
+      "name": "LATIN SMALL LETTER I WITH DIAERESIS",
+      "glyph": "uni00EF"
+    },
+    {
+      "code": "U+00F0",
+      "character": "\u00f0",
+      "name": "LATIN SMALL LETTER ETH",
+      "glyph": "uni00F0"
+    },
+    {
+      "code": "U+00F1",
+      "character": "\u00f1",
+      "name": "LATIN SMALL LETTER N WITH TILDE",
+      "glyph": "uni00F1"
+    },
+    {
+      "code": "U+00F2",
+      "character": "\u00f2",
+      "name": "LATIN SMALL LETTER O WITH GRAVE",
+      "glyph": "uni00F2"
+    },
+    {
+      "code": "U+00F3",
+      "character": "\u00f3",
+      "name": "LATIN SMALL LETTER O WITH ACUTE",
+      "glyph": "uni00F3"
+    },
+    {
+      "code": "U+00F4",
+      "character": "\u00f4",
+      "name": "LATIN SMALL LETTER O WITH CIRCUMFLEX",
+      "glyph": "uni00F4"
+    },
+    {
+      "code": "U+00F5",
+      "character": "\u00f5",
+      "name": "LATIN SMALL LETTER O WITH TILDE",
+      "glyph": "uni00F5"
+    },
+    {
+      "code": "U+00F6",
+      "character": "\u00f6",
+      "name": "LATIN SMALL LETTER O WITH DIAERESIS",
+      "glyph": "uni00F6"
+    },
+    {
+      "code": "U+00F7",
+      "character": "\u00f7",
+      "name": "DIVISION SIGN",
+      "glyph": "uni00F7"
+    },
+    {
+      "code": "U+00F8",
+      "character": "\u00f8",
+      "name": "LATIN SMALL LETTER O WITH STROKE",
+      "glyph": "uni00F8"
+    },
+    {
+      "code": "U+00F9",
+      "character": "\u00f9",
+      "name": "LATIN SMALL LETTER U WITH GRAVE",
+      "glyph": "uni00F9"
+    },
+    {
+      "code": "U+00FA",
+      "character": "\u00fa",
+      "name": "LATIN SMALL LETTER U WITH ACUTE",
+      "glyph": "uni00FA"
+    },
+    {
+      "code": "U+00FB",
+      "character": "\u00fb",
+      "name": "LATIN SMALL LETTER U WITH CIRCUMFLEX",
+      "glyph": "uni00FB"
+    },
+    {
+      "code": "U+00FC",
+      "character": "\u00fc",
+      "name": "LATIN SMALL LETTER U WITH DIAERESIS",
+      "glyph": "uni00FC"
+    },
+    {
+      "code": "U+00FD",
+      "character": "\u00fd",
+      "name": "LATIN SMALL LETTER Y WITH ACUTE",
+      "glyph": "uni00FD"
+    },
+    {
+      "code": "U+00FE",
+      "character": "\u00fe",
+      "name": "LATIN SMALL LETTER THORN",
+      "glyph": "uni00FE"
+    },
+    {
+      "code": "U+00FF",
+      "character": "\u00ff",
+      "name": "LATIN SMALL LETTER Y WITH DIAERESIS",
+      "glyph": "uni00FF"
+    },
+    {
+      "code": "U+0100",
+      "character": "\u0100",
+      "name": "LATIN CAPITAL LETTER A WITH MACRON",
+      "glyph": "uni0100"
+    },
+    {
+      "code": "U+0101",
+      "character": "\u0101",
+      "name": "LATIN SMALL LETTER A WITH MACRON",
+      "glyph": "uni0101"
+    },
+    {
+      "code": "U+0102",
+      "character": "\u0102",
+      "name": "LATIN CAPITAL LETTER A WITH BREVE",
+      "glyph": "uni0102"
+    },
+    {
+      "code": "U+0103",
+      "character": "\u0103",
+      "name": "LATIN SMALL LETTER A WITH BREVE",
+      "glyph": "uni0103"
+    },
+    {
+      "code": "U+0104",
+      "character": "\u0104",
+      "name": "LATIN CAPITAL LETTER A WITH OGONEK",
+      "glyph": "uni0104"
+    },
+    {
+      "code": "U+0105",
+      "character": "\u0105",
+      "name": "LATIN SMALL LETTER A WITH OGONEK",
+      "glyph": "uni0105"
+    },
+    {
+      "code": "U+0106",
+      "character": "\u0106",
+      "name": "LATIN CAPITAL LETTER C WITH ACUTE",
+      "glyph": "uni0106"
+    },
+    {
+      "code": "U+0107",
+      "character": "\u0107",
+      "name": "LATIN SMALL LETTER C WITH ACUTE",
+      "glyph": "uni0107"
+    },
+    {
+      "code": "U+0108",
+      "character": "\u0108",
+      "name": "LATIN CAPITAL LETTER C WITH CIRCUMFLEX",
+      "glyph": "uni0108"
+    },
+    {
+      "code": "U+0109",
+      "character": "\u0109",
+      "name": "LATIN SMALL LETTER C WITH CIRCUMFLEX",
+      "glyph": "uni0109"
+    },
+    {
+      "code": "U+010A",
+      "character": "\u010a",
+      "name": "LATIN CAPITAL LETTER C WITH DOT ABOVE",
+      "glyph": "uni010A"
+    },
+    {
+      "code": "U+010B",
+      "character": "\u010b",
+      "name": "LATIN SMALL LETTER C WITH DOT ABOVE",
+      "glyph": "uni010B"
+    },
+    {
+      "code": "U+010C",
+      "character": "\u010c",
+      "name": "LATIN CAPITAL LETTER C WITH CARON",
+      "glyph": "uni010C"
+    },
+    {
+      "code": "U+010D",
+      "character": "\u010d",
+      "name": "LATIN SMALL LETTER C WITH CARON",
+      "glyph": "uni010D"
+    },
+    {
+      "code": "U+010E",
+      "character": "\u010e",
+      "name": "LATIN CAPITAL LETTER D WITH CARON",
+      "glyph": "uni010E"
+    },
+    {
+      "code": "U+010F",
+      "character": "\u010f",
+      "name": "LATIN SMALL LETTER D WITH CARON",
+      "glyph": "uni010F"
+    },
+    {
+      "code": "U+0110",
+      "character": "\u0110",
+      "name": "LATIN CAPITAL LETTER D WITH STROKE",
+      "glyph": "uni0110"
+    },
+    {
+      "code": "U+0111",
+      "character": "\u0111",
+      "name": "LATIN SMALL LETTER D WITH STROKE",
+      "glyph": "uni0111"
+    },
+    {
+      "code": "U+0112",
+      "character": "\u0112",
+      "name": "LATIN CAPITAL LETTER E WITH MACRON",
+      "glyph": "uni0112"
+    },
+    {
+      "code": "U+0113",
+      "character": "\u0113",
+      "name": "LATIN SMALL LETTER E WITH MACRON",
+      "glyph": "uni0113"
+    },
+    {
+      "code": "U+0114",
+      "character": "\u0114",
+      "name": "LATIN CAPITAL LETTER E WITH BREVE",
+      "glyph": "uni0114"
+    },
+    {
+      "code": "U+0115",
+      "character": "\u0115",
+      "name": "LATIN SMALL LETTER E WITH BREVE",
+      "glyph": "uni0115"
+    },
+    {
+      "code": "U+0116",
+      "character": "\u0116",
+      "name": "LATIN CAPITAL LETTER E WITH DOT ABOVE",
+      "glyph": "uni0116"
+    },
+    {
+      "code": "U+0117",
+      "character": "\u0117",
+      "name": "LATIN SMALL LETTER E WITH DOT ABOVE",
+      "glyph": "uni0117"
+    },
+    {
+      "code": "U+0118",
+      "character": "\u0118",
+      "name": "LATIN CAPITAL LETTER E WITH OGONEK",
+      "glyph": "uni0118"
+    },
+    {
+      "code": "U+0119",
+      "character": "\u0119",
+      "name": "LATIN SMALL LETTER E WITH OGONEK",
+      "glyph": "uni0119"
+    },
+    {
+      "code": "U+011A",
+      "character": "\u011a",
+      "name": "LATIN CAPITAL LETTER E WITH CARON",
+      "glyph": "uni011A"
+    },
+    {
+      "code": "U+011B",
+      "character": "\u011b",
+      "name": "LATIN SMALL LETTER E WITH CARON",
+      "glyph": "uni011B"
+    },
+    {
+      "code": "U+011C",
+      "character": "\u011c",
+      "name": "LATIN CAPITAL LETTER G WITH CIRCUMFLEX",
+      "glyph": "uni011C"
+    },
+    {
+      "code": "U+011D",
+      "character": "\u011d",
+      "name": "LATIN SMALL LETTER G WITH CIRCUMFLEX",
+      "glyph": "uni011D"
+    },
+    {
+      "code": "U+011E",
+      "character": "\u011e",
+      "name": "LATIN CAPITAL LETTER G WITH BREVE",
+      "glyph": "uni011E"
+    },
+    {
+      "code": "U+011F",
+      "character": "\u011f",
+      "name": "LATIN SMALL LETTER G WITH BREVE",
+      "glyph": "uni011F"
+    },
+    {
+      "code": "U+0120",
+      "character": "\u0120",
+      "name": "LATIN CAPITAL LETTER G WITH DOT ABOVE",
+      "glyph": "uni0120"
+    },
+    {
+      "code": "U+0121",
+      "character": "\u0121",
+      "name": "LATIN SMALL LETTER G WITH DOT ABOVE",
+      "glyph": "uni0121"
+    },
+    {
+      "code": "U+0122",
+      "character": "\u0122",
+      "name": "LATIN CAPITAL LETTER G WITH CEDILLA",
+      "glyph": "uni0122"
+    },
+    {
+      "code": "U+0123",
+      "character": "\u0123",
+      "name": "LATIN SMALL LETTER G WITH CEDILLA",
+      "glyph": "uni0123"
+    },
+    {
+      "code": "U+0124",
+      "character": "\u0124",
+      "name": "LATIN CAPITAL LETTER H WITH CIRCUMFLEX",
+      "glyph": "uni0124"
+    },
+    {
+      "code": "U+0125",
+      "character": "\u0125",
+      "name": "LATIN SMALL LETTER H WITH CIRCUMFLEX",
+      "glyph": "uni0125"
+    },
+    {
+      "code": "U+0126",
+      "character": "\u0126",
+      "name": "LATIN CAPITAL LETTER H WITH STROKE",
+      "glyph": "uni0126"
+    },
+    {
+      "code": "U+0127",
+      "character": "\u0127",
+      "name": "LATIN SMALL LETTER H WITH STROKE",
+      "glyph": "uni0127"
+    },
+    {
+      "code": "U+0128",
+      "character": "\u0128",
+      "name": "LATIN CAPITAL LETTER I WITH TILDE",
+      "glyph": "uni0128"
+    },
+    {
+      "code": "U+0129",
+      "character": "\u0129",
+      "name": "LATIN SMALL LETTER I WITH TILDE",
+      "glyph": "uni0129"
+    },
+    {
+      "code": "U+012A",
+      "character": "\u012a",
+      "name": "LATIN CAPITAL LETTER I WITH MACRON",
+      "glyph": "uni012A"
+    },
+    {
+      "code": "U+012B",
+      "character": "\u012b",
+      "name": "LATIN SMALL LETTER I WITH MACRON",
+      "glyph": "uni012B"
+    },
+    {
+      "code": "U+012C",
+      "character": "\u012c",
+      "name": "LATIN CAPITAL LETTER I WITH BREVE",
+      "glyph": "uni012C"
+    },
+    {
+      "code": "U+012D",
+      "character": "\u012d",
+      "name": "LATIN SMALL LETTER I WITH BREVE",
+      "glyph": "uni012D"
+    },
+    {
+      "code": "U+012E",
+      "character": "\u012e",
+      "name": "LATIN CAPITAL LETTER I WITH OGONEK",
+      "glyph": "uni012E"
+    },
+    {
+      "code": "U+012F",
+      "character": "\u012f",
+      "name": "LATIN SMALL LETTER I WITH OGONEK",
+      "glyph": "uni012F"
+    },
+    {
+      "code": "U+0130",
+      "character": "\u0130",
+      "name": "LATIN CAPITAL LETTER I WITH DOT ABOVE",
+      "glyph": "uni0130"
+    },
+    {
+      "code": "U+0131",
+      "character": "\u0131",
+      "name": "LATIN SMALL LETTER DOTLESS I",
+      "glyph": "uni0131"
+    },
+    {
+      "code": "U+0132",
+      "character": "\u0132",
+      "name": "LATIN CAPITAL LIGATURE IJ",
+      "glyph": "uni0132"
+    },
+    {
+      "code": "U+0133",
+      "character": "\u0133",
+      "name": "LATIN SMALL LIGATURE IJ",
+      "glyph": "uni0133"
+    },
+    {
+      "code": "U+0134",
+      "character": "\u0134",
+      "name": "LATIN CAPITAL LETTER J WITH CIRCUMFLEX",
+      "glyph": "uni0134"
+    },
+    {
+      "code": "U+0135",
+      "character": "\u0135",
+      "name": "LATIN SMALL LETTER J WITH CIRCUMFLEX",
+      "glyph": "uni0135"
+    },
+    {
+      "code": "U+0136",
+      "character": "\u0136",
+      "name": "LATIN CAPITAL LETTER K WITH CEDILLA",
+      "glyph": "uni0136"
+    },
+    {
+      "code": "U+0137",
+      "character": "\u0137",
+      "name": "LATIN SMALL LETTER K WITH CEDILLA",
+      "glyph": "uni0137"
+    },
+    {
+      "code": "U+0138",
+      "character": "\u0138",
+      "name": "LATIN SMALL LETTER KRA",
+      "glyph": "uni0138"
+    },
+    {
+      "code": "U+0139",
+      "character": "\u0139",
+      "name": "LATIN CAPITAL LETTER L WITH ACUTE",
+      "glyph": "uni0139"
+    },
+    {
+      "code": "U+013A",
+      "character": "\u013a",
+      "name": "LATIN SMALL LETTER L WITH ACUTE",
+      "glyph": "uni013A"
+    },
+    {
+      "code": "U+013B",
+      "character": "\u013b",
+      "name": "LATIN CAPITAL LETTER L WITH CEDILLA",
+      "glyph": "uni013B"
+    },
+    {
+      "code": "U+013C",
+      "character": "\u013c",
+      "name": "LATIN SMALL LETTER L WITH CEDILLA",
+      "glyph": "uni013C"
+    },
+    {
+      "code": "U+013D",
+      "character": "\u013d",
+      "name": "LATIN CAPITAL LETTER L WITH CARON",
+      "glyph": "uni013D"
+    },
+    {
+      "code": "U+013E",
+      "character": "\u013e",
+      "name": "LATIN SMALL LETTER L WITH CARON",
+      "glyph": "uni013E"
+    },
+    {
+      "code": "U+013F",
+      "character": "\u013f",
+      "name": "LATIN CAPITAL LETTER L WITH MIDDLE DOT",
+      "glyph": "uni013F"
+    },
+    {
+      "code": "U+0140",
+      "character": "\u0140",
+      "name": "LATIN SMALL LETTER L WITH MIDDLE DOT",
+      "glyph": "uni0140"
+    },
+    {
+      "code": "U+0141",
+      "character": "\u0141",
+      "name": "LATIN CAPITAL LETTER L WITH STROKE",
+      "glyph": "uni0141"
+    },
+    {
+      "code": "U+0142",
+      "character": "\u0142",
+      "name": "LATIN SMALL LETTER L WITH STROKE",
+      "glyph": "uni0142"
+    },
+    {
+      "code": "U+0143",
+      "character": "\u0143",
+      "name": "LATIN CAPITAL LETTER N WITH ACUTE",
+      "glyph": "uni0143"
+    },
+    {
+      "code": "U+0144",
+      "character": "\u0144",
+      "name": "LATIN SMALL LETTER N WITH ACUTE",
+      "glyph": "uni0144"
+    },
+    {
+      "code": "U+0145",
+      "character": "\u0145",
+      "name": "LATIN CAPITAL LETTER N WITH CEDILLA",
+      "glyph": "uni0145"
+    },
+    {
+      "code": "U+0146",
+      "character": "\u0146",
+      "name": "LATIN SMALL LETTER N WITH CEDILLA",
+      "glyph": "uni0146"
+    },
+    {
+      "code": "U+0147",
+      "character": "\u0147",
+      "name": "LATIN CAPITAL LETTER N WITH CARON",
+      "glyph": "uni0147"
+    },
+    {
+      "code": "U+0148",
+      "character": "\u0148",
+      "name": "LATIN SMALL LETTER N WITH CARON",
+      "glyph": "uni0148"
+    },
+    {
+      "code": "U+0149",
+      "character": "\u0149",
+      "name": "LATIN SMALL LETTER N PRECEDED BY APOSTROPHE",
+      "glyph": "uni0149"
+    },
+    {
+      "code": "U+014A",
+      "character": "\u014a",
+      "name": "LATIN CAPITAL LETTER ENG",
+      "glyph": "uni014A"
+    },
+    {
+      "code": "U+014B",
+      "character": "\u014b",
+      "name": "LATIN SMALL LETTER ENG",
+      "glyph": "uni014B"
+    },
+    {
+      "code": "U+014C",
+      "character": "\u014c",
+      "name": "LATIN CAPITAL LETTER O WITH MACRON",
+      "glyph": "uni014C"
+    },
+    {
+      "code": "U+014D",
+      "character": "\u014d",
+      "name": "LATIN SMALL LETTER O WITH MACRON",
+      "glyph": "uni014D"
+    },
+    {
+      "code": "U+014E",
+      "character": "\u014e",
+      "name": "LATIN CAPITAL LETTER O WITH BREVE",
+      "glyph": "uni014E"
+    },
+    {
+      "code": "U+014F",
+      "character": "\u014f",
+      "name": "LATIN SMALL LETTER O WITH BREVE",
+      "glyph": "uni014F"
+    },
+    {
+      "code": "U+0150",
+      "character": "\u0150",
+      "name": "LATIN CAPITAL LETTER O WITH DOUBLE ACUTE",
+      "glyph": "uni0150"
+    },
+    {
+      "code": "U+0151",
+      "character": "\u0151",
+      "name": "LATIN SMALL LETTER O WITH DOUBLE ACUTE",
+      "glyph": "uni0151"
+    },
+    {
+      "code": "U+0152",
+      "character": "\u0152",
+      "name": "LATIN CAPITAL LIGATURE OE",
+      "glyph": "uni0152"
+    },
+    {
+      "code": "U+0153",
+      "character": "\u0153",
+      "name": "LATIN SMALL LIGATURE OE",
+      "glyph": "uni0153"
+    },
+    {
+      "code": "U+0154",
+      "character": "\u0154",
+      "name": "LATIN CAPITAL LETTER R WITH ACUTE",
+      "glyph": "uni0154"
+    },
+    {
+      "code": "U+0155",
+      "character": "\u0155",
+      "name": "LATIN SMALL LETTER R WITH ACUTE",
+      "glyph": "uni0155"
+    },
+    {
+      "code": "U+0156",
+      "character": "\u0156",
+      "name": "LATIN CAPITAL LETTER R WITH CEDILLA",
+      "glyph": "uni0156"
+    },
+    {
+      "code": "U+0157",
+      "character": "\u0157",
+      "name": "LATIN SMALL LETTER R WITH CEDILLA",
+      "glyph": "uni0157"
+    },
+    {
+      "code": "U+0158",
+      "character": "\u0158",
+      "name": "LATIN CAPITAL LETTER R WITH CARON",
+      "glyph": "uni0158"
+    },
+    {
+      "code": "U+0159",
+      "character": "\u0159",
+      "name": "LATIN SMALL LETTER R WITH CARON",
+      "glyph": "uni0159"
+    },
+    {
+      "code": "U+015A",
+      "character": "\u015a",
+      "name": "LATIN CAPITAL LETTER S WITH ACUTE",
+      "glyph": "uni015A"
+    },
+    {
+      "code": "U+015B",
+      "character": "\u015b",
+      "name": "LATIN SMALL LETTER S WITH ACUTE",
+      "glyph": "uni015B"
+    },
+    {
+      "code": "U+015C",
+      "character": "\u015c",
+      "name": "LATIN CAPITAL LETTER S WITH CIRCUMFLEX",
+      "glyph": "uni015C"
+    },
+    {
+      "code": "U+015D",
+      "character": "\u015d",
+      "name": "LATIN SMALL LETTER S WITH CIRCUMFLEX",
+      "glyph": "uni015D"
+    },
+    {
+      "code": "U+015E",
+      "character": "\u015e",
+      "name": "LATIN CAPITAL LETTER S WITH CEDILLA",
+      "glyph": "uni015E"
+    },
+    {
+      "code": "U+015F",
+      "character": "\u015f",
+      "name": "LATIN SMALL LETTER S WITH CEDILLA",
+      "glyph": "uni015F"
+    },
+    {
+      "code": "U+0160",
+      "character": "\u0160",
+      "name": "LATIN CAPITAL LETTER S WITH CARON",
+      "glyph": "uni0160"
+    },
+    {
+      "code": "U+0161",
+      "character": "\u0161",
+      "name": "LATIN SMALL LETTER S WITH CARON",
+      "glyph": "uni0161"
+    },
+    {
+      "code": "U+0162",
+      "character": "\u0162",
+      "name": "LATIN CAPITAL LETTER T WITH CEDILLA",
+      "glyph": "uni0162"
+    },
+    {
+      "code": "U+0163",
+      "character": "\u0163",
+      "name": "LATIN SMALL LETTER T WITH CEDILLA",
+      "glyph": "uni0163"
+    },
+    {
+      "code": "U+0164",
+      "character": "\u0164",
+      "name": "LATIN CAPITAL LETTER T WITH CARON",
+      "glyph": "uni0164"
+    },
+    {
+      "code": "U+0165",
+      "character": "\u0165",
+      "name": "LATIN SMALL LETTER T WITH CARON",
+      "glyph": "uni0165"
+    },
+    {
+      "code": "U+0166",
+      "character": "\u0166",
+      "name": "LATIN CAPITAL LETTER T WITH STROKE",
+      "glyph": "uni0166"
+    },
+    {
+      "code": "U+0167",
+      "character": "\u0167",
+      "name": "LATIN SMALL LETTER T WITH STROKE",
+      "glyph": "uni0167"
+    },
+    {
+      "code": "U+0168",
+      "character": "\u0168",
+      "name": "LATIN CAPITAL LETTER U WITH TILDE",
+      "glyph": "uni0168"
+    },
+    {
+      "code": "U+0169",
+      "character": "\u0169",
+      "name": "LATIN SMALL LETTER U WITH TILDE",
+      "glyph": "uni0169"
+    },
+    {
+      "code": "U+016A",
+      "character": "\u016a",
+      "name": "LATIN CAPITAL LETTER U WITH MACRON",
+      "glyph": "uni016A"
+    },
+    {
+      "code": "U+016B",
+      "character": "\u016b",
+      "name": "LATIN SMALL LETTER U WITH MACRON",
+      "glyph": "uni016B"
+    },
+    {
+      "code": "U+016C",
+      "character": "\u016c",
+      "name": "LATIN CAPITAL LETTER U WITH BREVE",
+      "glyph": "uni016C"
+    },
+    {
+      "code": "U+016D",
+      "character": "\u016d",
+      "name": "LATIN SMALL LETTER U WITH BREVE",
+      "glyph": "uni016D"
+    },
+    {
+      "code": "U+016E",
+      "character": "\u016e",
+      "name": "LATIN CAPITAL LETTER U WITH RING ABOVE",
+      "glyph": "uni016E"
+    },
+    {
+      "code": "U+016F",
+      "character": "\u016f",
+      "name": "LATIN SMALL LETTER U WITH RING ABOVE",
+      "glyph": "uni016F"
+    },
+    {
+      "code": "U+0170",
+      "character": "\u0170",
+      "name": "LATIN CAPITAL LETTER U WITH DOUBLE ACUTE",
+      "glyph": "uni0170"
+    },
+    {
+      "code": "U+0171",
+      "character": "\u0171",
+      "name": "LATIN SMALL LETTER U WITH DOUBLE ACUTE",
+      "glyph": "uni0171"
+    },
+    {
+      "code": "U+0172",
+      "character": "\u0172",
+      "name": "LATIN CAPITAL LETTER U WITH OGONEK",
+      "glyph": "uni0172"
+    },
+    {
+      "code": "U+0173",
+      "character": "\u0173",
+      "name": "LATIN SMALL LETTER U WITH OGONEK",
+      "glyph": "uni0173"
+    },
+    {
+      "code": "U+0174",
+      "character": "\u0174",
+      "name": "LATIN CAPITAL LETTER W WITH CIRCUMFLEX",
+      "glyph": "uni0174"
+    },
+    {
+      "code": "U+0175",
+      "character": "\u0175",
+      "name": "LATIN SMALL LETTER W WITH CIRCUMFLEX",
+      "glyph": "uni0175"
+    },
+    {
+      "code": "U+0176",
+      "character": "\u0176",
+      "name": "LATIN CAPITAL LETTER Y WITH CIRCUMFLEX",
+      "glyph": "uni0176"
+    },
+    {
+      "code": "U+0177",
+      "character": "\u0177",
+      "name": "LATIN SMALL LETTER Y WITH CIRCUMFLEX",
+      "glyph": "uni0177"
+    },
+    {
+      "code": "U+0178",
+      "character": "\u0178",
+      "name": "LATIN CAPITAL LETTER Y WITH DIAERESIS",
+      "glyph": "uni0178"
+    },
+    {
+      "code": "U+0179",
+      "character": "\u0179",
+      "name": "LATIN CAPITAL LETTER Z WITH ACUTE",
+      "glyph": "uni0179"
+    },
+    {
+      "code": "U+017A",
+      "character": "\u017a",
+      "name": "LATIN SMALL LETTER Z WITH ACUTE",
+      "glyph": "uni017A"
+    },
+    {
+      "code": "U+017B",
+      "character": "\u017b",
+      "name": "LATIN CAPITAL LETTER Z WITH DOT ABOVE",
+      "glyph": "uni017B"
+    },
+    {
+      "code": "U+017C",
+      "character": "\u017c",
+      "name": "LATIN SMALL LETTER Z WITH DOT ABOVE",
+      "glyph": "uni017C"
+    },
+    {
+      "code": "U+017D",
+      "character": "\u017d",
+      "name": "LATIN CAPITAL LETTER Z WITH CARON",
+      "glyph": "uni017D"
+    },
+    {
+      "code": "U+017E",
+      "character": "\u017e",
+      "name": "LATIN SMALL LETTER Z WITH CARON",
+      "glyph": "uni017E"
+    },
+    {
+      "code": "U+017F",
+      "character": "\u017f",
+      "name": "LATIN SMALL LETTER LONG S",
+      "glyph": "uni017F"
+    },
+    {
+      "code": "U+0300",
+      "character": "\u0300",
+      "name": "COMBINING GRAVE ACCENT",
+      "glyph": "uni0300"
+    },
+    {
+      "code": "U+0301",
+      "character": "\u0301",
+      "name": "COMBINING ACUTE ACCENT",
+      "glyph": "uni0301"
+    },
+    {
+      "code": "U+0302",
+      "character": "\u0302",
+      "name": "COMBINING CIRCUMFLEX ACCENT",
+      "glyph": "uni0302"
+    },
+    {
+      "code": "U+0303",
+      "character": "\u0303",
+      "name": "COMBINING TILDE",
+      "glyph": "uni0303"
+    },
+    {
+      "code": "U+0304",
+      "character": "\u0304",
+      "name": "COMBINING MACRON",
+      "glyph": "uni0304"
+    },
+    {
+      "code": "U+0306",
+      "character": "\u0306",
+      "name": "COMBINING BREVE",
+      "glyph": "uni0306"
+    },
+    {
+      "code": "U+0307",
+      "character": "\u0307",
+      "name": "COMBINING DOT ABOVE",
+      "glyph": "uni0307"
+    },
+    {
+      "code": "U+0308",
+      "character": "\u0308",
+      "name": "COMBINING DIAERESIS",
+      "glyph": "uni0308"
+    },
+    {
+      "code": "U+030A",
+      "character": "\u030a",
+      "name": "COMBINING RING ABOVE",
+      "glyph": "uni030A"
+    },
+    {
+      "code": "U+030B",
+      "character": "\u030b",
+      "name": "COMBINING DOUBLE ACUTE ACCENT",
+      "glyph": "uni030B"
+    },
+    {
+      "code": "U+030C",
+      "character": "\u030c",
+      "name": "COMBINING CARON",
+      "glyph": "uni030C"
+    },
+    {
+      "code": "U+0327",
+      "character": "\u0327",
+      "name": "COMBINING CEDILLA",
+      "glyph": "uni0327"
+    },
+    {
+      "code": "U+0328",
+      "character": "\u0328",
+      "name": "COMBINING OGONEK",
+      "glyph": "uni0328"
+    },
+    {
+      "code": "U+1E9E",
+      "character": "\u1e9e",
+      "name": "LATIN CAPITAL LETTER SHARP S",
+      "glyph": "uni1E9E"
+    },
+    {
+      "code": "U+2013",
+      "character": "\u2013",
+      "name": "EN DASH",
+      "glyph": "uni2013"
+    },
+    {
+      "code": "U+2014",
+      "character": "\u2014",
+      "name": "EM DASH",
+      "glyph": "uni2014"
+    },
+    {
+      "code": "U+2018",
+      "character": "\u2018",
+      "name": "LEFT SINGLE QUOTATION MARK",
+      "glyph": "uni2018"
+    },
+    {
+      "code": "U+2019",
+      "character": "\u2019",
+      "name": "RIGHT SINGLE QUOTATION MARK",
+      "glyph": "uni2019"
+    },
+    {
+      "code": "U+201A",
+      "character": "\u201a",
+      "name": "SINGLE LOW-9 QUOTATION MARK",
+      "glyph": "uni201A"
+    },
+    {
+      "code": "U+201C",
+      "character": "\u201c",
+      "name": "LEFT DOUBLE QUOTATION MARK",
+      "glyph": "uni201C"
+    },
+    {
+      "code": "U+201D",
+      "character": "\u201d",
+      "name": "RIGHT DOUBLE QUOTATION MARK",
+      "glyph": "uni201D"
+    },
+    {
+      "code": "U+201E",
+      "character": "\u201e",
+      "name": "DOUBLE LOW-9 QUOTATION MARK",
+      "glyph": "uni201E"
+    },
+    {
+      "code": "U+2020",
+      "character": "\u2020",
+      "name": "DAGGER",
+      "glyph": "uni2020"
+    },
+    {
+      "code": "U+2021",
+      "character": "\u2021",
+      "name": "DOUBLE DAGGER",
+      "glyph": "uni2021"
+    },
+    {
+      "code": "U+2022",
+      "character": "\u2022",
+      "name": "BULLET",
+      "glyph": "uni2022"
+    },
+    {
+      "code": "U+2026",
+      "character": "\u2026",
+      "name": "HORIZONTAL ELLIPSIS",
+      "glyph": "uni2026"
+    },
+    {
+      "code": "U+2030",
+      "character": "\u2030",
+      "name": "PER MILLE SIGN",
+      "glyph": "uni2030"
+    },
+    {
+      "code": "U+2039",
+      "character": "\u2039",
+      "name": "SINGLE LEFT-POINTING ANGLE QUOTATION MARK",
+      "glyph": "uni2039"
+    },
+    {
+      "code": "U+203A",
+      "character": "\u203a",
+      "name": "SINGLE RIGHT-POINTING ANGLE QUOTATION MARK",
+      "glyph": "uni203A"
+    },
+    {
+      "code": "U+20AC",
+      "character": "\u20ac",
+      "name": "EURO SIGN",
+      "glyph": "uni20AC"
+    },
+    {
+      "code": "U+2117",
+      "character": "\u2117",
+      "name": "SOUND RECORDING COPYRIGHT",
+      "glyph": "uni2117"
+    },
+    {
+      "code": "U+2122",
+      "character": "\u2122",
+      "name": "TRADE MARK SIGN",
+      "glyph": "uni2122"
+    },
+    {
+      "code": "U+2190",
+      "character": "\u2190",
+      "name": "LEFTWARDS ARROW",
+      "glyph": "uni2190"
+    },
+    {
+      "code": "U+2191",
+      "character": "\u2191",
+      "name": "UPWARDS ARROW",
+      "glyph": "uni2191"
+    },
+    {
+      "code": "U+2192",
+      "character": "\u2192",
+      "name": "RIGHTWARDS ARROW",
+      "glyph": "uni2192"
+    },
+    {
+      "code": "U+2193",
+      "character": "\u2193",
+      "name": "DOWNWARDS ARROW",
+      "glyph": "uni2193"
+    },
+    {
+      "code": "U+2194",
+      "character": "\u2194",
+      "name": "LEFT RIGHT ARROW",
+      "glyph": "uni2194"
+    },
+    {
+      "code": "U+2212",
+      "character": "\u2212",
+      "name": "MINUS SIGN",
+      "glyph": "uni2212"
+    },
+    {
+      "code": "U+221A",
+      "character": "\u221a",
+      "name": "SQUARE ROOT",
+      "glyph": "uni221A"
+    },
+    {
+      "code": "U+221E",
+      "character": "\u221e",
+      "name": "INFINITY",
+      "glyph": "uni221E"
+    },
+    {
+      "code": "U+2248",
+      "character": "\u2248",
+      "name": "ALMOST EQUAL TO",
+      "glyph": "uni2248"
+    },
+    {
+      "code": "U+2260",
+      "character": "\u2260",
+      "name": "NOT EQUAL TO",
+      "glyph": "uni2260"
+    },
+    {
+      "code": "U+2264",
+      "character": "\u2264",
+      "name": "LESS-THAN OR EQUAL TO",
+      "glyph": "uni2264"
+    },
+    {
+      "code": "U+2265",
+      "character": "\u2265",
+      "name": "GREATER-THAN OR EQUAL TO",
+      "glyph": "uni2265"
+    },
+    {
+      "code": "U+2605",
+      "character": "\u2605",
+      "name": "BLACK STAR",
+      "glyph": "uni2605"
+    },
+    {
+      "code": "U+2606",
+      "character": "\u2606",
+      "name": "WHITE STAR",
+      "glyph": "uni2606"
+    },
+    {
+      "code": "U+2665",
+      "character": "\u2665",
+      "name": "BLACK HEART SUIT",
+      "glyph": "uni2665"
+    },
+    {
+      "code": "U+2713",
+      "character": "\u2713",
+      "name": "CHECK MARK",
+      "glyph": "uni2713"
+    },
+    {
+      "code": "U+2715",
+      "character": "\u2715",
+      "name": "MULTIPLICATION X",
+      "glyph": "uni2715"
+    }
+  ]
+}

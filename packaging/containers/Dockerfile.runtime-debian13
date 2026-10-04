@@ -1,0 +1,15 @@
+# Deliberately no system Qt, mpv or FFmpeg: those must come from the candidate.
+# Same base digest as Dockerfile.debian13. Never pass host USB/media into this
+# image; run with --network none. Mesa/Xvfb exercises software OpenGL only.
+FROM debian:13-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates xvfb xauth dbus-x11 xdotool openbox \
+    fonts-dejavu-core mesa-utils libgl1-mesa-dri libegl-mesa0 libopengl0 \
+    libxkbcommon-x11-0 libxcb-cursor0 sqlite3 \
+    xdg-desktop-portal xdg-desktop-portal-gtk libglib2.0-bin \
+    gsettings-desktop-schemas adwaita-icon-theme \
+    && rm -rf /var/lib/apt/lists/*
+COPY smoke-runtime.sh /usr/local/bin/zuuned-runtime-smoke
+RUN chmod 755 /usr/local/bin/zuuned-runtime-smoke && useradd --uid 1000 --user-group --create-home tester
+ENV LANG=C.UTF-8
+ENTRYPOINT ["/usr/local/bin/zuuned-runtime-smoke"]

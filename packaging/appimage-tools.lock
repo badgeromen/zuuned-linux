@@ -1,0 +1,8 @@
+# filename sha256 download-url
+# Content pins for the deployment tools and the September 8 launcher runtime.
+# The upstream continuous URLs can move: a changed download MUST fail checksum
+# verification. Preserve these binaries with release build inputs or deliberately
+# review/update this lock; never silently accept the latest continuous build.
+linuxdeploy-x86_64.AppImage 36a2d7e274d12e1050d0e9ecfe11d339ed54720b2bec464c286d53f8b07f5c62 https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+linuxdeploy-plugin-qt-x86_64.AppImage cfc1055b2b9dbc08412b579f20990b7b41a17b61beaa5847dc9477c96c9e9617 https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
+runtime-x86_64 1cc49bcf1e2ccd593c379adb17c9f85a36d619088296504de95b1d06215aebbf https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64

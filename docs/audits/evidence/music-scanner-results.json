@@ -1,0 +1,194 @@
+{
+  "scratch": "/tmp/zuuned-parser-audit-gLE0Jl",
+  "initial": [
+    {
+      "filepath": "Trim/Album/blank.flac",
+      "title": " ",
+      "artist": " ",
+      "albumartist": " ",
+      "album": "Tagged Album",
+      "year": 0,
+      "tracknumber": 2,
+      "duration": 150
+    },
+    {
+      "filepath": "Case/Album/lower.flac",
+      "title": "Tagged Title",
+      "artist": "Tagged Artist",
+      "albumartist": "Case Artist",
+      "album": "Tagged Album",
+      "year": 0,
+      "tracknumber": 2,
+      "duration": 150
+    },
+    {
+      "filepath": "Case/Album/upper.flac",
+      "title": "Tagged Title",
+      "artist": "Tagged Artist",
+      "albumartist": "CASE Artist",
+      "album": "Tagged Album",
+      "year": 0,
+      "tracknumber": 2,
+      "duration": 150
+    },
+    {
+      "filepath": "Codec/Ogg/file.ogg",
+      "title": "file",
+      "artist": "Codec",
+      "albumartist": "Codec",
+      "album": "Ogg",
+      "year": 0,
+      "tracknumber": 0,
+      "duration": 150
+    },
+    {
+      "filepath": "Codec/Opus/file.opus",
+      "title": "file",
+      "artist": "Codec",
+      "albumartist": "Codec",
+      "album": "Opus",
+      "year": 0,
+      "tracknumber": 0,
+      "duration": 156
+    },
+    {
+      "filepath": "Discs/Double/CD2/1.flac",
+      "title": "A disc2 track1",
+      "artist": "Disc Artist",
+      "albumartist": "Disc Artist",
+      "album": "Double",
+      "year": 0,
+      "tracknumber": 1,
+      "duration": 150
+    },
+    {
+      "filepath": "Discs/Double/CD1/1.flac",
+      "title": "Z disc1 track1",
+      "artist": "Disc Artist",
+      "albumartist": "Disc Artist",
+      "album": "Double",
+      "year": 0,
+      "tracknumber": 1,
+      "duration": 150
+    },
+    {
+      "filepath": "Discs/Double/CD2/2.flac",
+      "title": "A disc2 track2",
+      "artist": "Disc Artist",
+      "albumartist": "Disc Artist",
+      "album": "Double",
+      "year": 0,
+      "tracknumber": 2,
+      "duration": 150
+    },
+    {
+      "filepath": "Discs/Double/CD1/2.flac",
+      "title": "Z disc1 track2",
+      "artist": "Disc Artist",
+      "albumartist": "Disc Artist",
+      "album": "Double",
+      "year": 0,
+      "tracknumber": 2,
+      "duration": 150
+    },
+    {
+      "filepath": "Downloads/21/owner.flac",
+      "title": "Set Fire to the Rain",
+      "artist": "Adele",
+      "albumartist": "Downloads",
+      "album": "21",
+      "year": 0,
+      "tracknumber": 5,
+      "duration": 150
+    },
+    {
+      "filepath": "Folder Owner/Folder Album/probe.flac",
+      "title": "Original Title",
+      "artist": "Original Artist",
+      "albumartist": "Original Owner",
+      "album": "Tagged Album",
+      "year": 0,
+      "tracknumber": 2,
+      "duration": 150
+    },
+    {
+      "filepath": "Trim/Album/space.flac",
+      "title": "Tagged Title",
+      "artist": "Spaced Artist ",
+      "albumartist": "Spaced Artist ",
+      "album": "Tagged Album",
+      "year": 0,
+      "tracknumber": 2,
+      "duration": 150
+    },
+    {
+      "filepath": "Stat/Album/stat.flac",
+      "title": "Before Retag",
+      "artist": "Tagged Artist",
+      "albumartist": "Tagged Owner",
+      "album": "Tagged Album",
+      "year": 0,
+      "tracknumber": 2,
+      "duration": 150
+    },
+    {
+      "filepath": "A/World 2/title.flac",
+      "title": "Tagged Title",
+      "artist": "Tagged Artist",
+      "albumartist": "Tagged Owner",
+      "album": "Worl",
+      "year": 0,
+      "tracknumber": 2,
+      "duration": 150
+    },
+    {
+      "filepath": "01 - Adele - Hello.flac",
+      "title": "Adele - Hello",
+      "artist": "Unknown Artist",
+      "albumartist": "Unknown Artist",
+      "album": "Unknown Album",
+      "year": 0,
+      "tracknumber": 0,
+      "duration": 150
+    }
+  ],
+  "after": [
+    {
+      "filepath": "Stat/Album/stat.flac",
+      "title": "Before Retag",
+      "artist": "Tagged Artist",
+      "albumartist": "Tagged Owner",
+      "album": "Tagged Album",
+      "year": 0,
+      "tracknumber": 2,
+      "duration": 150
+    },
+    {
+      "filepath": "Folder Owner/Folder Album/probe.flac",
+      "title": "probe",
+      "artist": "Folder Owner",
+      "albumartist": "Folder Owner",
+      "album": "Folder Album",
+      "year": 0,
+      "tracknumber": 0,
+      "duration": 0
+    }
+  ],
+  "oggProbe": {
+    "streams": [
+      {
+        "tags": {
+          "encoder": "Lavc63.1.101 libvorbis",
+          "artist": "Tagged Artist",
+          "album_artist": "Tagged Owner",
+          "title": "Tagged Title",
+          "album": "Tagged Album",
+          "date": "2021",
+          "track": "2",
+          "genre": "Pop"
+        }
+      }
+    ],
+    "format": {}
+  }
+}

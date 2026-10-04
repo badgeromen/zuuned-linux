@@ -1,0 +1,42 @@
+# Maintainer: BadgerOmen
+# Zuuned — the full-stack Zune manager for Linux.
+# Music, video (per-device transcode profiles), photos, and mixtape
+# playlists over a clean-room MTPZ stack. Not affiliated with or
+# endorsed by Microsoft; Zune is a trademark of Microsoft Corporation.
+
+pkgname=zuuned-git
+pkgver=r200
+pkgrel=1
+pkgdesc="The full-stack Zune manager: music, video, photos, mixtapes over native MTPZ"
+arch=('x86_64')
+url="https://zuuned.com"
+license=('GPL-3.0-or-later')
+depends=('qt6-base>=6.8' 'qt6-declarative>=6.8' 'qt6-5compat>=6.8'
+         'libusb' 'libgcrypt' 'sqlite' 'mpv' 'ffmpeg' 'lame')
+makedepends=('cmake' 'ninja' 'git' 'pkgconf')
+provides=('zuuned')
+conflicts=('zuuned')
+source=("git+https://github.com/badgeromen/zuuned-linux.git")
+sha256sums=('SKIP')
+
+pkgver() {
+    cd zuunedlinux
+    printf "r%s.%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+prepare() {
+    cd zuunedlinux
+    git submodule update --init libzune
+}
+
+build() {
+    cd zuunedlinux
+    cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_INSTALL_PREFIX=/usr
+    cmake --build build
+}
+
+package() {
+    cd zuunedlinux
+    DESTDIR="$pkgdir" cmake --install build
+}
