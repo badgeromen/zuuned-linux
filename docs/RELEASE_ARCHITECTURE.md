@@ -1,7 +1,8 @@
 # Zuuned source, build and release architecture
 
-Status: proposal updated October 4, 2026. No infrastructure has been provisioned and no
-publication is authorized by this document. Preserve the current working app.
+Status: October 4, 2026. The two public source repositories are published.
+The automation below remains proposed; this document does not authorize a push
+or certify a newly built release. Preserve the current working app.
 
 ## Recommendation
 
@@ -19,6 +20,9 @@ implementation. Start with the existing Linux AppImage pipeline.
 
 The initial prepared Linux export includes libzune as ordinary source. That is
 a bootstrap snapshot, not the proposed permanent shared-library arrangement.
+The current container snapshot exporter requires a submodule and does not yet
+package this vendored public layout. Resolve that provenance mismatch before
+claiming the proposed public-commit release pipeline is implemented.
 Establish one canonical source history per component after migration. Recommend
 GitHub for public application/protocol development, with Gitea backups and private
 release inputs. Do not maintain independently edited public and private copies
@@ -78,7 +82,7 @@ must finish before the final checksum and final artifact tests. A changed binary
 requires a new candidate and renewed validation. Keep debug symbols and detailed
 test evidence separately from user downloads. Source access remains clearly linked.
 
-Use per-platform tags such as `linux-v0.1.2`, with title `Zuuned Linux 0.1.2`.
+Use tags such as `v0.1.2` in the Linux repository, with title `Zuuned Linux 0.1.2`.
 Keep existing `v0.1.0` and `v0.1.1` unchanged. Future Mac and Windows versions can
 ship independently. The Linux README links Linux releases. Future platforms can use their own
 source/release repositories without requiring synchronized versions.

@@ -12,6 +12,11 @@ in a new commit or adding an ignore rule cannot sanitize that history.
 
 ## Export
 
+This is a maintainer migration tool, not a setup step for people cloning the
+public repository. Its authentication comparison gate requires the original
+private header; do not expect that private-fallback test to pass from a public
+clone without the private inputs. The public native build does not require them.
+
 Run from the private checkout:
 
 ```sh

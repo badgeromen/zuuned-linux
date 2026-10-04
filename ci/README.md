@@ -9,12 +9,16 @@ The hosted job has a 45-minute limit and echoes successful gate logs into its
 job log so detailed output survives removal of the job container. Failed gates
 print their last 80 lines; local complete logs remain in the evidence directory.
 
-`.gitea/workflows/check.yml` runs the same entry point. Build
+The checked-in `.gitea/workflows/check.yml` is the private development CI
+configuration and runs the same entry point. This public repository includes
+libzune as ordinary source, so it needs no submodule initialization. The workflow
+is not a deployed GitHub Actions job. For the private Gitea runner, build
 `packaging/containers/Dockerfile.debian13` and register a dedicated runner label
 `zuuned-debian13:docker://<your-built-image>` (prefer its immutable digest).
 Do not mount a user profile, USB devices or Docker socket into job containers.
-The checkout action is pinned; submodules use the committed pin, never remote
-branch tip. The runner must have read access to this repository and libzune.
+The checkout action is pinned. In the private development layout, submodules
+use the committed pin, never the remote branch tip, and the runner needs access
+to both private repositories. The public snapshot requires only its own checkout.
 The workflow has no release upload step or publishing token.
 
 Gitea's [runner documentation](https://docs.gitea.com/1.25/usage/actions/act-runner/)
@@ -28,8 +32,10 @@ server version, artifact API support or upload limit is assumed.
 ## Release preparation
 
 1. Commit reviewed changes and run the software gates on that exact revision.
-2. Build using the Debian container instructions in
-   `packaging/containers/README.md`; `packaging/build-appimage.sh` refuses a dirty
+2. In the private maintainer layout, build using the Debian container instructions
+   in `packaging/containers/README.md`. The snapshot exporter requires a libzune
+   gitlink and currently rejects the vendored public layout; see
+   [BUILDING.md](../BUILDING.md). `packaging/build-appimage.sh` refuses a dirty
    checkout by default and emits the AppImage, checksum, build manifest,
    dependency inventory and environment record.
 3. Rehearse that exact artifact with the isolated runtime harness, including
@@ -37,13 +43,14 @@ server version, artifact API support or upload limit is assumed.
    results in `docs/releases/`; never attach a user's database or settings.
 4. Complete the remaining host/device gates in `docs/TESTER_RELEASE.md` and
    label any deliberately outstanding gates in the tester notes.
-5. After explicit push/publication approval, create a **prerelease** on this
-   repository's Gitea Releases page. Attach the AppImage, checksum, build
-   records and concise testing instructions. Verify a tester account can
-   download it and check the checksum. Confirm server/proxy upload limits
-   accept the actual artifact before inviting the group.
+5. After explicit push/publication approval, create a **prerelease** on
+   [GitHub Releases](https://github.com/badgeromen/zuuned-linux/releases).
+   Attach the AppImage, checksum, notices, accurate source/provenance links
+   and concise testing instructions. Download the published file and verify
+   its checksum before inviting the group.
 
-Gitea Releases is the initial distribution target. Repository visibility and
-tester membership determine access; configure these explicitly before release.
-Keep the previous candidate available for rollback. CI passing alone does not
-publish a release or certify physical device playback.
+GitHub is the public download target. Private Gitea retains authentication
+inputs and development history. Migrating old releases preserves their original
+bytes and verification limits; it does not package newer source changes. Keep
+previous candidates available. CI passing alone does not publish a release or
+certify physical device playback.

@@ -1,5 +1,9 @@
 # Operation Clean Getaway — the hardening & ship plan
 
+> Historical development record. Dates, paths, plans and results below describe
+> that investigation, not the current downloadable release. Start with the
+> [documentation guide](README.md) for current build and tester instructions.
+
 Goal: a stranger installs Zuuned, plugs in whatever Zune they own, and
 it just works — and when it can't, it says why in a sentence, not a
 stack trace. This plan covers every known gap between "works

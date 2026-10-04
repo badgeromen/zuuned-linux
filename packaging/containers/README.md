@@ -60,6 +60,12 @@ uses `--network none`.
 
 ## Export and package a candidate
 
+**Layout requirement:** `snapshot.mjs` currently requires a libzune Git
+submodule. The public `badgeromen/zuuned-linux` snapshot vendors libzune as
+ordinary files and is rejected by this exporter. The steps below describe the
+private maintainer checkout. Public-clone packaging needs an exporter/provenance
+update; native public-source compilation is documented in [BUILDING.md](../../BUILDING.md).
+
 Finish and commit the release source, including any libzune pin change, before
 the final export. Initialize the pinned submodule first if this is a new clone.
 For each component observed clean, `snapshot.mjs` runs `git archive` against its

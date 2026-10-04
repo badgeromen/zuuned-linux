@@ -1,5 +1,7 @@
 # MTPZ Authentication Protocol
 
+> **Documentation status (2026-10-04):** Protocol research, not an authentication-data distribution or API guide. Public source does not embed values; current setup is in BUILD_WITH_MTPZ.md and PUBLIC_CREDENTIALS.md. A successful device-handle return alone does not prove authentication.
+
 ## Overview
 
 The Zune requires MTPZ (MTP-Zune) authentication before accepting any MTP commands. This is a proprietary extension to the MTP protocol that uses RSA encryption, AES-128-CBC, and CMAC (RFC 4493) for a 6-step authentication handshake.

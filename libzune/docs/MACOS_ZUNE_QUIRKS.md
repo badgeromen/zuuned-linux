@@ -1,5 +1,7 @@
 # macOS Zune Quirks — Everything That's Different from Linux
 
+> **Documentation status (2026-10-04):** Historical macOS testing notes, retained as evidence for that platform/session. The DriverKit extension lives outside this repository. Consult README.md and API_REFERENCE.md for the current library interface and teardown rules.
+
 ## Overview
 
 Getting a Zune to work on macOS required solving problems that don't exist on Linux. This document catalogs every macOS-specific issue we discovered and how we solved it.

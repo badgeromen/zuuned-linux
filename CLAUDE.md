@@ -29,7 +29,15 @@ Debian build dependencies; the app also links mpv, FFmpeg, LAME and SQLite.
 CMake drives `make -C libzune` automatically — after C changes just
 rebuild; no manual copy step (unlike ZuunedMac's `cp libzune.a ../lib/`).
 
-## Submodule Discipline — READ THIS BEFORE TOUCHING libzune
+## Shared library discipline (public source snapshot)
+
+This public checkout vendors `libzune/` as ordinary files. The historical private
+checkout used a submodule; the rules below describe that original workflow.
+Do not run remote submodule updates in this public snapshot. Make shared protocol
+changes in `badgeromen/libzune`, then integrate a reviewed revision here with tests.
+See `BUILDING.md` for the public native build and packaging limitations.
+
+### Historical private submodule workflow
 
 These rules exist because each was violated once and each violation cost
 real debugging time (2026-08-27):
@@ -99,7 +107,7 @@ zuunedlinux/
 │   └── fonts/              Permanent Marker, Specimen Alien (bundled)
 ├── packaging/
 │   └── 68-zuuned.rules     installed as both 68- and 72- rules
-└── libzune/                submodule — branch master
+└── libzune/                included C library source
 ```
 
 ## Code Conventions
@@ -123,7 +131,7 @@ zuunedlinux/
 
 ### C (libzune)
 - C99, Zune Rebellion naming (breach/smuggle/forge/purge…).
-- See `libzune/AGENTS.md` for full conventions and `libzune/docs/TOC.md`
+- See `libzune/CLAUDE.md` for full conventions and `libzune/docs/TOC.md`
   before searching the filesystem.
 
 ## Device Testing

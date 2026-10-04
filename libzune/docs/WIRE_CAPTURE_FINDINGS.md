@@ -1,5 +1,7 @@
 # Wire Capture Findings — Windows 8 Zune Client Ground Truth
 
+> **Documentation status (2026-10-04):** Historical hardware/capture evidence. Preserve the session-specific findings below; current API and portability contracts are in API_REFERENCE.md and README.md. Capture files and machine-local paths mentioned here are not shipped as source dependencies.
+
 **Session 2026-08-27.** All eight USBPcap captures (recorded while syncing with the
 official Zune 4.8 software on Windows 8) were reconstructed into complete PTP/MTP
 transaction logs — 52,000+ transactions decoded with <10 unparseable frames.

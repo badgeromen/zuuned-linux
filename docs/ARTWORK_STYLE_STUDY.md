@@ -189,6 +189,6 @@ for parser version/root changes and incomplete probes, with the existing manual
 identity and custom-art protections preserved.
 
 No production parser fixes are included in this study. Shared C probe/decoder
-changes belong in libzune under its submodule workflow; Qt scanner/path-context
+changes belong in the shared libzune repository; Qt scanner/path-context
 changes belong in the application. Multi-episode representation and broader
 matching policy need their own design rather than additional ambiguous regexes.

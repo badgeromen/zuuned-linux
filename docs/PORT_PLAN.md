@@ -1,5 +1,10 @@
 # ZuunedLinux Port Plan
 
+> Implementation history and remaining verification backlog. The dated phases
+> below include original plans and later corrections; they are not a promise
+> that every item ships in the current AppImage. For the current public layout
+> and download/source distinction, see [the documentation guide](README.md).
+
 The complete, phase-by-phase sequence for porting ZuunedMac to Linux.
 Derived from a full analysis of the mac codebase (all services, views,
 dialogs, and the transcode C layer) on 2026-08-27. Each phase has a
@@ -10,13 +15,15 @@ per AGENTS.md ("hardware claims require a real device test").
 in app resources. Existing graffiti selections retain their role through a
 legacy-setting alias; Permanent Marker remains the default. The generator,
 coverage and preserved original Specimen study are in `tools/font-studio/`.
-This source change requires a new AppImage before tester distribution.
+This font replacement was packaged in 0.1.0 and retained in 0.1.1. Later
+source changes need their own package validation.
 
 **Music matching follow-up, 2026-10-02:** artist portraits and album covers
 share the phased plan in [MUSIC_MATCHING_PLAN.md](MUSIC_MATCHING_PLAN.md).
 Status: native software candidate; user review and new packaging remain.
 Preserve local/manual artwork and metadata; resolve aliases,
-score edition evidence, offer general covers explicitly and expose lookup status.
+score edition evidence, apply confident general covers automatically and expose
+lookup status. Uncertain identity still needs a manual match.
 
 ## Ground rules (apply to every phase)
 
@@ -76,11 +83,15 @@ See [`ARTWORK_STYLE_STUDY.md`](ARTWORK_STYLE_STUDY.md).
   serialized). Transcode on its own QThreadPool — never behind USB ops.
   Each mpv player owns its own context and event thread. UI thread owns
   state; queued signals only.
-- **libzune changes go in the submodule** on a branch, hardware-tested
-  via zunetool, then the pin bumps here. Never patched app-side.
+- **Protocol changes belong in libzune**, hardware-tested via zunetool.
+  Coordinate them with the standalone library repository, then update the
+  application's included source. The private development checkout uses a
+  submodule; this public snapshot vendors its files. Never patch protocol
+  behavior into application-side workarounds.
 - **Theme tokens only** in QML; token changes ported from
   `ZuneColors.swift`/`ZuneStyles.swift`/`ZuneFonts.swift`, never local.
-- Every phase ends: AGENTS.md roadmap updated, commit + push.
+- Every phase ends with updated evidence and a reviewed commit. Pushing
+  requires the user's explicit approval under AGENTS.md.
 
 ## Already done (foundation)
 

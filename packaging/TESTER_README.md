@@ -1,7 +1,9 @@
 # Zuuned Linux - tester guide
 
 Zuuned manages music, videos, photos and playlists on Microsoft Zune players.
-This is a development testing build. Start with a small test folder and a few
+The 0.1.1 download is the original development testing build, migrated without
+recompiling. Newer matching and audio-copy grouping in the public source are
+not included in that executable. Start with a small test folder and a few
 items before trying a large library or transfer.
 
 ## Download and run

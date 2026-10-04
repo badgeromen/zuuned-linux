@@ -1,5 +1,7 @@
 # Zune MTP Album/Artist Object Hierarchy
 
+> **Documentation status (2026-10-04):** Historical hierarchy notes. The current artist/album path uses SendObjectPropList and a zero-byte SendObject commit, not the SendObjectInfo recipe below. Artist reuse is now implemented. Use API_REFERENCE.md, ARTIST_REUSE.md and WIRE_CAPTURE_FINDINGS.md for current integration and later evidence.
+
 ## Why Album Objects Matter
 
 The Zune firmware reads album and artist metadata from **MTP abstract objects**, NOT from individual track properties. If you send a track with `artist="Breaking Benjamin"` and `album="Dark Before Dawn"` set as track metadata, the Zune will display "Unknown Album" / "Unknown Artist" unless corresponding MTP abstract objects exist.

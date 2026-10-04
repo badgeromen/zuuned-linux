@@ -1,5 +1,9 @@
 # Round 2 Fix Plan — from the fresh-install rehearsal
 
+> Historical development record. Dates, paths, plans and results below describe
+> that investigation, not the current downloadable release. Start with the
+> [documentation guide](README.md) for current build and tester instructions.
+
 34 findings from role-playing a stranger on a fully-stripped box (no
 udev rule, no kernel module, no ~/.mtpz-data) against a real messy
 library and both Zune families. Source: `docs/FRESH_RUN_LOG.md`.

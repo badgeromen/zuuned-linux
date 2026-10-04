@@ -22,7 +22,8 @@ include [`zune.h`](include/zune.h) and link the static or shared library.
 | Read the device database | `zune_infiltrate` |
 | Diagnose / recover | `zune_autopsy`, `zune_autopsy_name`, `zune_unjam` |
 
-The [source index](docs/TOC.md) maps functions to their current declarations and
+The [API reference](docs/API_REFERENCE.md) documents all 90 public functions,
+including ownership and implementation limits. The [source index](docs/TOC.md) maps functions to their current declarations and
 implementations. The header documents ownership, return values and callbacks.
 Older research documents may describe superseded implementations; consult the
 current header and index when integrating the library.
@@ -74,7 +75,7 @@ Build outputs: `libzune.a` and `libzune.so` on Linux, or `libzune.a` and
 The shared-library target currently has no versioned SONAME or pkg-config file.
 
 FFmpeg executables are used for thumbnail/photo preparation and legacy transcode
-helpers. **The `zune_arm_*` helpers currently hard-code
+helpers. **The audio/video `zune_arm_*` helpers and `zune_retag` currently hard-code
 `/opt/homebrew/bin/ffmpeg`; they are not portable Linux transcoders as written.**
 Linux callers should prepare compatible media themselves. `zunetool smuggle`
 sends the supplied file as-is. Zuuned's separate application transcode layer is

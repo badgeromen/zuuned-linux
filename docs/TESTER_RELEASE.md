@@ -1,5 +1,16 @@
 # Tester release preparation
 
+**Reading this checklist, October 4, 2026:** the candidate names and results
+below describe historical builds. The public source snapshot is newer than the
+0.1.1 executable being migrated to the new account. Migration does not rerun
+hardware tests or include later source changes. Use the exact release notes
+and checksum to identify a download; this checklist is not a certification of
+every published artifact. See [documentation status](README.md).
+
+The container snapshot exporter still requires a libzune submodule, while the
+public repository includes ordinary libzune source files. See [BUILDING.md](../BUILDING.md)
+for this packaging limitation before running the maintainer commands below.
+
 The recorded `tester-r2` desktop-dialog candidate is built and passes the clean
 runtime, native picker and report-export rehearsal. Its exact artifact and
 evidence are in [TESTER_R2_DESKTOP_DIALOGS.md](releases/TESTER_R2_DESKTOP_DIALOGS.md). It has not been

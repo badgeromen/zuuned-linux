@@ -1,6 +1,6 @@
 # Music artwork discovery after adding a folder
 
-October 2 status: the current implementation shipped in 0.1.1. Earlier candidate
+October 2 status: the initial multi-folder artwork fixes shipped in 0.1.1. Earlier candidate
 notes below are historical. The artist/album follow-up is documented in
 [MUSIC_MATCHING_PLAN.md](MUSIC_MATCHING_PLAN.md); its native candidate passes
 software gates, with user acceptance and packaging pending.

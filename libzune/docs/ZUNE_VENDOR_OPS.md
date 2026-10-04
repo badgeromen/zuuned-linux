@@ -1,5 +1,7 @@
 # Zune vendor opcodes — decoded from Windows client captures
 
+> **Documentation status (2026-10-04):** Dated capture research. For later corrections, including SyncNotify percentages/direction/framing, read WIRE_CAPTURE_FINDINGS.md and src/finalize.c. Parent-application plans and capture files referenced below are not shipped in this standalone library.
+
 Reverse-engineered from `~/Downloads/*.pcapng` Wireshark captures of the
 official Microsoft Zune software talking to real Zune hardware. This file
 is the durable record of what each vendor opcode does on the wire so that

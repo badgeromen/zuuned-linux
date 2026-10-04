@@ -1,5 +1,7 @@
 # ZMDB Binary Format — Zune Media Database
 
+> **Documentation status (2026-10-04):** Reverse-engineering notes, not a guarantee that every field is decoded on every model. Current parser behavior is in src/zmdb.c and API_REFERENCE.md. Retained layouts and hypotheses describe the investigations below.
+
 ## Overview
 
 The Zune stores its entire media library in a proprietary binary database called ZMDB (Zune Media DataBase). This database can be read via vendor MTP opcode `0x1792` — a raw USB bulk pipe operation that returns the complete database in one transfer.

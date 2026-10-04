@@ -1,5 +1,7 @@
 # ZuunedMac — SwiftUI Architecture
 
+> **Documentation status (2026-10-04):** Historical application architecture, not the current libzune integration guide. libzune now has a native PTP/MTP/MTPZ stack and Rebellion API names; it does not vendor libmtp. Mac application/DriverKit sources are outside this repository. See README.md and API_REFERENCE.md.
+
 ## Overview
 
 ZuunedMac is a native macOS app for managing Microsoft Zune media players. It's the first macOS Zune sync application — the Windows Zune Software never ran on Mac, and no third-party tool provided full sync capabilities until this project.

@@ -1,28 +1,23 @@
 # Building ZuunedLinux
 
-This guide produces either the native development executable or the complete
-x86_64 tester bundle. Run all commands from the repository root unless a step
-says otherwise.
+This guide covers the supported native source build and documents the separate
+maintainer AppImage workflow with its current public-layout limitations. Run
+commands from the repository root unless a step says otherwise.
 
 ## Get the source
 
-ZuunedLinux pins `libzune` as a Git submodule. A checkout without that submodule
-cannot build the device stack.
+This public repository includes `libzune/` as ordinary source files. No submodule
+initialization is required. Use the bundled revision for this application; do not
+replace it with a newer standalone library without testing the integration.
 
 ```bash
-git clone --recurse-submodules https://github.com/badgeromen/zuuned-linux.git
-cd zuunedlinux
-git submodule status libzune
+git clone https://github.com/badgeromen/zuuned-linux.git
+cd zuuned-linux
 ```
 
-For an existing checkout:
-
-```bash
-git submodule update --init --recursive
-```
-
-Do not update the libzune pin merely to make a release build. The application
-commit records the protocol revision it was tested with.
+For Zune authentication, follow [BUILD_WITH_MTPZ.md](docs/BUILD_WITH_MTPZ.md).
+You may build without embedded data and use the external file at runtime.
+Local library and playback do not require authentication data.
 
 ## Install native build dependencies
 
@@ -38,9 +33,9 @@ cmake --build build --parallel 4
 ./build/zuuned
 ```
 
-CMake builds the pinned `libzune.a` automatically. If the linker reports an
+CMake builds the included `libzune.a` automatically. If the linker reports an
 unrecognized file format after moving the checkout between macOS and Linux,
-remove the stale submodule objects and rebuild:
+remove the stale library objects and rebuild:
 
 ```bash
 make -C libzune clean
@@ -58,6 +53,18 @@ This build uses the current machine's libraries. It is suitable for development
 and hardware checks on that machine, but it is not the distributable AppImage.
 
 ## Build the tester AppImage
+
+**Maintainer workflow, not yet supported from this public snapshot:** the
+`snapshot.mjs` exporter below requires the private development checkout's
+`libzune` Git submodule. It rejects this public repository because `libzune/`
+is vendored source. These commands document the existing release pipeline, not
+a working public-clone packaging recipe. Use the native build above to compile
+this source, or download a published AppImage. Public packaging needs a
+vendored-source provenance update before this workflow can be used unchanged.
+
+Do not invent a library revision or mark modified input clean to bypass that
+check. Official downloads also require the private authentication input, as
+described in [the release architecture](docs/RELEASE_ARCHITECTURE.md).
 
 The release workflow builds inside pinned Debian 13 images. This gives the
 package a known Qt 6.8.2 and glibc baseline while keeping build dependencies off

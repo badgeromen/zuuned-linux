@@ -1,5 +1,9 @@
 # Fresh-install rehearsal — 2026-09-02
 
+> Historical development record. Dates, paths, plans and results below describe
+> that investigation, not the current downloadable release. Start with the
+> [documentation guide](README.md) for current build and tester instructions.
+
 The dress rehearsal: dev box stripped to stranger conditions (legacy
 `99-zune.rules` and the `zune_usb` DKMS module removed, `~/.mtpz-data`
 retired to backup), rebuilt AppImage run under a completely empty HOME.

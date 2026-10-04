@@ -1,5 +1,7 @@
 # Zune Vendor MTP Properties & Operations
 
+> **Documentation status (2026-10-04):** Research catalog of observed/proposed constants, not proof that every property works on every model. Current source constants and operations are linked from TOC.md. In particular, src/video.c treats ASF as 0x300D; the older 0x300C entry below should not be used as the current implementation value.
+
 ## Overview
 
 The Microsoft Zune uses standard MTP (Media Transfer Protocol) with extensive vendor extensions. This document catalogs every property, operation, and format code specific to the Zune, discovered through `mtp-detect` dumps, protocol analysis, and reverse engineering.

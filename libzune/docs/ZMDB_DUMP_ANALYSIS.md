@@ -1,5 +1,7 @@
 # ZMDB Dump Analysis — Zuuned Zune (Classic, ZMed v2)
 
+> **Documentation status (2026-10-04):** Historical analysis of the specific captured database below. Its counts, names and offsets are evidence from that sample, not current device state or universal model guarantees.
+
 ## Device Info
 - **Name:** Zuuned
 - **Model:** Zune (Classic)

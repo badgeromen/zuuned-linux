@@ -20,7 +20,8 @@ Produces `libzune.dylib` (macOS) or `libzune.so` (Linux) + `libzune.a` (static).
 - **libgcrypt** — MTPZ authentication (RSA/AES)
 - **macOS:** IOKit framework (DEXT IOUserClient backend)
 - **Linux:** libusb-1.0
-- **Runtime:** ffmpeg CLI (for transcode/thumbnail — being replaced with C API)
+- **Linux build:** libavformat/libavutil for native metadata probing
+- **Runtime helpers:** ffmpeg/ffprobe CLI where used; audio/video arm helpers and retag currently hard-code Homebrew ffmpeg. Linux photo preparation uses ffmpeg on PATH. See README.md.
 
 ## Architecture
 
@@ -90,6 +91,10 @@ Produces `libzune.dylib` (macOS) or `libzune.so` (Linux) + `libzune.a` (static).
 | `get_*` | Read info (standard) | `zune_get_battery()` |
 | `free_*` | Free memory (standard) | `zune_free_tracks()` |
 
+## Current API documentation
+
+Read docs/API_REFERENCE.md for all 90 declarations and current ownership/return-value limits. Never sever while a worker still uses the device. Keep a returned scan allocated while calling find helpers; free_scan does not clear the borrowed device cache. Regenerate/check both API_REFERENCE.md and TOC.md after interface changes.
+
 ## Important Patterns
 
 ### Split Header/Data Mode
@@ -99,10 +104,10 @@ The Zune requires PTP data containers to be sent as TWO separate USB transfers: 
 The Zune requires album/artist objects to be created atomically with all metadata via SendObjectPropList. Post-creation SetObjectPropValue for AlbumArtist returns 0xA801.
 
 ### MTPZ Authentication
-Required before any write operations. Uses RSA/AES handshake via libgcrypt. Keys embedded in `mtpz_keys.h` with `~/.mtpz-data` override.
+Required before any write operations. Uses RSA/AES handshake via libgcrypt. Optional local keys in `mtpz_keys.h` with `~/.mtpz-data` override. Public source omits populated values. A handle may be returned even after authentication failure.
 
 ### Embedded Keys
-MTPZ keys are compiled into the binary (`mtpz_keys.h`). Users can override by placing custom keys in `~/.mtpz-data`.
+A locally supplied `mtpz_keys.h` enables embedded MTPZ data. The header is optional in public builds; users can instead provide `~/.mtpz-data`. See docs/BUILD_WITH_MTPZ.md.
 
 ## USB Backends
 
@@ -168,7 +173,7 @@ Implement `zune_usb_backend_t` function table (open, close, bulk_read, bulk_writ
 ### Documentation Standards
 - **Exhaustive TOC** in `docs/TOC.md` — every function with file:line references
 - **TOC stays current** — when code changes, TOC gets updated
-- **No external dependencies** — everything bundled, app is self-contained
+- **Document dependencies accurately**: the library links system libraries and some helpers invoke command-line tools. The consuming app is responsible for packaging them.
 
 ### Skills & Domain Knowledge
 - C systems programming — kernel-level, driver development, USB subsystems

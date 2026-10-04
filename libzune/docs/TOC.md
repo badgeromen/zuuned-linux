@@ -16,6 +16,7 @@ complete public signatures and their contracts.
 ## Start here
 
 - [README](../README.md): build, integration and the Rebellion API.
+- [API reference](API_REFERENCE.md): every public signature, ownership, status codes and implementation limits.
 - [Public authentication setup](PUBLIC_CREDENTIALS.md): embedded-header and external-file behavior.
 - [Wire capture findings](WIRE_CAPTURE_FINDINGS.md): observed Windows-client protocol behavior.
 - [Linux testing](LINUX_TESTING.md): hardware findings and test workflow.
@@ -35,96 +36,96 @@ ownership, return values and threading requirements before calling an operation.
 
 | Function | Declaration | Implementation |
 |---|---|---|
-| `zune_breach()` | [include/zune.h:56](../include/zune.h#L56) | [src/device.c:54](../src/device.c#L54) |
-| `zune_sever()` | [include/zune.h:60](../include/zune.h#L60) | [src/device.c:322](../src/device.c#L322) |
-| `zune_get_name()` | [include/zune.h:63](../include/zune.h#L63) | [src/device.c:343](../src/device.c#L343) |
-| `zune_get_model()` | [include/zune.h:64](../include/zune.h#L64) | [src/device.c:347](../src/device.c#L347) |
-| `zune_get_serial()` | [include/zune.h:65](../include/zune.h#L65) | [src/device.c:351](../src/device.c#L351) |
-| `zune_get_battery()` | [include/zune.h:66](../include/zune.h#L66) | [src/device.c:355](../src/device.c#L355) |
-| `zune_get_capacity()` | [include/zune.h:67](../include/zune.h#L67) | [src/device.c:359](../src/device.c#L359) |
-| `zune_get_headroom()` | [include/zune.h:68](../include/zune.h#L68) | [src/device.c:363](../src/device.c#L363) |
-| `zune_refresh_storage()` | [include/zune.h:74](../include/zune.h#L74) | [src/device.c:372](../src/device.c#L372) |
-| `zune_identify()` | [include/zune.h:75](../include/zune.h#L75) | [src/device.c:389](../src/device.c#L389) |
-| `zune_get_family()` | [include/zune.h:80](../include/zune.h#L80) | [src/device.c:420](../src/device.c#L420) |
-| `zune_is_hdd()` | [include/zune.h:84](../include/zune.h#L84) | [src/device.c:431](../src/device.c#L431) |
-| `zune_rename()` | [include/zune.h:87](../include/zune.h#L87) | [src/device.c:559](../src/device.c#L559) |
-| `zune_is_live()` | [include/zune.h:90](../include/zune.h#L90) | [src/device.c:439](../src/device.c#L439) |
-| `zune_abort()` | [include/zune.h:93](../include/zune.h#L93) | [src/device.c:508](../src/device.c#L508) |
-| `zune_is_aborted()` | [include/zune.h:96](../include/zune.h#L96) | [src/device.c:512](../src/device.c#L512) |
-| `zune_clear_abort()` | [include/zune.h:99](../include/zune.h#L99) | [src/device.c:516](../src/device.c#L516) |
-| `zune_autopsy()` | [include/zune.h:106](../include/zune.h#L106) | [src/device.c:522](../src/device.c#L522) |
-| `zune_autopsy_name()` | [include/zune.h:109](../include/zune.h#L109) | [src/device.c:526](../src/device.c#L526) |
-| `zune_unjam()` | [include/zune.h:114](../include/zune.h#L114) | [src/usb_recovery.c:13](../src/usb_recovery.c#L13) |
-| `zune_forge_folder()` | [include/zune.h:118](../include/zune.h#L118) | [src/device.c:448](../src/device.c#L448) |
-| `zune_get_folders()` | [include/zune.h:124](../include/zune.h#L124) | [src/device.c:459](../src/device.c#L459) |
-| `zune_free_folders()` | [include/zune.h:125](../include/zune.h#L125) | [src/device.c:500](../src/device.c#L500) |
-| `zune_get_tracks()` | [include/zune.h:146](../include/zune.h#L146) | [src/track.c:66](../src/track.c#L66) |
-| `zune_free_tracks()` | [include/zune.h:147](../include/zune.h#L147) | [src/track.c:183](../src/track.c#L183) |
-| `zune_smuggle_track()` | [include/zune.h:151](../include/zune.h#L151) | [src/track.c:366](../src/track.c#L366) |
-| `zune_smuggle_track_tagged()` | [include/zune.h:155](../include/zune.h#L155) | [src/track.c:384](../src/track.c#L384) |
-| `zune_purge_track()` | [include/zune.h:162](../include/zune.h#L162) | [src/track.c:443](../src/track.c#L443) |
-| `zune_extract_track()` | [include/zune.h:165](../include/zune.h#L165) | [src/track.c:459](../src/track.c#L459) |
-| `zune_get_track_state()` | [include/zune.h:171](../include/zune.h#L171) | [src/track.c:541](../src/track.c#L541) |
-| `zune_set_track_state()` | [include/zune.h:178](../include/zune.h#L178) | [src/track.c:583](../src/track.c#L583) |
-| `zune_verify()` | [include/zune.h:186](../include/zune.h#L186) | [src/track.c:476](../src/track.c#L476) |
-| `zune_rename_item()` | [include/zune.h:193](../include/zune.h#L193) | [src/finalize.c:92](../src/finalize.c#L92) |
-| `zune_sync_notify()` | [include/zune.h:206](../include/zune.h#L206) | [src/finalize.c:126](../src/finalize.c#L126) |
-| `zune_probe_object()` | [include/zune.h:214](../include/zune.h#L214) | [src/track.c:620](../src/track.c#L620) |
-| `zune_probe_object_named()` | [include/zune.h:218](../include/zune.h#L218) | [src/track.c:627](../src/track.c#L627) |
-| `zune_get_item_refs()` | [include/zune.h:224](../include/zune.h#L224) | [src/track.c:648](../src/track.c#L648) |
-| `zune_find_track()` | [include/zune.h:232](../include/zune.h#L232) | [src/search.c:14](../src/search.c#L14) |
-| `zune_find_video()` | [include/zune.h:238](../include/zune.h#L238) | [src/search.c:39](../src/search.c#L39) |
-| `zune_find_photo()` | [include/zune.h:242](../include/zune.h#L242) | [src/search.c:55](../src/search.c#L55) |
-| `zune_get_videos()` | [include/zune.h:267](../include/zune.h#L267) | [src/video.c:268](../src/video.c#L268) |
-| `zune_free_videos()` | [include/zune.h:268](../include/zune.h#L268) | [src/video.c:386](../src/video.c#L386) |
-| `zune_smuggle_video_named()` | [include/zune.h:286](../include/zune.h#L286) | [src/video.c:396](../src/video.c#L396) |
-| `zune_smuggle_movie()` | [include/zune.h:298](../include/zune.h#L298) | [src/video.c:440](../src/video.c#L440) |
-| `zune_get_series_info()` | [include/zune.h:306](../include/zune.h#L306) | [src/video.c:463](../src/video.c#L463) |
-| `zune_smuggle_episode()` | [include/zune.h:313](../include/zune.h#L313) | [src/video.c:527](../src/video.c#L527) |
-| `zune_smuggle_clip()` | [include/zune.h:321](../include/zune.h#L321) | [src/video.c:571](../src/video.c#L571) |
-| `zune_smuggle_other()` | [include/zune.h:327](../include/zune.h#L327) | [src/video.c:594](../src/video.c#L594) |
-| `zune_purge_video()` | [include/zune.h:333](../include/zune.h#L333) | [src/video.c:616](../src/video.c#L616) |
-| `zune_extract_video()` | [include/zune.h:336](../include/zune.h#L336) | [src/video.c:626](../src/video.c#L626) |
-| `zune_get_photos()` | [include/zune.h:355](../include/zune.h#L355) | [src/photo.c:114](../src/photo.c#L114) |
-| `zune_free_photos()` | [include/zune.h:356](../include/zune.h#L356) | [src/photo.c:189](../src/photo.c#L189) |
-| `zune_get_dimensions()` | [include/zune.h:360](../include/zune.h#L360) | [src/photo.c:196](../src/photo.c#L196) |
-| `zune_get_photo_albums()` | [include/zune.h:364](../include/zune.h#L364) | [src/photo.c:235](../src/photo.c#L235) |
-| `zune_free_photo_albums()` | [include/zune.h:367](../include/zune.h#L367) | [src/photo.c:284](../src/photo.c#L284) |
-| `zune_arm_photo()` | [include/zune.h:372](../include/zune.h#L372) | [src/photo.c:316](../src/photo.c#L316) |
-| `zune_smuggle_photo()` | [include/zune.h:377](../include/zune.h#L377) | [src/photo.c:362](../src/photo.c#L362) |
-| `zune_purge_photo()` | [include/zune.h:381](../include/zune.h#L381) | [src/photo.c:478](../src/photo.c#L478) |
-| `zune_extract_photo()` | [include/zune.h:384](../include/zune.h#L384) | [src/photo.c:488](../src/photo.c#L488) |
-| `zune_get_playlists()` | [include/zune.h:397](../include/zune.h#L397) | [src/playlist.c:20](../src/playlist.c#L20) |
-| `zune_free_playlists()` | [include/zune.h:398](../include/zune.h#L398) | [src/playlist.c:112](../src/playlist.c#L112) |
-| `zune_forge_playlist()` | [include/zune.h:401](../include/zune.h#L401) | [src/playlist.c:138](../src/playlist.c#L138) |
-| `zune_rewire_playlist()` | [include/zune.h:405](../include/zune.h#L405) | [src/playlist.c:210](../src/playlist.c#L210) |
-| `zune_purge_playlist()` | [include/zune.h:410](../include/zune.h#L410) | [src/playlist.c:240](../src/playlist.c#L240) |
-| `zune_forge_album()` | [include/zune.h:421](../include/zune.h#L421) | [src/album.c:24](../src/album.c#L24) |
-| `zune_rewire_album()` | [include/zune.h:428](../include/zune.h#L428) | [src/album.c:138](../src/album.c#L138) |
-| `zune_forge_artist()` | [include/zune.h:438](../include/zune.h#L438) | [src/album.c:239](../src/album.c#L239) |
-| `zune_link_artist()` | [include/zune.h:442](../include/zune.h#L442) | [src/album.c:336](../src/album.c#L336) |
-| `zune_get_albums()` | [include/zune.h:454](../include/zune.h#L454) | [src/album.c:353](../src/album.c#L353) |
-| `zune_free_albums()` | [include/zune.h:455](../include/zune.h#L455) | [src/album.c:450](../src/album.c#L450) |
-| `zune_brand()` | [include/zune.h:461](../include/zune.h#L461) | [src/thumbnail.c:16](../src/thumbnail.c#L16) |
-| `zune_grab_thumb()` | [include/zune.h:467](../include/zune.h#L467) | [src/thumbnail.c:35](../src/thumbnail.c#L35) |
-| `zune_grab_photo_thumb()` | [include/zune.h:473](../include/zune.h#L473) | [src/thumbnail.c:68](../src/thumbnail.c#L68) |
-| `zune_arm_audio()` | [include/zune.h:480](../include/zune.h#L480) | [src/transcode.c:63](../src/transcode.c#L63) |
-| `zune_retag()` | [include/zune.h:485](../include/zune.h#L485) | [src/transcode.c:127](../src/transcode.c#L127) |
-| `zune_arm_video()` | [include/zune.h:490](../include/zune.h#L490) | [src/transcode.c:308](../src/transcode.c#L308) |
-| `zune_arm_episode()` | [include/zune.h:494](../include/zune.h#L494) | [src/transcode.c:313](../src/transcode.c#L313) |
-| `zune_infiltrate_legacy()` | [include/zune.h:510](../include/zune.h#L510) | [src/zmdb.c:843](../src/zmdb.c#L843) |
-| `zune_free_library()` | [include/zune.h:511](../include/zune.h#L511) | [src/zmdb.c:1319](../src/zmdb.c#L1319) |
-| `zune_finalize()` | [include/zune.h:518](../include/zune.h#L518) | [src/finalize.c:12](../src/finalize.c#L12) |
-| `zune_decode_filename()` | [include/zune.h:525](../include/zune.h#L525) | [src/util.c:120](../src/util.c#L120) |
-| `zune_snap_thumb()` | [include/zune.h:531](../include/zune.h#L531) | [src/util.c:369](../src/util.c#L369) |
-| `zune_probe()` | [include/zune.h:555](../include/zune.h#L555) | [src/util.c:623](../src/util.c#L623)<br>[src/util.c:712](../src/util.c#L712) |
-| `zune_free_metadata()` | [include/zune.h:556](../include/zune.h#L556) | [src/util.c:821](../src/util.c#L821) |
-| `zune_smuggle_track_ex()` | [include/zune.h:565](../include/zune.h#L565) | [src/track.c:404](../src/track.c#L404) |
-| `zune_infiltrate()` | [include/zune.h:612](../include/zune.h#L612) | [src/zmdb.c:1027](../src/zmdb.c#L1027) |
-| `zune_free_scan()` | [include/zune.h:613](../include/zune.h#L613) | [src/zmdb.c:1066](../src/zmdb.c#L1066) |
-| `zune_dump_raw()` | [include/zune.h:619](../include/zune.h#L619) | [src/zmdb.c:1112](../src/zmdb.c#L1112) |
-| `zune_infiltrate_deep()` | [include/zune.h:624](../include/zune.h#L624) | [src/zmdb.c:1187](../src/zmdb.c#L1187) |
-| `zune_get_error()` | [include/zune.h:629](../include/zune.h#L629) | [src/device.c:21](../src/device.c#L21) |
+| `zune_breach()` | [include/zune.h:57](../include/zune.h#L57) | [src/device.c:54](../src/device.c#L54) |
+| `zune_sever()` | [include/zune.h:62](../include/zune.h#L62) | [src/device.c:322](../src/device.c#L322) |
+| `zune_get_name()` | [include/zune.h:66](../include/zune.h#L66) | [src/device.c:343](../src/device.c#L343) |
+| `zune_get_model()` | [include/zune.h:67](../include/zune.h#L67) | [src/device.c:347](../src/device.c#L347) |
+| `zune_get_serial()` | [include/zune.h:68](../include/zune.h#L68) | [src/device.c:351](../src/device.c#L351) |
+| `zune_get_battery()` | [include/zune.h:69](../include/zune.h#L69) | [src/device.c:355](../src/device.c#L355) |
+| `zune_get_capacity()` | [include/zune.h:70](../include/zune.h#L70) | [src/device.c:359](../src/device.c#L359) |
+| `zune_get_headroom()` | [include/zune.h:71](../include/zune.h#L71) | [src/device.c:363](../src/device.c#L363) |
+| `zune_refresh_storage()` | [include/zune.h:77](../include/zune.h#L77) | [src/device.c:372](../src/device.c#L372) |
+| `zune_identify()` | [include/zune.h:78](../include/zune.h#L78) | [src/device.c:389](../src/device.c#L389) |
+| `zune_get_family()` | [include/zune.h:83](../include/zune.h#L83) | [src/device.c:420](../src/device.c#L420) |
+| `zune_is_hdd()` | [include/zune.h:87](../include/zune.h#L87) | [src/device.c:431](../src/device.c#L431) |
+| `zune_rename()` | [include/zune.h:90](../include/zune.h#L90) | [src/device.c:559](../src/device.c#L559) |
+| `zune_is_live()` | [include/zune.h:94](../include/zune.h#L94) | [src/device.c:439](../src/device.c#L439) |
+| `zune_abort()` | [include/zune.h:98](../include/zune.h#L98) | [src/device.c:508](../src/device.c#L508) |
+| `zune_is_aborted()` | [include/zune.h:101](../include/zune.h#L101) | [src/device.c:512](../src/device.c#L512) |
+| `zune_clear_abort()` | [include/zune.h:104](../include/zune.h#L104) | [src/device.c:516](../src/device.c#L516) |
+| `zune_autopsy()` | [include/zune.h:111](../include/zune.h#L111) | [src/device.c:522](../src/device.c#L522) |
+| `zune_autopsy_name()` | [include/zune.h:114](../include/zune.h#L114) | [src/device.c:526](../src/device.c#L526) |
+| `zune_unjam()` | [include/zune.h:119](../include/zune.h#L119) | [src/usb_recovery.c:13](../src/usb_recovery.c#L13) |
+| `zune_forge_folder()` | [include/zune.h:123](../include/zune.h#L123) | [src/device.c:448](../src/device.c#L448) |
+| `zune_get_folders()` | [include/zune.h:129](../include/zune.h#L129) | [src/device.c:459](../src/device.c#L459) |
+| `zune_free_folders()` | [include/zune.h:130](../include/zune.h#L130) | [src/device.c:500](../src/device.c#L500) |
+| `zune_get_tracks()` | [include/zune.h:151](../include/zune.h#L151) | [src/track.c:66](../src/track.c#L66) |
+| `zune_free_tracks()` | [include/zune.h:152](../include/zune.h#L152) | [src/track.c:183](../src/track.c#L183) |
+| `zune_smuggle_track()` | [include/zune.h:156](../include/zune.h#L156) | [src/track.c:366](../src/track.c#L366) |
+| `zune_smuggle_track_tagged()` | [include/zune.h:160](../include/zune.h#L160) | [src/track.c:384](../src/track.c#L384) |
+| `zune_purge_track()` | [include/zune.h:167](../include/zune.h#L167) | [src/track.c:443](../src/track.c#L443) |
+| `zune_extract_track()` | [include/zune.h:170](../include/zune.h#L170) | [src/track.c:459](../src/track.c#L459) |
+| `zune_get_track_state()` | [include/zune.h:178](../include/zune.h#L178) | [src/track.c:541](../src/track.c#L541) |
+| `zune_set_track_state()` | [include/zune.h:185](../include/zune.h#L185) | [src/track.c:583](../src/track.c#L583) |
+| `zune_verify()` | [include/zune.h:193](../include/zune.h#L193) | [src/track.c:476](../src/track.c#L476) |
+| `zune_rename_item()` | [include/zune.h:200](../include/zune.h#L200) | [src/finalize.c:92](../src/finalize.c#L92) |
+| `zune_sync_notify()` | [include/zune.h:213](../include/zune.h#L213) | [src/finalize.c:126](../src/finalize.c#L126) |
+| `zune_probe_object()` | [include/zune.h:221](../include/zune.h#L221) | [src/track.c:620](../src/track.c#L620) |
+| `zune_probe_object_named()` | [include/zune.h:225](../include/zune.h#L225) | [src/track.c:627](../src/track.c#L627) |
+| `zune_get_item_refs()` | [include/zune.h:231](../include/zune.h#L231) | [src/track.c:648](../src/track.c#L648) |
+| `zune_find_track()` | [include/zune.h:241](../include/zune.h#L241) | [src/search.c:14](../src/search.c#L14) |
+| `zune_find_video()` | [include/zune.h:248](../include/zune.h#L248) | [src/search.c:39](../src/search.c#L39) |
+| `zune_find_photo()` | [include/zune.h:252](../include/zune.h#L252) | [src/search.c:55](../src/search.c#L55) |
+| `zune_get_videos()` | [include/zune.h:277](../include/zune.h#L277) | [src/video.c:268](../src/video.c#L268) |
+| `zune_free_videos()` | [include/zune.h:278](../include/zune.h#L278) | [src/video.c:386](../src/video.c#L386) |
+| `zune_smuggle_video_named()` | [include/zune.h:296](../include/zune.h#L296) | [src/video.c:396](../src/video.c#L396) |
+| `zune_smuggle_movie()` | [include/zune.h:310](../include/zune.h#L310) | [src/video.c:440](../src/video.c#L440) |
+| `zune_get_series_info()` | [include/zune.h:318](../include/zune.h#L318) | [src/video.c:463](../src/video.c#L463) |
+| `zune_smuggle_episode()` | [include/zune.h:325](../include/zune.h#L325) | [src/video.c:527](../src/video.c#L527) |
+| `zune_smuggle_clip()` | [include/zune.h:333](../include/zune.h#L333) | [src/video.c:571](../src/video.c#L571) |
+| `zune_smuggle_other()` | [include/zune.h:339](../include/zune.h#L339) | [src/video.c:594](../src/video.c#L594) |
+| `zune_purge_video()` | [include/zune.h:345](../include/zune.h#L345) | [src/video.c:616](../src/video.c#L616) |
+| `zune_extract_video()` | [include/zune.h:348](../include/zune.h#L348) | [src/video.c:626](../src/video.c#L626) |
+| `zune_get_photos()` | [include/zune.h:367](../include/zune.h#L367) | [src/photo.c:114](../src/photo.c#L114) |
+| `zune_free_photos()` | [include/zune.h:368](../include/zune.h#L368) | [src/photo.c:189](../src/photo.c#L189) |
+| `zune_get_dimensions()` | [include/zune.h:372](../include/zune.h#L372) | [src/photo.c:196](../src/photo.c#L196) |
+| `zune_get_photo_albums()` | [include/zune.h:376](../include/zune.h#L376) | [src/photo.c:235](../src/photo.c#L235) |
+| `zune_free_photo_albums()` | [include/zune.h:379](../include/zune.h#L379) | [src/photo.c:284](../src/photo.c#L284) |
+| `zune_arm_photo()` | [include/zune.h:384](../include/zune.h#L384) | [src/photo.c:316](../src/photo.c#L316) |
+| `zune_smuggle_photo()` | [include/zune.h:389](../include/zune.h#L389) | [src/photo.c:362](../src/photo.c#L362) |
+| `zune_purge_photo()` | [include/zune.h:393](../include/zune.h#L393) | [src/photo.c:478](../src/photo.c#L478) |
+| `zune_extract_photo()` | [include/zune.h:396](../include/zune.h#L396) | [src/photo.c:488](../src/photo.c#L488) |
+| `zune_get_playlists()` | [include/zune.h:409](../include/zune.h#L409) | [src/playlist.c:20](../src/playlist.c#L20) |
+| `zune_free_playlists()` | [include/zune.h:410](../include/zune.h#L410) | [src/playlist.c:112](../src/playlist.c#L112) |
+| `zune_forge_playlist()` | [include/zune.h:413](../include/zune.h#L413) | [src/playlist.c:138](../src/playlist.c#L138) |
+| `zune_rewire_playlist()` | [include/zune.h:417](../include/zune.h#L417) | [src/playlist.c:210](../src/playlist.c#L210) |
+| `zune_purge_playlist()` | [include/zune.h:422](../include/zune.h#L422) | [src/playlist.c:240](../src/playlist.c#L240) |
+| `zune_forge_album()` | [include/zune.h:433](../include/zune.h#L433) | [src/album.c:24](../src/album.c#L24) |
+| `zune_rewire_album()` | [include/zune.h:442](../include/zune.h#L442) | [src/album.c:138](../src/album.c#L138) |
+| `zune_forge_artist()` | [include/zune.h:452](../include/zune.h#L452) | [src/album.c:239](../src/album.c#L239) |
+| `zune_link_artist()` | [include/zune.h:456](../include/zune.h#L456) | [src/album.c:336](../src/album.c#L336) |
+| `zune_get_albums()` | [include/zune.h:468](../include/zune.h#L468) | [src/album.c:353](../src/album.c#L353) |
+| `zune_free_albums()` | [include/zune.h:469](../include/zune.h#L469) | [src/album.c:450](../src/album.c#L450) |
+| `zune_brand()` | [include/zune.h:475](../include/zune.h#L475) | [src/thumbnail.c:16](../src/thumbnail.c#L16) |
+| `zune_grab_thumb()` | [include/zune.h:481](../include/zune.h#L481) | [src/thumbnail.c:35](../src/thumbnail.c#L35) |
+| `zune_grab_photo_thumb()` | [include/zune.h:487](../include/zune.h#L487) | [src/thumbnail.c:68](../src/thumbnail.c#L68) |
+| `zune_arm_audio()` | [include/zune.h:496](../include/zune.h#L496) | [src/transcode.c:63](../src/transcode.c#L63) |
+| `zune_retag()` | [include/zune.h:501](../include/zune.h#L501) | [src/transcode.c:127](../src/transcode.c#L127) |
+| `zune_arm_video()` | [include/zune.h:506](../include/zune.h#L506) | [src/transcode.c:308](../src/transcode.c#L308) |
+| `zune_arm_episode()` | [include/zune.h:510](../include/zune.h#L510) | [src/transcode.c:313](../src/transcode.c#L313) |
+| `zune_infiltrate_legacy()` | [include/zune.h:526](../include/zune.h#L526) | [src/zmdb.c:843](../src/zmdb.c#L843) |
+| `zune_free_library()` | [include/zune.h:527](../include/zune.h#L527) | [src/zmdb.c:1319](../src/zmdb.c#L1319) |
+| `zune_finalize()` | [include/zune.h:534](../include/zune.h#L534) | [src/finalize.c:12](../src/finalize.c#L12) |
+| `zune_decode_filename()` | [include/zune.h:541](../include/zune.h#L541) | [src/util.c:120](../src/util.c#L120) |
+| `zune_snap_thumb()` | [include/zune.h:547](../include/zune.h#L547) | [src/util.c:369](../src/util.c#L369) |
+| `zune_probe()` | [include/zune.h:571](../include/zune.h#L571) | [src/util.c:623](../src/util.c#L623)<br>[src/util.c:712](../src/util.c#L712) |
+| `zune_free_metadata()` | [include/zune.h:572](../include/zune.h#L572) | [src/util.c:821](../src/util.c#L821) |
+| `zune_smuggle_track_ex()` | [include/zune.h:581](../include/zune.h#L581) | [src/track.c:404](../src/track.c#L404) |
+| `zune_infiltrate()` | [include/zune.h:628](../include/zune.h#L628) | [src/zmdb.c:1027](../src/zmdb.c#L1027) |
+| `zune_free_scan()` | [include/zune.h:631](../include/zune.h#L631) | [src/zmdb.c:1066](../src/zmdb.c#L1066) |
+| `zune_dump_raw()` | [include/zune.h:637](../include/zune.h#L637) | [src/zmdb.c:1112](../src/zmdb.c#L1112) |
+| `zune_infiltrate_deep()` | [include/zune.h:642](../include/zune.h#L642) | [src/zmdb.c:1187](../src/zmdb.c#L1187) |
+| `zune_get_error()` | [include/zune.h:648](../include/zune.h#L648) | [src/device.c:21](../src/device.c#L21) |
 
 ## Library definitions
 
@@ -517,7 +518,7 @@ See [PUBLIC_CREDENTIALS.md](PUBLIC_CREDENTIALS.md) for the runtime override.
 
 | File | Lines |
 |---|---|
-| [include/zune.h](../include/zune.h) | 635 |
+| [include/zune.h](../include/zune.h) | 654 |
 | [src/album.c](../src/album.c) | 458 |
 | [src/device.c](../src/device.c) | 584 |
 | [src/driverkit_usb.c](../src/driverkit_usb.c) | 434 |
@@ -548,6 +549,7 @@ These are development tools, not additional library API. Software tests do not
 replace device authentication, transfer and readback tests on real hardware.
 
 - [tools/ptp-decode.py](../tools/ptp-decode.py)
+- [tools/update-api-reference.mjs](../tools/update-api-reference.mjs)
 - [tools/update-toc.mjs](../tools/update-toc.mjs)
 - [tools/zunetool.c](../tools/zunetool.c)
   - `die()`: [tools/zunetool.c:31](../tools/zunetool.c#L31)
@@ -617,7 +619,7 @@ architecture/API narratives may describe an earlier implementation.
 | Document | Title |
 |---|---|
 | [ALBUM_HIERARCHY.md](ALBUM_HIERARCHY.md) | Zune MTP Album/Artist Object Hierarchy |
-| [API_REFERENCE.md](API_REFERENCE.md) | libzune API Reference |
+| [API_REFERENCE.md](API_REFERENCE.md) | libzune API reference |
 | [ARTIST_REUSE.md](ARTIST_REUSE.md) | Reuse existing artist objects (2026-10-02) |
 | [BUILD_WITH_MTPZ.md](BUILD_WITH_MTPZ.md) | Building with Zune authentication |
 | [FIRMWARE_FLASH_CAPTURE.md](FIRMWARE_FLASH_CAPTURE.md) | Zune Firmware Flash — USB Capture Guide |
@@ -625,9 +627,9 @@ architecture/API narratives may describe an earlier implementation.
 | [MACOS_ZUNE_QUIRKS.md](MACOS_ZUNE_QUIRKS.md) | macOS Zune Quirks — Everything That's Different from Linux |
 | [METADATA_PROBE.md](METADATA_PROBE.md) | Metadata probe contract — tester release R2 |
 | [MTPZ_PROTOCOL.md](MTPZ_PROTOCOL.md) | MTPZ Authentication Protocol |
-| [PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md) | Zuuned — The Complete Zune Device Manager |
+| [PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md) | libzune project overview |
 | [PUBLIC_CREDENTIALS.md](PUBLIC_CREDENTIALS.md) | Private and public authentication builds |
-| [SYNC_PIPELINE.md](SYNC_PIPELINE.md) | Sync Pipeline — How Content Gets to the Zune |
+| [SYNC_PIPELINE.md](SYNC_PIPELINE.md) | Building a sync pipeline with libzune |
 | [VIDEO_TITLES.md](VIDEO_TITLES.md) | Video display titles and transport filenames |
 | [WHY_C.md](WHY_C.md) | Why C? |
 | [WIRE_CAPTURE_FINDINGS.md](WIRE_CAPTURE_FINDINGS.md) | Wire Capture Findings — Windows 8 Zune Client Ground Truth |

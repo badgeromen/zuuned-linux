@@ -1,5 +1,7 @@
 # Zune MTP Protocol — Reverse Engineering Findings
 
+> **Documentation status (2026-10-04):** Historical April capture/test findings. Later wire evidence supersedes the container-length ZLP rule below: split-mode ZLP uses PAYLOAD length and excludes zero-length payloads. Current transfers use larger chunks. Read WIRE_CAPTURE_FINDINGS.md and the linked current implementation in TOC.md before changing transport behavior.
+
 > Documented from live testing with Zune 80 (PID 0x0710) via DriverKit DEXT.
 > Updated: 2026-04-08
 

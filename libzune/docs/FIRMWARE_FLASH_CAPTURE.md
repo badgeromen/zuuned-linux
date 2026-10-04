@@ -1,5 +1,7 @@
 # Zune Firmware Flash — USB Capture Guide
 
+> **Documentation status (2026-10-04):** Research workflow only. Firmware flashing is not implemented in the public API. Later captures were analyzed in WIRE_CAPTURE_FINDINGS.md, which supersedes the earlier claim below that no protocol documentation exists.
+
 ## Goal
 
 Capture the USB traffic during a Zune firmware flash so we can reverse-engineer the protocol and build `zune_flash_firmware()` into libzune. This eliminates the need for Windows entirely.

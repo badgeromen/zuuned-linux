@@ -56,6 +56,7 @@ complete public signatures and their contracts.
 ## Start here
 
 - [README](../README.md): build, integration and the Rebellion API.
+- [API reference](API_REFERENCE.md): every public signature, ownership, status codes and implementation limits.
 - [Public authentication setup](PUBLIC_CREDENTIALS.md): embedded-header and external-file behavior.
 - [Wire capture findings](WIRE_CAPTURE_FINDINGS.md): observed Windows-client protocol behavior.
 - [Linux testing](LINUX_TESTING.md): hardware findings and test workflow.

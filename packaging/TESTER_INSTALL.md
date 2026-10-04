@@ -26,7 +26,7 @@ the debug report rather than treating it as ZUUNED's intended picker.
    same directory. Set `candidate` to the downloaded filename:
 
    ```bash
-   candidate='./Zuuned-Test-0.1.0-x86_64.AppImage'
+   candidate='./Zuuned-Linux-0.1.1-x86_64.AppImage'
    sha256sum --check "${candidate}.sha256"
    chmod +x "$candidate"
    "$candidate" --version
@@ -56,21 +56,16 @@ required for the in-app installer.
 ## Source / Arch package
 
 Use the [README](../README.md#build) for the compiler, Qt 6.8+ and QML packages.
-For an exact tester source build, check out the announced tag and initialize its
-pinned libzune submodule before building. Do not update the submodule to an
-unrelated newer revision.
+The public tree includes libzune as ordinary source. No submodule setup is
+required. Follow [authentication setup](../docs/BUILD_WITH_MTPZ.md) for device
+use. The migrated 0.1.1 executable predates the new public source history; a tag
+in this repository alone does not establish matching source for that binary.
 
-The Arch Git package follows the repository's default branch:
-
-```bash
-git clone https://github.com/badgeromen/zuuned-linux.git
-cd zuunedlinux/packaging
-makepkg -si
-```
-
-Pacman installs dependencies, the desktop entry, icons and USB rule. Replug after
-installation. This rolling package may differ from the announced AppImage; report
-the actual **About** version when testing it.
+The checked-in Arch `PKGBUILD` needs a migration update: it still expects the
+old `zuunedlinux` checkout directory and a libzune submodule. Do not use it as
+a working installation recipe yet. Arch users can install the dependencies
+listed in README and use the native CMake build instead. Report the actual
+**About** version when testing a source build.
 
 ## First run and reports
 

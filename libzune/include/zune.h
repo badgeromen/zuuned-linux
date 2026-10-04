@@ -1,7 +1,7 @@
 /*
  * libzune — Zune MTP Device Library
  *
- * The first open-source library for full Zune device management.
+ * A C library for Zune device management.
  * Handles MTPZ authentication, music/video/photo sync, TV series metadata
  * (vendor properties), UCS-2 descriptions, album art, transcode profiles,
  * and photo album management.
@@ -51,15 +51,18 @@ typedef enum {
     ZUNE_FAMILY_UNKNOWN  = 0xFF
 } ZuneDeviceFamily;
 
-/* Breach the Zune's defenses. Blocks until MTPZ auth + object cache completes.
- * Returns NULL on failure (no device, auth failure, etc.) */
+/* Open USB and a PTP session, then attempt MTPZ authentication if data exists.
+ * Synchronous. Returns NULL on connection failure; authentication failure or
+ * missing data can still yield a handle. Does not scan/cache the library. */
 ZuneDeviceHandle zune_breach(void);
 
-/* Sever the connection and free device. Safe to call while operations pending —
- * signals background threads to stop via disconnecting flag. */
+/* Close the connection and free the device. Accepts NULL.
+ * Caller MUST finish/join every operation using this handle first. The internal
+ * disconnecting flag and delay do not synchronize worker teardown. */
 void zune_sever(ZuneDeviceHandle dev);
 
-/* Device info getters */
+/* Cached device info getters. Strings are borrowed until disconnect.
+ * Battery is a connect-time snapshot; storage can be refreshed below. */
 const char *zune_get_name(ZuneDeviceHandle dev);
 const char *zune_get_model(ZuneDeviceHandle dev);
 const char *zune_get_serial(ZuneDeviceHandle dev);
@@ -86,10 +89,12 @@ int zune_is_hdd(ZuneDeviceHandle dev);
 /* Set device friendly name. */
 int zune_rename(ZuneDeviceHandle dev, const char *new_name);
 
-/* Check if device is still connected and responsive */
+/* Check local device/backend/disconnecting state (1/0). No USB probe is made;
+ * success does not establish that the physical device is responsive. */
 int zune_is_live(ZuneDeviceHandle dev);
 
-/* Request cancellation of in-progress transfer. Thread-safe. */
+/* Request cooperative cancellation of an in-progress transfer. Wait for its
+ * return before teardown or clearing the flag; partial objects can remain. */
 void zune_abort(ZuneDeviceHandle dev);
 
 /* Check if cancellation was requested. */
@@ -167,7 +172,9 @@ int zune_extract_track(ZuneDeviceHandle dev, uint32_t item_id,
 
 /* Read track user state via MTP. Any output pointer may be NULL to skip.
  * Rating encoding: 0=neutral, 8=liked, 3=disliked.
- * Returns 0 on success, -1 on failure. */
+ * Returns 0 if any requested playcount/rating read succeeds, otherwise -1.
+ * Failed reads become zero. Skip count is always zero in this MTP path; use
+ * ZMDB scan data when available. Success can therefore contain partial data. */
 int zune_get_track_state(ZuneDeviceHandle dev, uint32_t item_id,
                           uint16_t *out_playcount, uint8_t *out_rating,
                           uint32_t *out_skip_count);
@@ -228,13 +235,16 @@ int zune_get_item_refs(ZuneDeviceHandle dev, uint32_t item_id,
 
 /* Search cached ZMDB library for an existing track by title+artist+album.
  * Requires a prior zune_infiltrate() call. Case-insensitive matching.
- * Returns item_id if found, 0 if not found or no cached library. */
+ * Returns first item_id if found, 0 if not found or no cached library.
+ * No disc/track/content matching. The scan is borrowed: keep it allocated for
+ * every find call; uploads do not automatically update the cached snapshot. */
 uint32_t zune_find_track(ZuneDeviceHandle dev,
                           const char *title, const char *artist,
                           const char *album);
 
-/* Search cached ZMDB library for an existing video by filename.
- * Returns item_id if found, 0 if not found. */
+/* Search borrowed cached ZMDB library by its legacy filename field, which
+ * can be a display title rather than ObjectFileName. Keep scan allocated.
+ * Returns first item_id if found, 0 if not found. */
 uint32_t zune_find_video(ZuneDeviceHandle dev, const char *filename);
 
 /* Search cached ZMDB library for an existing photo by filename.
@@ -275,8 +285,8 @@ enum { ZUNE_VIDEO_METADATA_INCOMPLETE = 1 };
 /* Send any video category with an independent transport filename and title.
  * object_filename includes its playable extension; title is the exact Name
  * (0xDC44), with no added series, episode numbering, or extension.
- * TV series/season/episode are separate vendor properties. Nonempty series
- * writes all three, including season/episode zero. Numbers must be >= 0.
+ * TV series/season/episode are separate vendor properties. For TV genre only,
+ * nonempty series writes all three, including zero. Numbers must be >= 0.
  * Returns 0 for complete success, ZUNE_VIDEO_METADATA_INCOMPLETE when the
  * media exists but metadata/art failed, or -1 for invalid input/file failure.
  * *out_item_id is nonzero for both completed-upload results, otherwise zero.
@@ -291,7 +301,9 @@ int zune_smuggle_video_named(ZuneDeviceHandle dev, const char *filepath,
                             const uint8_t *poster_jpeg, size_t poster_len,
                             uint32_t *out_item_id);
 
-/* Send a movie to the device. Sets MetaGenre=0x25 (Movie).
+/* Legacy category helpers below return upload success even if later metadata
+ * or art fails. Prefer zune_smuggle_video_named for distinct title/filename and
+ * partial-metadata status. Send a movie with MetaGenre=0x25 (Movie).
  * description: TMDB/user description (UCS-2 encoded internally).
  * poster_jpeg/poster_len: poster art sent as representative sample.
  * Pass NULL/0 for no poster. */
@@ -424,7 +436,9 @@ uint32_t zune_forge_album(ZuneDeviceHandle dev,
                                    const char *genre,
                                    uint32_t *track_ids, int track_count);
 
-/* Update an existing album's track list (merge new tracks). */
+/* Set existing album metadata and replace references with the supplied nonempty
+ * list. Caller performs any merge; empty input does not clear references.
+ * Name/artist failures only log warnings; return 0 does not certify metadata. */
 int zune_rewire_album(ZuneDeviceHandle dev, uint32_t album_id,
                               const char *album_name,
                               const char *artist_name,
@@ -475,7 +489,9 @@ int zune_grab_photo_thumb(ZuneDeviceHandle dev, uint32_t item_id,
 
 /* ---- Transcoding ---- */
 
-/* Transcode audio to Zune-compatible MP3 (320kbps CBR, ID3v2.3).
+/* Legacy audio/video transcode and retag helpers use a hard-coded Homebrew
+ * ffmpeg executable path; see docs/API_REFERENCE.md for portability limits.
+ * Transcode audio to MP3 (320kbps CBR, ID3v2.3), stripping source metadata.
  * Returns path to temp file (caller frees + unlinks). NULL on failure. */
 char *zune_arm_audio(const char *input_path);
 
@@ -512,9 +528,9 @@ void zune_free_library(ZuneLibrary *lib);
 
 /* ---- Sync Finalization ---- */
 
-/* Signal device to rebuild its media database.
- * Call after bulk sync operations. Experimental — may not work on all models.
- * Returns 0 on success. */
+/* Request device re-indexing after bulk writes. Model-dependent, best-effort.
+ * Returns -1 for NULL, otherwise 0 even if individual vendor requests fail.
+ * Inspect logs and verify persistence after re-index; 0 is not that proof. */
 int zune_finalize(ZuneDeviceHandle dev);
 
 /* ---- Utility ---- */
@@ -571,10 +587,9 @@ int zune_smuggle_track_ex(ZuneDeviceHandle dev, const char *filepath,
 
 /* ---- ZuneDB Unified Library Scanner ---- */
 
-/* Complete device library returned by zune_infiltrate().
- * All metadata extracted from the ZMDB binary database in a single
- * USB operation. No MTP enumeration fallbacks.
- * Art/thumbnails still fetched separately (binary MTP data). */
+/* Library snapshot returned by zune_infiltrate(). ZMDB metadata availability
+ * varies by model; some sizes/state fields remain unknown. An internal MTP
+ * playlist fallback runs if no playlists were decoded. Art is fetched separately. */
 
 typedef struct {
     uint32_t album_id;    /* ZMDB atom_id */
@@ -607,9 +622,12 @@ typedef struct {
 
 /* Infiltrate the Zune's internal media database via vendor opcode 0x1792.
  * Returns 0 on success, -1 on failure.
- * Single call replaces zune_infiltrate_legacy() + all MTP enumeration.
- * Caller frees with zune_free_scan(). */
+ * May perform additional MTP playlist enumeration. On success the device borrows
+ * the returned scan for find helpers; caller owns it and frees with free_scan.
+ * Keep it allocated for find calls. Failed scans do not replace the cache. */
 int zune_infiltrate(ZuneDeviceHandle dev, ZuneDBLibrary **out);
+/* Free scan and nested allocations. Does NOT clear the device's borrowed cache.
+ * Do not use find helpers afterward until another successful scan replaces it. */
 void zune_free_scan(ZuneDBLibrary *lib);
 
 /* ---- ZuneDB Research Tools ---- */
@@ -625,7 +643,8 @@ int zune_infiltrate_deep(ZuneDeviceHandle dev);
 
 /* ---- Error Handling ---- */
 
-/* Get last error message (thread-local). */
+/* Borrowed thread-local error message. Some failure paths only log, and success
+ * need not clear earlier text. Read immediately on the failing call's thread. */
 const char *zune_get_error(void);
 
 #ifdef __cplusplus

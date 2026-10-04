@@ -1,5 +1,7 @@
 # ZuneDB — Unified Device Library Engine
 
+> **Documentation status (2026-10-04):** Historical design proposal, not a description of the complete implementation. Current API is zune_infiltrate, with an internal MTP playlist fallback. Classic sizes and some metadata remain unavailable. See API_REFERENCE.md and src/zmdb.c; do not treat the completeness claims or proposed names below as implemented contracts.
+
 ## Vision
 
 ZuneDB replaces ZMDB. Not a wrapper around it — a complete replacement that reads the Zune's binary database and enriches it internally to deliver a 100% complete library with zero fallbacks.

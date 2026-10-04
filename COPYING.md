@@ -19,7 +19,8 @@ license. Copyright remains with the respective authors and contributors.
 
 Third-party libraries, fonts, artwork and other assets retain their respective
 copyrights and licenses. This grant does not replace their notices, claim
-ownership of them, or relicense the separate libzune submodule. Preserve each
+ownership of them, or replace libzune's own licensing notice. Its original code is also
+GPL-3.0-or-later; see [libzune/COPYING.md](libzune/COPYING.md). Preserve each
 applicable notice when redistributing Zuuned.
 
 In particular, inspect the actual bundled builds of Qt, mpv, FFmpeg and other

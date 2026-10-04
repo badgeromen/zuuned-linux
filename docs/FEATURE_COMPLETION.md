@@ -1,7 +1,10 @@
 # Feature completion plan
 
-User scope decision, 2026-09-27. This is the active feature sequence alongside
-the release verification checklist in `TESTER_RELEASE.md`.
+Scope decision, 2026-09-27, retained as the implementation and future-work
+backlog. Publishing the current project does not promise delivery dates for
+unimplemented phases. Use the release verification checklist in
+[TESTER_RELEASE.md](TESTER_RELEASE.md) and each artifact's release notes to
+distinguish implemented source from tested downloads.
 
 Device-browser video playback is **out of scope**. Do not add temporary
 extraction/playback controls. Saving videos into the library remains supported.

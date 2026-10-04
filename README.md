@@ -51,10 +51,13 @@ wallpaper shown belong to the example library and are not supplied media.
 
 Application source and Linux releases live together at
 [badgeromen/zuuned-linux](https://github.com/badgeromen/zuuned-linux).
-Get a runnable **AppImage** from [Releases](https://github.com/badgeromen/zuuned-linux/releases)
-when available. Source archives are for building, not ready-to-run installers.
-Use each release's checksum and compatibility notes. Account migration is in
-progress; release assets have not yet been copied to this new location.
+**[Download Zuuned Linux 0.1.1](https://github.com/badgeromen/zuuned-linux/releases/tag/v0.1.1)**
+for Linux x86_64 with glibc 2.41 or newer, X11/XWayland and OpenGL. Choose the
+AppImage and its matching checksum. [Older releases](https://github.com/badgeromen/zuuned-linux/releases)
+remain available. Source archives are for building, not ready-to-run installers.
+Use each release's checksum and compatibility notes. A migrated download keeps
+its original version and binary contents; it does not automatically include
+changes in the current source tree.
 
 Follow the [tester guide](packaging/TESTER_README.md) for launch and USB setup.
 For a problem, open **Settings → Health → export debug report**, review the saved
@@ -72,7 +75,9 @@ No Windows virtual machine or custom Linux kernel driver is required.
 
 This is an early testing project. Software regression coverage and historical
 hardware results do not certify every new package or device combination. See
-[release verification gates](docs/TESTER_RELEASE.md) for the remaining checks.
+[release verification gates](docs/TESTER_RELEASE.md) for the remaining checks
+and the [documentation index](docs/README.md) for current guides versus historical
+test records.
 
 ## Build
 
@@ -81,8 +86,10 @@ Compiling the public source for Zune device support? Follow
 data file and populate `libzune/src/mtpz_keys.h` before building. Official
 downloads already include authentication.
 
-For the complete native-build, clean AppImage, checksum and isolated-runtime
-workflow, see [BUILDING.md](BUILDING.md). The commands below are the short path
+For the native build and the existing maintainer AppImage workflow, see
+[BUILDING.md](BUILDING.md). The public snapshot vendors libzune; the AppImage
+snapshot exporter still requires the private development submodule layout.
+The commands below are the short path
 for running a development build on the current machine.
 
 Qt **6.8 or newer** is required. Qt 6.11.2 is the current tested development
@@ -134,8 +141,9 @@ cmake --build build
 ## For testers
 
 1. Follow [tester install instructions](packaging/TESTER_INSTALL.md) for the
-   versioned AppImage and checksum, or build from the exact release tag. The Arch
-   `packaging/PKGBUILD` is a rolling Git package, not a pinned tester release.
+   versioned AppImage and checksum. The old 0.1.1 executable predates this public
+   source snapshot. The Arch `packaging/PKGBUILD` requires a repository-layout
+   update before it can be used with this public tree.
 2. Install the USB rule below once, then replug. The app also offers a
    self-contained installer; it does not require a source checkout.
 3. Pick your music/video/photo folders in onboarding. TMDB/Fanart have bundled
