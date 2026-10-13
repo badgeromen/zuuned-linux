@@ -36,7 +36,7 @@ const missing = publicFunctions.filter(f => byName(f.name).length === 0);
 if (missing.length) throw new Error(`Public declarations missing definitions: ${missing.map(f => f.name).join(', ')}`);
 const publicNames = new Set(publicFunctions.map(f => f.name));
 const docs = files('docs').filter(f => f.endsWith('.md') && !f.endsWith('/TOC.md'));
-const tools = files('tools').filter(f => /\.(c|py|mjs)$/.test(f));
+const tools = files('tools').filter(f => /\.(c|h|py|mjs)$/.test(f));
 const tests = files('tests').filter(f => /\.(c|sh)$/.test(f));
 let out = `# libzune: source and documentation index
 
@@ -64,6 +64,10 @@ complete public signatures and their contracts.
   failed inventory reads do not justify creating one, and existing duplicates are not deleted.
 - [Metadata probe](METADATA_PROBE.md): native/fallback tags and disc/year behavior.
 - [Video titles](VIDEO_TITLES.md): independent display titles and wire filenames.
+- [Spoken-media integration](SPOKEN_MEDIA.md): podcast APIs, identity, covers, CLI testing and audiobook limits.
+- [Spoken-media research](SPOKEN_MEDIA_RESEARCH.md): capture evidence, Classic hardware gates and audiobook protocol leads.
+- [Podcast listening-state investigation](SPOKEN_MEDIA_RESEARCH.md#podcast-listening-state-investigation-2026-10-09): candidate bookmark/played fields, read-only HD baseline and retention validation gates.
+- [Vendor property catalog](ZUNE_VENDOR_PROPERTIES.md): metadata hex codes, types and evidence boundaries.
 
 The macOS DriverKit backend is included in this repository. The corresponding
 \`ZuneUSBDriver\` extension implementation belongs to the consuming macOS project;
@@ -103,7 +107,7 @@ for (const file of ['include/zune.h', ...sourceFiles]) out += `| ${link(file)} |
 out += '\n## Tools and regression tests\n\nThese are development tools, not additional library API. Software tests do not\nreplace device authentication, transfer and readback tests on real hardware.\n\n';
 for (const file of [...tools, ...tests]) {
     out += `- ${link(file)}\n`;
-    if (!file.endsWith('.c')) continue;
+    if (!/\.[ch]$/.test(file)) continue;
     for (const f of functions(file, '\\{')) out += `  - \`${f.name}()\`: ${link(file, f.line)}\n`;
 }
 out += '\n## Documentation map\n\nThe linked source is authoritative for current signatures. Historical protocol\nnotes describe the captures and experiments stated in each document; older\narchitecture/API narratives may describe an earlier implementation.\n\n| Document | Title |\n|---|---|\n';

@@ -1,5 +1,19 @@
 # CLAUDE.md — AI Assistant Guide for libzune
 
+## Active spoken-media workstream
+
+Use `feature/podcasts-audiobooks` for this private work. Read
+[the usage guide](docs/SPOKEN_MEDIA.md), [research evidence](docs/SPOKEN_MEDIA_RESEARCH.md)
+and [TOC](docs/TOC.md) first. Podcast audio and visible show covers are confirmed
+by the user on Classic / Keel; resume and other models remain separate gates.
+Experimental native audiobook lookup/send APIs now support Keel/Pavo. Small
+two-part MP3 tests verified schema 0x12, metadata, exact audio and JPEG readback
+on Classic and HD; the user accepted Classic. Firmware resume, chapter mapping
+and HD screen/playback acceptance remain separate. Use wildcard inventory for
+audiobooks: HD MP3-filtered enumeration omits these objects. Preserve serialized
+device ownership, exact spoken identities and the no-blind-retry contract.
+Feeds, downloads and local state belong in the app. HD backgrounds are deferred.
+
 ## Project Overview
 
 libzune is a C library for full Zune device management. Native PTP/MTP/MTPZ stack — no vendored libmtp dependency. Handles MTPZ authentication, music/video/photo sync, TV series metadata (vendor properties), UCS-2 descriptions, album art, transcode profiles, and photo album management.
@@ -93,7 +107,7 @@ Produces `libzune.dylib` (macOS) or `libzune.so` (Linux) + `libzune.a` (static).
 
 ## Current API documentation
 
-Read docs/API_REFERENCE.md for all 90 declarations and current ownership/return-value limits. Never sever while a worker still uses the device. Keep a returned scan allocated while calling find helpers; free_scan does not clear the borrowed device cache. Regenerate/check both API_REFERENCE.md and TOC.md after interface changes.
+Read docs/API_REFERENCE.md for all 94 declarations and current ownership/return-value limits. Never sever while a worker still uses the device. Keep a returned scan allocated while calling find helpers; free_scan does not clear the borrowed device cache. Regenerate/check both API_REFERENCE.md and TOC.md after interface changes.
 
 ## Important Patterns
 

@@ -21,7 +21,7 @@ compatibility with older glibc distributions or physical graphics/audio devices.
 
 ## Build images
 
-Run these commands from the repository root on the x86_64 development machine.
+Run these commands from the repository root on the development machine.
 The examples use host UID/GID `1000:1000`, which must own the writable snapshot,
 tool cache and evidence directories. The runtime Dockerfile creates a `tester`
 account with that UID so D-Bus can resolve it. If another UID is required, change
@@ -58,21 +58,43 @@ later rebuild of a mutable image tag cannot silently change a gate's environment
 Image creation needs network access to install Debian packages. Runtime testing
 uses `--network none`.
 
+### Experimental aarch64 builds
+
+For ARM64, use `--platform linux/arm64` for **every** Docker build and run in
+this guide, and separate image tags, evidence directories and fresh snapshots
+from x86_64 builds. The same Debian base supports ARM64. An x86_64 host needs
+working QEMU/binfmt ARM64 emulation; a native ARM64 builder does not.
+
+`build-appimage.sh` selects tools by the container's architecture. ARM64 uses
+`packaging/appimage-tools-aarch64.lock`; x86_64 retains its existing tool pins.
+It packages ARM versions of the app, libzune, Qt and media dependencies and
+emits an `aarch64.AppImage`. The ELF inventory rejects mixed architectures.
+Do not rename an x86_64 AppImage to claim ARM support.
+
+This targets a **64-bit Trixie/Debian 13 desktop**, with glibc 2.41. It is not
+a Bookworm/Debian 12 or 32-bit Raspberry Pi OS build. The launcher uses xcb;
+a Wayland desktop needs XWayland and its normal desktop FileChooser portal.
+Emulated runtime checks cannot certify Pi GPU/audio performance or USB sync.
+Record physical Pi results separately, including model, OS and architecture.
+
 ## Export and package a candidate
 
-**Layout requirement:** `snapshot.mjs` currently requires a libzune Git
-submodule. The public `badgeromen/zuuned-linux` snapshot vendors libzune as
-ordinary files and is rejected by this exporter. The steps below describe the
-private maintainer checkout. Public-clone packaging needs an exporter/provenance
-update; native public-source compilation is documented in [BUILDING.md](../../BUILDING.md).
+**Source layouts:** `snapshot.mjs` supports the private libzune submodule and
+public included-source layout. The public layout requires a clean application
+commit with a committed `PUBLIC_LIBZUNE.json` containing full 40-character
+`revision` and `tree` IDs. The included `libzune/` tree must exactly match that
+manifest. One archive of the captured application commit supplies both
+components; library provenance comes from the verified manifest. Dirty public
+checkouts and missing or mismatched manifests are rejected. When changing the
+included library, commit it separately and update both the files and manifest.
 
 Finish and commit the release source, including any libzune pin change, before
-the final export. Initialize the pinned submodule first if this is a new clone.
+the final export. For a submodule checkout, initialize its pinned library first.
 For each component observed clean, `snapshot.mjs` runs `git archive` against its
 captured full commit ID, streaming a temporary tar file to disk. Later working
 edits cannot replace those committed bytes in a supposedly clean snapshot.
 
-An explicitly dirty component instead copies its tracked and non-ignored
+In a private submodule checkout, an explicitly dirty component instead copies its tracked and non-ignored
 untracked working files, retaining edits/deletions and a dirty label. Pause
 editing for a consistent development rehearsal. A submodule HEAD different from
 the captured app's gitlink marks the app snapshot dirty; the recorded libzune
@@ -85,7 +107,7 @@ written only after both exports finish; failed partial exports retain no generat
 ```bash
 test -z "$(git status --porcelain --untracked-files=normal --ignore-submodules=none)"
 test -z "$(git -C libzune status --porcelain --untracked-files=normal)"
-git submodule status libzune
+if test -f PUBLIC_LIBZUNE.json; then cat PUBLIC_LIBZUNE.json; else git submodule status libzune; fi
 
 zuuned_snapshot="$zuuned_evidence/source"
 node packaging/containers/snapshot.mjs "$zuuned_snapshot"
@@ -228,14 +250,20 @@ captures when layouts change.
 
 ## Optional copied-profile upgrade
 
-The same runtime gate can additionally launch a **copy** of a v5 library with
+The same runtime gate can additionally launch a **copy** of a v5 or v9 library with
 its settings. Prepare a SQLite-consistent `library.db` backup (for example with
 SQLite's `.backup`, not a bare copy of a live WAL database) and `Zuuned.conf` in
 a separate directory. Do not pass the live profile, media folders or cache.
 The test copies those inputs into another fresh XDG tree before opening them.
+If the existing profile has `spoken/spoken.db`, prepare its own SQLite backup as
+`spoken.db` beside `library.db`. The harness restores it to the correct
+`Zuuned/Zuuned/spoken/spoken.db` location. Existing spoken profiles must use
+schema 1; unknown versions fail rather than being reset. Omit this input when
+testing an older release that did not have spoken media. The result then states
+that existing spoken data was not tested.
 
 ```bash
-zuuned_upgrade_input=$(realpath /absolute/path/to/prepared-v5-backup)
+zuuned_upgrade_input=$(realpath /absolute/path/to/prepared-profile-backup)
 docker run --rm --platform linux/amd64 --user 1000:1000 \
   --network none --shm-size 512m --mount type=tmpfs,dst=/sys/bus/usb/devices \
   --env ZUUNED_UPGRADE_INPUT=/upgrade-input \
@@ -247,10 +275,15 @@ docker run --rm --platform linux/amd64 --user 1000:1000 \
   2>&1 | tee "$zuuned_evidence/upgrade-runtime-console.log"
 ```
 
-This optional pass requires v5→v8 migration, SQLite integrity, the application's
-v5 rollback backup with an identical SQL dump to the input, and preservation of
-the old tables' content except named provider retry counters/timestamps. It also
-checks existing copied settings and records another actual-app capture. Only
+This optional pass requires a resulting v9 library, SQLite integrity, and
+preservation of existing table content and row counts except named provider
+retry counters/timestamps. A v5 input must migrate and produce the application's
+v5 rollback backup with an identical SQL dump to the input. A v9 input verifies
+reopening and preservation without requiring or claiming a v5 backup. Supplied
+spoken data must retain schema 1, integrity and its complete SQL dump, including
+item order and payloads. The gate also checks existing copied settings, hashes
+the original inputs to verify they remain unchanged, and records another
+actual-app capture. Only
 `upgrade-preservation.txt` reporting `PASS` establishes that this particular
 copied profile passed. The ordinary generated-fixture pass alone says nothing
 about an existing profile. The input remains read-only and the actual watched

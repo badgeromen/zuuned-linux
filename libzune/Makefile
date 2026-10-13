@@ -53,8 +53,13 @@ SRCS     := $(SRCDIR)/device.c \
             $(SRCDIR)/photo.c \
             $(SRCDIR)/album.c \
             $(SRCDIR)/playlist.c \
+            $(SRCDIR)/podcast.c \
+            $(SRCDIR)/audiobook.c \
+            $(SRCDIR)/spoken_inventory.c \
             $(SRCDIR)/thumbnail.c \
             $(SRCDIR)/zmdb.c \
+            $(SRCDIR)/zmdb_io.c \
+            $(SRCDIR)/podcast_state.c \
             $(SRCDIR)/transcode.c \
             $(SRCDIR)/util.c \
             $(SRCDIR)/usb_recovery.c \
@@ -115,6 +120,9 @@ $(OBJDIR):
 
 $(OBJDIR)/%.o: $(SRCDIR)/%.c $(INCDIR)/zune.h $(SRCDIR)/zune_internal.h | $(OBJDIR)
 	$(CC) $(CFLAGS) -c $< -o $@
+
+$(OBJDIR)/mtp.o: $(SRCDIR)/mtp.h $(SRCDIR)/mtp_text.h
+$(OBJDIR)/podcast.o $(OBJDIR)/spoken_inventory.o: $(SRCDIR)/mtp.h $(SRCDIR)/mtp_text.h
 
 $(SHARED): $(OBJS)
 	$(CC) $(LDFLAGS) -o $@ $^

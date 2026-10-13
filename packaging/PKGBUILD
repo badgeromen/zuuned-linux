@@ -1,4 +1,4 @@
-# Maintainer: BadgerOmen
+# Maintainer: Orson Badger
 # Zuuned — the full-stack Zune manager for Linux.
 # Music, video (per-device transcode profiles), photos, and mixtape
 # playlists over a clean-room MTPZ stack. Not affiliated with or
@@ -16,7 +16,7 @@ depends=('qt6-base>=6.8' 'qt6-declarative>=6.8' 'qt6-5compat>=6.8'
 makedepends=('cmake' 'ninja' 'git' 'pkgconf')
 provides=('zuuned')
 conflicts=('zuuned')
-source=("git+https://github.com/badgeromen/zuuned-linux.git")
+source=("git+https://gitea.badgeromen.xyz/badgero1234/zuunedlinux.git")
 sha256sums=('SKIP')
 
 pkgver() {

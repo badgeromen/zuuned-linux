@@ -1,6 +1,6 @@
 # Documentation guide
 
-Reviewed against the public source layout on October 4, 2026. Application source
+Updated for the 0.2.0 release candidate on October 13, 2026. Application source
 and downloads live at [badgeromen/zuuned-linux](https://github.com/badgeromen/zuuned-linux);
 shared protocol development lives at [badgeromen/libzune](https://github.com/badgeromen/libzune).
 This application snapshot includes libzune as ordinary source files.
@@ -19,6 +19,10 @@ This application snapshot includes libzune as ordinary source files.
 | Understand licensing scope | [COPYING](../COPYING.md) |
 
 ## Source versus downloadable versions
+
+The [0.2.0 candidate notes](releases/RELEASE_0.2.0.md) cover podcasts, audiobooks,
+ARM64 packaging and the compact playback UI. Package verification is recorded
+separately from source-level test results.
 
 Migrating an existing release copies its original executable; it does not rebuild
 it from the new public tree. The 0.1.1 AppImage contains the artwork discovery,
@@ -40,9 +44,15 @@ for an older migrated executable. Preserve the recorded provenance limitations.
   [artwork print styles](ARTWORK_STYLE_STUDY.md), [video titles](VIDEO_TITLES.md).
 - Organization and transfers: [photo albums](PHOTO_ALBUMS.md),
   [queue feedback](QUEUE_AND_FEEDBACK.md), [action rules](ACTION_AUDIT_FIXES.md).
-- Desktop integration: [native file dialogs](DESKTOP_FILE_DIALOGS.md).
+- Desktop integration: [native file dialogs](DESKTOP_FILE_DIALOGS.md),
+  [compact playback layout and dismissal](PLAYER_LAYOUT_AUDIT_2026-10-12.md).
 - Maintenance: [cleanup record](CODEBASE_CLEANUP.md), [feature scope](FEATURE_COMPLETION.md),
   [port plan](PORT_PLAN.md).
+- Spoken media implementation and remaining hardware gates: [podcasts, audiobooks and deferred HD artist backgrounds](SPOKEN_MEDIA_AND_DEVICE_ART.md).
+- Library usage: [podcast integration and audiobook status](../libzune/docs/SPOKEN_MEDIA.md).
+- Device spoken browser: [inventory, selection and removal verification](../tests/device-spoken/README.md).
+- Starred podcast queueing: [automatic selection and connection guards](SPOKEN_MEDIA_AND_DEVICE_ART.md#october-10-starred-podcast-queue-automation).
+- Spoken favorites and audiobook Libraries: [organization UI verification](../tests/spoken-organization/README.md).
 
 These documents contain dated verification results. Test counts establish what
 was run on that source at that time, not a guarantee for all later builds or
@@ -56,10 +66,9 @@ is explicitly out of scope.
 and [public export preparation](PUBLIC_SOURCE_EXPORT.md) describe the maintainer
 process. The export guide starts from the private development checkout.
 
-The public packaging migration is incomplete: the container snapshot exporter
-requires a libzune Git submodule, and the Arch PKGBUILD still assumes the old
-checkout directory. Native compilation is the supported public-source recipe;
-see [BUILDING](../BUILDING.md) for the precise limitation. Hosted release
+The container snapshot exporter supports both private submodules and clean public
+commits with verified `PUBLIC_LIBZUNE.json` provenance. The Arch PKGBUILD still
+assumes the old checkout directory; see [BUILDING](../BUILDING.md). Hosted release
 orchestration remains a proposal, not an already deployed service.
 
 ## Historical records

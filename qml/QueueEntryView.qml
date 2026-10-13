@@ -24,16 +24,22 @@ ColumnLayout {
     property var groupInfo: null
     property bool expanded: false
     property bool syncLocked: false
+    readonly property bool isRemoval: type === "podcast-removal"
     readonly property bool isGrouped: !!groupInfo && groupInfo.count >= 2
-    readonly property bool entryInFlight: status === "transcoding" || status === "syncing"
+    readonly property bool entryInFlight: status === "preparing" || status === "transcoding" || status === "syncing" || status === "removing"
     readonly property bool headerShown: isGrouped && groupInfo.firstEntryId === entryId
-    readonly property bool rowShown: !isGrouped || expanded || entryInFlight
+    readonly property bool rowShown: isRemoval || !isGrouped || expanded || entryInFlight
     readonly property string groupNoun: groupInfo && groupInfo.kind === "series" ? "season"
+        : groupInfo && groupInfo.kind === "audiobooks" ? "audiobook"
+        : groupInfo && (groupInfo.kind === "podcasts" || groupInfo.kind === "podcast-removals") ? "podcast"
         : groupInfo && groupInfo.kind === "photos" ? "photo album" : "album"
     readonly property string groupDetail: {
         if (!groupInfo) return ""
-        const noun = groupInfo.kind === "series" ? "episodes"
+        const noun = groupInfo.kind === "audiobooks" ? "parts"
+                   : groupInfo.kind === "series" || groupInfo.kind === "podcasts" || groupInfo.kind === "podcast-removals" ? "episodes"
             : groupInfo.kind === "photos" ? "photos" : "tracks"
+        if (groupInfo.kind === "podcast-removals")
+            return groupInfo.doneCount + "/" + groupInfo.count + " removed from Zune"
         const count = groupInfo.failedCount > 0
             ? groupInfo.failedCount + " failed / " + groupInfo.count
             : groupInfo.doneCount > 0
@@ -243,7 +249,9 @@ ColumnLayout {
                         Layout.fillWidth: true
                     }
                     Text {
-                        text: entry.type === "video" ? (entry.series || "movie")
+                        objectName: "queueEntryDetail"
+                        text: entry.isRemoval ? "Completed episode" + (entry.artist ? " · " + entry.artist : "")
+                            : entry.type === "video" ? (entry.series || "movie")
                             : entry.type === "photo" ? entry.album : entry.artist
                         font.pixelSize: Theme.customizeCaptionSize
                         color: Theme.textSecondary
@@ -269,10 +277,12 @@ ColumnLayout {
                         }
                     }
                     Text {
-                        visible: (entry.status === "failed" || entry.status === "sent") && entry.statusNote !== ""
+                        visible: (entry.isRemoval || entry.status === "failed" || entry.status === "sent") && entry.statusNote !== ""
+                        objectName: "queueEntryStatusNote"
                         text: entry.statusNote
                         font.pixelSize: Theme.customizeCaptionSize
-                        color: Theme.activePink
+                        color: entry.status === "removed" ? Theme.green
+                            : entry.status === "removal-unconfirmed" || !entry.isRemoval ? Theme.activePink : Theme.textSecondary
                         elide: Text.ElideRight
                         Layout.fillWidth: true
                     }
@@ -280,10 +290,10 @@ ColumnLayout {
                 Text {
                     Layout.preferredWidth: Theme.spaceMd
                     Layout.alignment: Qt.AlignTop
-                    text: entry.entryInFlight ? "" : entry.status === "verified" ? "✓"
-                        : entry.status === "sent" ? "!" : entry.status === "failed" ? "✕" : entry.status === "skipped" ? "–" : "•"
+                    text: entry.entryInFlight ? "" : (entry.status === "verified" || entry.status === "removed") ? "✓"
+                        : (entry.status === "sent" || entry.status === "removal-unconfirmed") ? "!" : entry.status === "failed" ? "✕" : (entry.status === "skipped" || entry.status === "not-removed") ? "–" : "•"
                     font.pixelSize: Theme.spaceMd
-                    color: entry.status === "verified" ? Theme.green
+                    color: entry.status === "verified" || entry.status === "removed" ? Theme.green
                         : entry.status === "failed" ? Theme.pink : Theme.textDim
                 }
                 RemoveAction { Layout.alignment: Qt.AlignTop }

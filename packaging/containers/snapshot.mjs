@@ -63,17 +63,43 @@ export function exportSnapshot(sourceDirectory, destinationDirectory) {
   if (fs.realpathSync(git(source, 'rev-parse', '--show-toplevel')) !== source)
     throw new Error('Source must be the app repository root');
 
-  const components = [['', 'SOURCE'], ['libzune', 'LIBZUNE']].map(([subdir, key]) => {
+  const component = (subdir, key) => {
     const root = path.join(source, subdir);
     return {root, subdir, key, revision:git(root, 'rev-parse', 'HEAD'),
       dirty:!!git(root, 'status', '--porcelain', '--untracked-files=normal', '--ignore-submodules=none')};
-  });
-  const [app, protocol] = components;
-  const gitlink = git(source, 'ls-tree', app.revision, '--', 'libzune').match(/^160000 commit ([a-f0-9]{40})\tlibzune$/);
-  if (!gitlink) throw new Error('The captured app commit must contain the libzune submodule');
-  // A clean submodule at a different HEAD is still a dirty parent snapshot.
-  // This comparison also closes a pin-change race between the two status reads.
-  if (protocol.dirty || protocol.revision !== gitlink[1]) app.dirty = true;
+  };
+  const app = component('', 'SOURCE');
+  const entry = git(source, 'ls-tree', app.revision, '--', 'libzune');
+  const gitlink = entry.match(/^160000 commit ([a-f0-9]{40})\tlibzune$/);
+  let protocol;
+  const components = [app];
+  if (gitlink) {
+    protocol = component('libzune', 'LIBZUNE');
+    components.push(protocol);
+    // A clean submodule at a different HEAD is still a dirty parent snapshot.
+    // This comparison also closes a pin-change race between the two status reads.
+    if (protocol.dirty || protocol.revision !== gitlink[1]) app.dirty = true;
+  } else if (/^040000 tree [a-f0-9]{40}\tlibzune$/.test(entry)) {
+    // Public exports vendor libzune in the app commit. Never run Git from that
+    // directory: it would report the app's HEAD as the library's revision.
+    if (app.dirty) throw new Error('A vendored public snapshot requires a clean app checkout');
+    const manifestEntry = git(source, 'ls-tree', app.revision, '--', 'PUBLIC_LIBZUNE.json');
+    if (!/^100(?:644|755) blob [a-f0-9]{40}\tPUBLIC_LIBZUNE\.json$/.test(manifestEntry))
+      throw new Error('Vendored libzune requires committed PUBLIC_LIBZUNE.json metadata');
+    let manifest;
+    try { manifest = JSON.parse(git(source, 'show', `${app.revision}:PUBLIC_LIBZUNE.json`)); }
+    catch { throw new Error('Invalid PUBLIC_LIBZUNE.json metadata'); }
+    if (!manifest || typeof manifest.revision !== 'string' || typeof manifest.tree !== 'string'
+        || !/^[a-f0-9]{40}$/.test(manifest.revision) || !/^[a-f0-9]{40}$/.test(manifest.tree))
+      throw new Error('PUBLIC_LIBZUNE.json requires 40-hex revision and tree values');
+    if (git(source, 'rev-parse', `${app.revision}:libzune`) !== manifest.tree)
+      throw new Error('PUBLIC_LIBZUNE.json tree does not match committed libzune');
+    protocol = {revision:manifest.revision, dirty:false};
+    // The sole archive is the exact captured app commit, including libzune and
+    // its checked manifest. No mutable worktree bytes are read for this export.
+  } else {
+    throw new Error('The captured app commit must contain a libzune submodule or vendored tree');
+  }
   const epoch = git(source, 'show', '-s', '--format=%ct', app.revision);
 
   fs.mkdirSync(path.dirname(destination), {recursive:true});

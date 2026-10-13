@@ -93,22 +93,33 @@ cheap "anything new?" probe. GetStorageInfo costs ~20 ms and is safe to call
 between items — a good free-space guard for the Zuuned sync loop even though
 Windows doesn't do it.
 
-## 5. Played data lives in the ZMDB — nowhere else
+## 5. Observed Windows playback-state reads use the ZMDB
 
 Zero per-object reads of UseCount/play state in any capture. Play counts,
 ratings, skip counts, last-played all ride in the ZMDB blob (already parsed by
 libzune: playcount +26, rating varint 0x23, last_played varint 0x70). The only
 Get/SetObjectPropValue traffic is `0xDC86`/`0xDC81` — representative-sample
-album art, which libzune already implements.
+album art, which libzune already implements. This describes the examined
+captures, not proof that per-object state properties never work. In particular,
+the Keel MP3 descriptor advertises UseCount; its podcast completion semantics
+still require controlled hardware validation. See the
+[podcast state investigation](SPOKEN_MEDIA_RESEARCH.md#podcast-listening-state-investigation-2026-10-09).
 
 ## 6. Audiobooks are first-class
 
-Media-mode DeviceInfo advertises the **`audible.com: 1.0`** MTP extension and
-playback formats **`0xB904` (Audible)** and **`0xBA05` (AbstractAudioBook)**,
-matching ZMDB record types 0x11 AudiobookTitle / 0x12 AudiobookTrack.
-No audiobook transfer occurs in these captures — creation recipe unproven,
-almost certainly the album pattern (0x9808 abstract object +
-SetObjectReferences). One Windows audiobook-sync capture would close it.
+**2026-10-09 correction:** DeviceInfo advertises the `audible.com: 1.0` MTP
+extension and format `0xB904` (Audible). ZMDB research identifies book title/track
+schemas `0x11`/`0x12`. No audiobook creation appears in these captures.
+
+The previous version mislabeled `0xBA05` as AbstractAudioBook and speculated
+that upload would use an abstract album plus SetObjectReferences. That is not
+capture evidence: `0xBA05` is AbstractAudioVideoPlaylist. Recovered external
+implementation instead uses ordinary audio with MetaGenre 18 (`0x12`) and
+book-grouping property `0xDA9A`, without an abstract album or reference writes.
+These captures still contain no book creation. Later October 9 native tests on
+Classic and HD independently proved two small MP3 parts, schema 0x12, metadata
+and exact audio/art readback using that sequence. Firmware resume remains open. See [the dated research and sources](SPOKEN_MEDIA_RESEARCH.md#native-audiobook-lead-recovered-2026-10-09)
+and [integration status](SPOKEN_MEDIA.md).
 
 ## 7. Real client error posture and timing
 

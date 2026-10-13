@@ -1,0 +1,23 @@
+2026-10-09 private development gate, Zune 30 / Keel (045e:0710)
+Application branch: feature/podcasts-audiobooks, modified worktree
+Library branch: feature/podcasts-audiobooks, modified worktree
+Harness: parent app tests/spoken-sync/run-backend.mjs --hardware
+Path: SpokenMediaService -> SyncEngine -> DeviceWorker -> libzune
+Feed: https://rss.buzzsprout.com/2534968.rss
+Selected identity: guid:Buzzsprout-19376357
+Title: 13 Freedom Tastes Good
+Existing series: 251660022
+New episode: 268437240
+PASS actual DeviceService connection
+PASS RSS subscription, download and typed queue admission
+PASS upload with podcast property and size readback
+PASS representative-sample show artwork accepted (214600 JPEG bytes)
+PASS completion counts: podcasts=1, music=0
+PASS successful queue cleared
+PASS normal app finalize and release
+PASS new-session repeated admission: already present, no queued row or upload
+No existing media purged.
+USER CONFIRMATION, 2026-10-09: podcasts transfer with audio and images working perfectly.
+This closes playback and visible artwork for the tested Classic, independently of the automated harness.
+Not established: resume, HD/other models.
+This file intentionally omits authentication diagnostics and device serials.

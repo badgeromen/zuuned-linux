@@ -1,9 +1,13 @@
-# Intentional x86_64 host ABI/desktop contract, not linuxdeploy's blacklist.
+# Intentional x86_64/aarch64 host ABI/desktop contract, not linuxdeploy's blacklist.
 # The clean runtime must actually supply and exercise these dependencies.
 # glibc and its loader (the candidate reports its required symbol versions).
 ld-linux-x86-64.so.2
+ld-linux-aarch64.so.1
 libc.so.6
 libm.so.6
+# glibc vector math; Debian ARM64 libx265 uses GLIBC_2.38/2.39 symbols here.
+# Keep this with the host libc/loader, never mix glibc components in the bundle.
+libmvec.so.1
 libdl.so.2
 libpthread.so.0
 libresolv.so.2

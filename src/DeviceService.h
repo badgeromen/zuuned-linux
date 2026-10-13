@@ -37,6 +37,7 @@ class DeviceService : public QObject {
     Q_PROPERTY(QString udevInstallCommand READ udevInstallCommand CONSTANT)
     Q_PROPERTY(QString status READ status NOTIFY stateChanged)
     Q_PROPERTY(QString name READ name NOTIFY stateChanged)
+    Q_PROPERTY(QString deviceSerial READ deviceSerial NOTIFY stateChanged)
     Q_PROPERTY(QString model READ model NOTIFY stateChanged)
     // ZuneDeviceFamily (0xD21A): 0x00 Keel/30, 0x02 Scorpius, 0x03 Draco,
     // 0x06 Pavo/HD, 0xFF unknown — Settings shows the matching profile
@@ -76,6 +77,11 @@ class DeviceService : public QObject {
     // Device photo folder-albums [{itemId, name}] from the ZMDB scan.
     Q_PROPERTY(QVariantList photoAlbumsList READ photoAlbumsList NOTIFY stateChanged)
     Q_PROPERTY(QVariantList playlistsList READ playlistsList NOTIFY stateChanged)
+    Q_PROPERTY(QVariantList podcastEpisodesList READ podcastEpisodesList NOTIFY spokenMediaChanged)
+    Q_PROPERTY(QVariantList audiobookPartsList READ audiobookPartsList NOTIFY spokenMediaChanged)
+    Q_PROPERTY(bool spokenMediaLoading READ spokenMediaLoading NOTIFY spokenMediaChanged)
+    Q_PROPERTY(QString spokenMediaError READ spokenMediaError NOTIFY spokenMediaChanged)
+    Q_PROPERTY(QString podcastStatusWarning READ podcastStatusWarning NOTIFY spokenMediaChanged)
     // itemId (as string key) → "file://..." for fetched album art.
     Q_PROPERTY(QVariantMap artPaths READ artPaths NOTIFY artChanged)
     // lower(artist\talbum\ttitle) → true, for on-device badges + dedup
@@ -104,7 +110,8 @@ public:
     ~DeviceService() override;
 
     bool connected() const { return m_connected; }
-    bool busy() const { return m_busy; }
+    bool busy() const { return m_busy || m_spokenMediaLoading || m_purging; }
+    void setSyncActive(bool active);
     bool devicePresent() const { return m_devicePresent; }
     bool udevRuleOk() const;
     QString udevInstallCommand() const;
@@ -191,6 +198,21 @@ public:
     QVariantList photosList() const { return m_photosList; }
     QVariantList photoAlbumsList() const { return m_photoAlbumsList; }
     QVariantList playlistsList() const { return m_playlistsList; }
+    QVariantList podcastEpisodesList() const { return m_podcastEpisodesList; }
+    QVariantList audiobookPartsList() const { return m_audiobookPartsList; }
+    bool spokenMediaLoading() const { return m_spokenMediaLoading; }
+    bool podcastInventoryReady() const { return m_connected && !m_spokenMediaLoading &&
+        m_spokenMediaError.isEmpty() && m_podcastMembershipKnown; }
+    quint64 spokenGeneration() const { return m_spokenGeneration; }
+    void applyPodcastCleanup(quint64 generation, const QString &serial, const QVariantList &rows);
+    Q_INVOKABLE QVariantMap podcastDeviceStatus(const QString &feedUrl, const QString &sourceUrl) const;
+    void notePodcastOnDevice(quint64 generation, const QString &serial,
+                             const QVariantMap &episode, quint32 itemId);
+    QString spokenMediaError() const { return m_spokenMediaError; }
+    QString podcastStatusWarning() const { return m_podcastStatusWarning; }
+    Q_INVOKABLE void ensureSpokenMedia();
+    Q_INVOKABLE void refreshSpokenMedia();
+    Q_INVOKABLE void purgeSpokenItems(const QString &kind, const QVariantList &itemIds);
     QVariantMap artPaths() const { return m_artPaths; }
 
     QString connectionStage() const { return m_connectionStage; }
@@ -292,6 +314,10 @@ signals:
     void workerPurgeInterruptedObject(const QVariantMap &record);
     void interruptedObjectPurged(const QString &token, bool ok);
     void stateChanged();
+    void spokenMediaChanged();
+    void workerReadSpokenMedia(quint64 generation, quint64 request, const QString &serial);
+    void workerPurgeSpokenItems(quint64 generation, quint64 request, const QString &serial,
+                                const QString &kind, const QVariantList &rows);
     void purgeChanged();
     void pullChanged();
     // A one-line pull result for the toast host (completion, or the
@@ -335,6 +361,8 @@ signals:
     void workerPurgeItems(const QVariantList &itemIds);
 
 private:
+    friend struct DeviceSpokenTestAccess;
+    DeviceService(QObject *parent, bool watchDevice);
     void onBreachDone(const DeviceWorker::BreachData &r);
     void onWorkerStage(const QString &label, double progress);
     static QColor pickMoodColor(const QVariantList &genres);
@@ -373,6 +401,19 @@ private:
     QVariantList m_artistsList, m_albumsList, m_genresList;
     QVariantList m_videosList, m_photosList, m_playlistsList;
     QVariantList m_photoAlbumsList;
+    QVariantList m_podcastEpisodesList, m_audiobookPartsList;
+    QHash<QPair<QString, QString>, QVariantMap> m_podcastDeviceStatus;
+    bool m_podcastMembershipKnown = false;
+    QString m_podcastStatusWarning;
+    void rebuildPodcastDeviceStatus();
+    void prunePodcastDeviceStatus(const QSet<quint32> &ids);
+    bool m_spokenMediaLoading = false, m_spokenRequested = false, m_spokenReadDeferred = false;
+    bool m_syncActive = false;
+    QString m_spokenMediaError;
+    quint64 m_spokenGeneration = 1, m_spokenRequest = 0;
+    QString m_spokenArtSession;
+    quint64 m_spokenArtRevision = 0;
+    QSet<quint32> m_spokenArtIds;
     // requestPhotoFull extracts pending → suppress duplicate requests
     QSet<quint32> m_photoFullPending;
     QVariantMap m_artPaths;

@@ -24,6 +24,10 @@ complete public signatures and their contracts.
   failed inventory reads do not justify creating one, and existing duplicates are not deleted.
 - [Metadata probe](METADATA_PROBE.md): native/fallback tags and disc/year behavior.
 - [Video titles](VIDEO_TITLES.md): independent display titles and wire filenames.
+- [Spoken-media integration](SPOKEN_MEDIA.md): podcast APIs, identity, covers, CLI testing and audiobook limits.
+- [Spoken-media research](SPOKEN_MEDIA_RESEARCH.md): capture evidence, Classic hardware gates and audiobook protocol leads.
+- [Podcast listening-state investigation](SPOKEN_MEDIA_RESEARCH.md#podcast-listening-state-investigation-2026-10-09): candidate bookmark/played fields, read-only HD baseline and retention validation gates.
+- [Vendor property catalog](ZUNE_VENDOR_PROPERTIES.md): metadata hex codes, types and evidence boundaries.
 
 The macOS DriverKit backend is included in this repository. The corresponding
 `ZuneUSBDriver` extension implementation belongs to the consuming macOS project;
@@ -31,34 +35,34 @@ there is no `Driver/` source tree here. Linux uses the libusb backend.
 
 ## Public API
 
-90 declarations in `include/zune.h`. Consult the linked header for
+105 declarations in `include/zune.h`. Consult the linked header for
 ownership, return values and threading requirements before calling an operation.
 
 | Function | Declaration | Implementation |
 |---|---|---|
 | `zune_breach()` | [include/zune.h:57](../include/zune.h#L57) | [src/device.c:54](../src/device.c#L54) |
-| `zune_sever()` | [include/zune.h:62](../include/zune.h#L62) | [src/device.c:322](../src/device.c#L322) |
-| `zune_get_name()` | [include/zune.h:66](../include/zune.h#L66) | [src/device.c:343](../src/device.c#L343) |
-| `zune_get_model()` | [include/zune.h:67](../include/zune.h#L67) | [src/device.c:347](../src/device.c#L347) |
-| `zune_get_serial()` | [include/zune.h:68](../include/zune.h#L68) | [src/device.c:351](../src/device.c#L351) |
-| `zune_get_battery()` | [include/zune.h:69](../include/zune.h#L69) | [src/device.c:355](../src/device.c#L355) |
-| `zune_get_capacity()` | [include/zune.h:70](../include/zune.h#L70) | [src/device.c:359](../src/device.c#L359) |
-| `zune_get_headroom()` | [include/zune.h:71](../include/zune.h#L71) | [src/device.c:363](../src/device.c#L363) |
-| `zune_refresh_storage()` | [include/zune.h:77](../include/zune.h#L77) | [src/device.c:372](../src/device.c#L372) |
-| `zune_identify()` | [include/zune.h:78](../include/zune.h#L78) | [src/device.c:389](../src/device.c#L389) |
-| `zune_get_family()` | [include/zune.h:83](../include/zune.h#L83) | [src/device.c:420](../src/device.c#L420) |
-| `zune_is_hdd()` | [include/zune.h:87](../include/zune.h#L87) | [src/device.c:431](../src/device.c#L431) |
-| `zune_rename()` | [include/zune.h:90](../include/zune.h#L90) | [src/device.c:559](../src/device.c#L559) |
-| `zune_is_live()` | [include/zune.h:94](../include/zune.h#L94) | [src/device.c:439](../src/device.c#L439) |
-| `zune_abort()` | [include/zune.h:98](../include/zune.h#L98) | [src/device.c:508](../src/device.c#L508) |
-| `zune_is_aborted()` | [include/zune.h:101](../include/zune.h#L101) | [src/device.c:512](../src/device.c#L512) |
-| `zune_clear_abort()` | [include/zune.h:104](../include/zune.h#L104) | [src/device.c:516](../src/device.c#L516) |
-| `zune_autopsy()` | [include/zune.h:111](../include/zune.h#L111) | [src/device.c:522](../src/device.c#L522) |
-| `zune_autopsy_name()` | [include/zune.h:114](../include/zune.h#L114) | [src/device.c:526](../src/device.c#L526) |
+| `zune_sever()` | [include/zune.h:62](../include/zune.h#L62) | [src/device.c:323](../src/device.c#L323) |
+| `zune_get_name()` | [include/zune.h:66](../include/zune.h#L66) | [src/device.c:344](../src/device.c#L344) |
+| `zune_get_model()` | [include/zune.h:67](../include/zune.h#L67) | [src/device.c:348](../src/device.c#L348) |
+| `zune_get_serial()` | [include/zune.h:68](../include/zune.h#L68) | [src/device.c:352](../src/device.c#L352) |
+| `zune_get_battery()` | [include/zune.h:69](../include/zune.h#L69) | [src/device.c:356](../src/device.c#L356) |
+| `zune_get_capacity()` | [include/zune.h:70](../include/zune.h#L70) | [src/device.c:360](../src/device.c#L360) |
+| `zune_get_headroom()` | [include/zune.h:71](../include/zune.h#L71) | [src/device.c:364](../src/device.c#L364) |
+| `zune_refresh_storage()` | [include/zune.h:77](../include/zune.h#L77) | [src/device.c:373](../src/device.c#L373) |
+| `zune_identify()` | [include/zune.h:78](../include/zune.h#L78) | [src/device.c:390](../src/device.c#L390) |
+| `zune_get_family()` | [include/zune.h:83](../include/zune.h#L83) | [src/device.c:421](../src/device.c#L421) |
+| `zune_is_hdd()` | [include/zune.h:87](../include/zune.h#L87) | [src/device.c:432](../src/device.c#L432) |
+| `zune_rename()` | [include/zune.h:90](../include/zune.h#L90) | [src/device.c:560](../src/device.c#L560) |
+| `zune_is_live()` | [include/zune.h:94](../include/zune.h#L94) | [src/device.c:440](../src/device.c#L440) |
+| `zune_abort()` | [include/zune.h:98](../include/zune.h#L98) | [src/device.c:509](../src/device.c#L509) |
+| `zune_is_aborted()` | [include/zune.h:101](../include/zune.h#L101) | [src/device.c:513](../src/device.c#L513) |
+| `zune_clear_abort()` | [include/zune.h:104](../include/zune.h#L104) | [src/device.c:517](../src/device.c#L517) |
+| `zune_autopsy()` | [include/zune.h:111](../include/zune.h#L111) | [src/device.c:523](../src/device.c#L523) |
+| `zune_autopsy_name()` | [include/zune.h:114](../include/zune.h#L114) | [src/device.c:527](../src/device.c#L527) |
 | `zune_unjam()` | [include/zune.h:119](../include/zune.h#L119) | [src/usb_recovery.c:13](../src/usb_recovery.c#L13) |
-| `zune_forge_folder()` | [include/zune.h:123](../include/zune.h#L123) | [src/device.c:448](../src/device.c#L448) |
-| `zune_get_folders()` | [include/zune.h:129](../include/zune.h#L129) | [src/device.c:459](../src/device.c#L459) |
-| `zune_free_folders()` | [include/zune.h:130](../include/zune.h#L130) | [src/device.c:500](../src/device.c#L500) |
+| `zune_forge_folder()` | [include/zune.h:123](../include/zune.h#L123) | [src/device.c:449](../src/device.c#L449) |
+| `zune_get_folders()` | [include/zune.h:129](../include/zune.h#L129) | [src/device.c:460](../src/device.c#L460) |
+| `zune_free_folders()` | [include/zune.h:130](../include/zune.h#L130) | [src/device.c:501](../src/device.c#L501) |
 | `zune_get_tracks()` | [include/zune.h:151](../include/zune.h#L151) | [src/track.c:66](../src/track.c#L66) |
 | `zune_free_tracks()` | [include/zune.h:152](../include/zune.h#L152) | [src/track.c:183](../src/track.c#L183) |
 | `zune_smuggle_track()` | [include/zune.h:156](../include/zune.h#L156) | [src/track.c:366](../src/track.c#L366) |
@@ -106,30 +110,45 @@ ownership, return values and threading requirements before calling an operation.
 | `zune_link_artist()` | [include/zune.h:456](../include/zune.h#L456) | [src/album.c:336](../src/album.c#L336) |
 | `zune_get_albums()` | [include/zune.h:468](../include/zune.h#L468) | [src/album.c:353](../src/album.c#L353) |
 | `zune_free_albums()` | [include/zune.h:469](../include/zune.h#L469) | [src/album.c:450](../src/album.c#L450) |
-| `zune_brand()` | [include/zune.h:475](../include/zune.h#L475) | [src/thumbnail.c:16](../src/thumbnail.c#L16) |
-| `zune_grab_thumb()` | [include/zune.h:481](../include/zune.h#L481) | [src/thumbnail.c:35](../src/thumbnail.c#L35) |
-| `zune_grab_photo_thumb()` | [include/zune.h:487](../include/zune.h#L487) | [src/thumbnail.c:68](../src/thumbnail.c#L68) |
-| `zune_arm_audio()` | [include/zune.h:496](../include/zune.h#L496) | [src/transcode.c:63](../src/transcode.c#L63) |
-| `zune_retag()` | [include/zune.h:501](../include/zune.h#L501) | [src/transcode.c:127](../src/transcode.c#L127) |
-| `zune_arm_video()` | [include/zune.h:506](../include/zune.h#L506) | [src/transcode.c:308](../src/transcode.c#L308) |
-| `zune_arm_episode()` | [include/zune.h:510](../include/zune.h#L510) | [src/transcode.c:313](../src/transcode.c#L313) |
-| `zune_infiltrate_legacy()` | [include/zune.h:526](../include/zune.h#L526) | [src/zmdb.c:843](../src/zmdb.c#L843) |
-| `zune_free_library()` | [include/zune.h:527](../include/zune.h#L527) | [src/zmdb.c:1319](../src/zmdb.c#L1319) |
-| `zune_finalize()` | [include/zune.h:534](../include/zune.h#L534) | [src/finalize.c:12](../src/finalize.c#L12) |
-| `zune_decode_filename()` | [include/zune.h:541](../include/zune.h#L541) | [src/util.c:120](../src/util.c#L120) |
-| `zune_snap_thumb()` | [include/zune.h:547](../include/zune.h#L547) | [src/util.c:369](../src/util.c#L369) |
-| `zune_probe()` | [include/zune.h:571](../include/zune.h#L571) | [src/util.c:623](../src/util.c#L623)<br>[src/util.c:712](../src/util.c#L712) |
-| `zune_free_metadata()` | [include/zune.h:572](../include/zune.h#L572) | [src/util.c:821](../src/util.c#L821) |
-| `zune_smuggle_track_ex()` | [include/zune.h:581](../include/zune.h#L581) | [src/track.c:404](../src/track.c#L404) |
-| `zune_infiltrate()` | [include/zune.h:628](../include/zune.h#L628) | [src/zmdb.c:1027](../src/zmdb.c#L1027) |
-| `zune_free_scan()` | [include/zune.h:631](../include/zune.h#L631) | [src/zmdb.c:1066](../src/zmdb.c#L1066) |
-| `zune_dump_raw()` | [include/zune.h:637](../include/zune.h#L637) | [src/zmdb.c:1112](../src/zmdb.c#L1112) |
-| `zune_infiltrate_deep()` | [include/zune.h:642](../include/zune.h#L642) | [src/zmdb.c:1187](../src/zmdb.c#L1187) |
-| `zune_get_error()` | [include/zune.h:648](../include/zune.h#L648) | [src/device.c:21](../src/device.c#L21) |
+| `zune_get_podcast_series()` | [include/zune.h:490](../include/zune.h#L490) | [src/podcast.c:94](../src/podcast.c#L94) |
+| `zune_free_podcast_series()` | [include/zune.h:491](../include/zune.h#L491) | [src/podcast.c:85](../src/podcast.c#L85) |
+| `zune_get_podcast_episodes()` | [include/zune.h:506](../include/zune.h#L506) | [src/spoken_inventory.c:96](../src/spoken_inventory.c#L96) |
+| `zune_free_podcast_episodes()` | [include/zune.h:507](../include/zune.h#L507) | [src/spoken_inventory.c:87](../src/spoken_inventory.c#L87) |
+| `zune_get_podcast_episode_sources()` | [include/zune.h:521](../include/zune.h#L521) | [src/podcast.c:529](../src/podcast.c#L529) |
+| `zune_free_podcast_episode_sources()` | [include/zune.h:522](../include/zune.h#L522) | [src/podcast.c:522](../src/podcast.c#L522) |
+| `zune_get_podcast_states()` | [include/zune.h:542](../include/zune.h#L542) | [src/podcast_state.c:155](../src/podcast_state.c#L155) |
+| `zune_free_podcast_states()` | [include/zune.h:543](../include/zune.h#L543) | [src/podcast_state.c:148](../src/podcast_state.c#L148) |
+| `zune_forge_podcast_series()` | [include/zune.h:554](../include/zune.h#L554) | [src/podcast.c:277](../src/podcast.c#L277) |
+| `zune_smuggle_podcast_episode()` | [include/zune.h:581](../include/zune.h#L581) | [src/podcast.c:348](../src/podcast.c#L348) |
+| `zune_find_podcast_episode()` | [include/zune.h:590](../include/zune.h#L590) | [src/podcast.c:437](../src/podcast.c#L437) |
+| `zune_get_audiobook_parts()` | [include/zune.h:605](../include/zune.h#L605) | [src/spoken_inventory.c:137](../src/spoken_inventory.c#L137) |
+| `zune_free_audiobook_parts()` | [include/zune.h:606](../include/zune.h#L606) | [src/spoken_inventory.c:128](../src/spoken_inventory.c#L128) |
+| `zune_find_audiobook_part()` | [include/zune.h:619](../include/zune.h#L619) | [src/audiobook.c:132](../src/audiobook.c#L132) |
+| `zune_smuggle_audiobook_part()` | [include/zune.h:626](../include/zune.h#L626) | [src/audiobook.c:214](../src/audiobook.c#L214) |
+| `zune_brand()` | [include/zune.h:633](../include/zune.h#L633) | [src/thumbnail.c:16](../src/thumbnail.c#L16) |
+| `zune_grab_thumb()` | [include/zune.h:639](../include/zune.h#L639) | [src/thumbnail.c:35](../src/thumbnail.c#L35) |
+| `zune_grab_photo_thumb()` | [include/zune.h:645](../include/zune.h#L645) | [src/thumbnail.c:68](../src/thumbnail.c#L68) |
+| `zune_arm_audio()` | [include/zune.h:654](../include/zune.h#L654) | [src/transcode.c:63](../src/transcode.c#L63) |
+| `zune_retag()` | [include/zune.h:659](../include/zune.h#L659) | [src/transcode.c:127](../src/transcode.c#L127) |
+| `zune_arm_video()` | [include/zune.h:664](../include/zune.h#L664) | [src/transcode.c:308](../src/transcode.c#L308) |
+| `zune_arm_episode()` | [include/zune.h:668](../include/zune.h#L668) | [src/transcode.c:313](../src/transcode.c#L313) |
+| `zune_infiltrate_legacy()` | [include/zune.h:684](../include/zune.h#L684) | [src/zmdb.c:719](../src/zmdb.c#L719) |
+| `zune_free_library()` | [include/zune.h:685](../include/zune.h#L685) | [src/zmdb.c:1195](../src/zmdb.c#L1195) |
+| `zune_finalize()` | [include/zune.h:692](../include/zune.h#L692) | [src/finalize.c:12](../src/finalize.c#L12) |
+| `zune_decode_filename()` | [include/zune.h:699](../include/zune.h#L699) | [src/util.c:120](../src/util.c#L120) |
+| `zune_snap_thumb()` | [include/zune.h:705](../include/zune.h#L705) | [src/util.c:369](../src/util.c#L369) |
+| `zune_probe()` | [include/zune.h:729](../include/zune.h#L729) | [src/util.c:623](../src/util.c#L623)<br>[src/util.c:712](../src/util.c#L712) |
+| `zune_free_metadata()` | [include/zune.h:730](../include/zune.h#L730) | [src/util.c:821](../src/util.c#L821) |
+| `zune_smuggle_track_ex()` | [include/zune.h:739](../include/zune.h#L739) | [src/track.c:404](../src/track.c#L404) |
+| `zune_infiltrate()` | [include/zune.h:786](../include/zune.h#L786) | [src/zmdb.c:903](../src/zmdb.c#L903) |
+| `zune_free_scan()` | [include/zune.h:789](../include/zune.h#L789) | [src/zmdb.c:942](../src/zmdb.c#L942) |
+| `zune_dump_raw()` | [include/zune.h:795](../include/zune.h#L795) | [src/zmdb.c:988](../src/zmdb.c#L988) |
+| `zune_infiltrate_deep()` | [include/zune.h:800](../include/zune.h#L800) | [src/zmdb.c:1063](../src/zmdb.c#L1063) |
+| `zune_get_error()` | [include/zune.h:806](../include/zune.h#L806) | [src/device.c:21](../src/device.c#L21) |
 
 ## Library definitions
 
-271 function definitions, including conditional alternatives. `public` means
+326 function definitions, including conditional alternatives. `public` means
 declared in `include/zune.h`; `internal` means a non-static implementation
 symbol outside that API; `static` means file-local or header-inline.
 
@@ -147,6 +166,20 @@ symbol outside that API; `static` means file-local or header-inline.
 | `zune_get_albums()` | public | [src/album.c:353](../src/album.c#L353) |
 | `zune_free_albums()` | public | [src/album.c:450](../src/album.c#L450) |
 
+### src/audiobook.c
+
+| Function | Scope | Definition |
+|---|---|---|
+| `book_ready()` | static | [src/audiobook.c:7](../src/audiobook.c#L7) |
+| `book_text()` | static | [src/audiobook.c:21](../src/audiobook.c#L21) |
+| `book_input()` | static | [src/audiobook.c:34](../src/audiobook.c#L34) |
+| `book_read_text()` | static | [src/audiobook.c:48](../src/audiobook.c#L48) |
+| `book_number()` | static | [src/audiobook.c:64](../src/audiobook.c#L64) |
+| `book_inventory()` | static | [src/audiobook.c:79](../src/audiobook.c#L79) |
+| `book_folders()` | static | [src/audiobook.c:92](../src/audiobook.c#L92) |
+| `zune_find_audiobook_part()` | public | [src/audiobook.c:132](../src/audiobook.c#L132) |
+| `zune_smuggle_audiobook_part()` | public | [src/audiobook.c:214](../src/audiobook.c#L214) |
+
 ### src/device.c
 
 | Function | Scope | Definition |
@@ -154,27 +187,27 @@ symbol outside that API; `static` means file-local or header-inline.
 | `zune_set_error()` | internal | [src/device.c:14](../src/device.c#L14) |
 | `zune_get_error()` | public | [src/device.c:21](../src/device.c#L21) |
 | `zune_breach()` | public | [src/device.c:54](../src/device.c#L54) |
-| `zune_sever()` | public | [src/device.c:322](../src/device.c#L322) |
-| `zune_get_name()` | public | [src/device.c:343](../src/device.c#L343) |
-| `zune_get_model()` | public | [src/device.c:347](../src/device.c#L347) |
-| `zune_get_serial()` | public | [src/device.c:351](../src/device.c#L351) |
-| `zune_get_battery()` | public | [src/device.c:355](../src/device.c#L355) |
-| `zune_get_capacity()` | public | [src/device.c:359](../src/device.c#L359) |
-| `zune_get_headroom()` | public | [src/device.c:363](../src/device.c#L363) |
-| `zune_refresh_storage()` | public | [src/device.c:372](../src/device.c#L372) |
-| `zune_identify()` | public | [src/device.c:389](../src/device.c#L389) |
-| `zune_get_family()` | public | [src/device.c:420](../src/device.c#L420) |
-| `zune_is_hdd()` | public | [src/device.c:431](../src/device.c#L431) |
-| `zune_is_live()` | public | [src/device.c:439](../src/device.c#L439) |
-| `zune_forge_folder()` | public | [src/device.c:448](../src/device.c#L448) |
-| `zune_get_folders()` | public | [src/device.c:459](../src/device.c#L459) |
-| `zune_free_folders()` | public | [src/device.c:500](../src/device.c#L500) |
-| `zune_abort()` | public | [src/device.c:508](../src/device.c#L508) |
-| `zune_is_aborted()` | public | [src/device.c:512](../src/device.c#L512) |
-| `zune_clear_abort()` | public | [src/device.c:516](../src/device.c#L516) |
-| `zune_autopsy()` | public | [src/device.c:522](../src/device.c#L522) |
-| `zune_autopsy_name()` | public | [src/device.c:526](../src/device.c#L526) |
-| `zune_rename()` | public | [src/device.c:559](../src/device.c#L559) |
+| `zune_sever()` | public | [src/device.c:323](../src/device.c#L323) |
+| `zune_get_name()` | public | [src/device.c:344](../src/device.c#L344) |
+| `zune_get_model()` | public | [src/device.c:348](../src/device.c#L348) |
+| `zune_get_serial()` | public | [src/device.c:352](../src/device.c#L352) |
+| `zune_get_battery()` | public | [src/device.c:356](../src/device.c#L356) |
+| `zune_get_capacity()` | public | [src/device.c:360](../src/device.c#L360) |
+| `zune_get_headroom()` | public | [src/device.c:364](../src/device.c#L364) |
+| `zune_refresh_storage()` | public | [src/device.c:373](../src/device.c#L373) |
+| `zune_identify()` | public | [src/device.c:390](../src/device.c#L390) |
+| `zune_get_family()` | public | [src/device.c:421](../src/device.c#L421) |
+| `zune_is_hdd()` | public | [src/device.c:432](../src/device.c#L432) |
+| `zune_is_live()` | public | [src/device.c:440](../src/device.c#L440) |
+| `zune_forge_folder()` | public | [src/device.c:449](../src/device.c#L449) |
+| `zune_get_folders()` | public | [src/device.c:460](../src/device.c#L460) |
+| `zune_free_folders()` | public | [src/device.c:501](../src/device.c#L501) |
+| `zune_abort()` | public | [src/device.c:509](../src/device.c#L509) |
+| `zune_is_aborted()` | public | [src/device.c:513](../src/device.c#L513) |
+| `zune_clear_abort()` | public | [src/device.c:517](../src/device.c#L517) |
+| `zune_autopsy()` | public | [src/device.c:523](../src/device.c#L523) |
+| `zune_autopsy_name()` | public | [src/device.c:527](../src/device.c#L527) |
+| `zune_rename()` | public | [src/device.c:560](../src/device.c#L560) |
 
 ### src/driverkit_usb.c
 
@@ -202,48 +235,55 @@ symbol outside that API; `static` means file-local or header-inline.
 
 | Function | Scope | Definition |
 |---|---|---|
-| `le16_pack()` | static | [src/mtp.c:30](../src/mtp.c#L30) |
-| `le32_pack()` | static | [src/mtp.c:36](../src/mtp.c#L36) |
-| `le64_pack()` | static | [src/mtp.c:44](../src/mtp.c#L44) |
-| `le16_unpack()` | static | [src/mtp.c:50](../src/mtp.c#L50) |
-| `le32_unpack()` | static | [src/mtp.c:55](../src/mtp.c#L55) |
-| `le64_unpack()` | static | [src/mtp.c:63](../src/mtp.c#L63) |
-| `utf8_to_ucs2_chars()` | static | [src/mtp.c:96](../src/mtp.c#L96) |
-| `ucs2_char_to_utf8()` | static | [src/mtp.c:191](../src/mtp.c#L191) |
-| `mtp_string_to_ucs2()` | internal | [src/mtp.c:208](../src/mtp.c#L208) |
-| `mtp_ucs2_to_string()` | internal | [src/mtp.c:274](../src/mtp.c#L274) |
-| `mtp_read_string()` | static | [src/mtp.c:335](../src/mtp.c#L335) |
-| `mtp_pack_string()` | static | [src/mtp.c:364](../src/mtp.c#L364) |
-| `mtp_get_storage_ids()` | internal | [src/mtp.c:386](../src/mtp.c#L386) |
-| `mtp_get_storage_info()` | internal | [src/mtp.c:439](../src/mtp.c#L439) |
-| `mtp_free_storage_info()` | internal | [src/mtp.c:498](../src/mtp.c#L498) |
-| `mtp_get_object_handles()` | internal | [src/mtp.c:511](../src/mtp.c#L511) |
-| `mtp_get_object_info()` | internal | [src/mtp.c:573](../src/mtp.c#L573) |
-| `mtp_free_object_info()` | internal | [src/mtp.c:648](../src/mtp.c#L648) |
-| `mtp_get_object()` | internal | [src/mtp.c:655](../src/mtp.c#L655) |
-| `mtp_get_object_to_file()` | internal | [src/mtp.c:680](../src/mtp.c#L680) |
-| `mtp_pack_object_info()` | static | [src/mtp.c:726](../src/mtp.c#L726) |
-| `mtp_send_object_info()` | internal | [src/mtp.c:782](../src/mtp.c#L782) |
-| `mtp_send_object()` | internal | [src/mtp.c:845](../src/mtp.c#L845) |
-| `mtp_send_object_from_file()` | internal | [src/mtp.c:864](../src/mtp.c#L864) |
-| `mtp_delete_object()` | internal | [src/mtp.c:901](../src/mtp.c#L901) |
-| `mtp_get_object_prop_value()` | internal | [src/mtp.c:934](../src/mtp.c#L934) |
-| `mtp_set_object_prop_value_u16()` | internal | [src/mtp.c:963](../src/mtp.c#L963) |
-| `mtp_set_object_prop_value_u32()` | internal | [src/mtp.c:992](../src/mtp.c#L992) |
-| `mtp_set_object_prop_value_str()` | internal | [src/mtp.c:1021](../src/mtp.c#L1021) |
-| `mtp_set_object_prop_value_ucs2()` | internal | [src/mtp.c:1056](../src/mtp.c#L1056) |
-| `mtp_get_object_prop_list()` | internal | [src/mtp.c:1104](../src/mtp.c#L1104) |
-| `mtp_get_object_references()` | internal | [src/mtp.c:1141](../src/mtp.c#L1141) |
-| `mtp_set_object_references()` | internal | [src/mtp.c:1198](../src/mtp.c#L1198) |
-| `mtp_create_folder()` | internal | [src/mtp.c:1244](../src/mtp.c#L1244) |
-| `mtp_get_representative_sample()` | internal | [src/mtp.c:1277](../src/mtp.c#L1277) |
-| `mtp_send_representative_sample()` | internal | [src/mtp.c:1327](../src/mtp.c#L1327) |
-| `mtp_pack_prop_list()` | static | [src/mtp.c:1403](../src/mtp.c#L1403) |
-| `mtp_send_object_prop_list()` | internal | [src/mtp.c:1557](../src/mtp.c#L1557) |
-| `mtp_set_object_prop_list()` | internal | [src/mtp.c:1625](../src/mtp.c#L1625) |
-| `mtp_get_props_supported()` | internal | [src/mtp.c:1662](../src/mtp.c#L1662) |
-| `mtp_get_prop_desc()` | internal | [src/mtp.c:1725](../src/mtp.c#L1725) |
-| `mtp_vendor_operation()` | internal | [src/mtp.c:1764](../src/mtp.c#L1764) |
+| `le16_pack()` | static | [src/mtp.c:31](../src/mtp.c#L31) |
+| `le32_pack()` | static | [src/mtp.c:37](../src/mtp.c#L37) |
+| `le64_pack()` | static | [src/mtp.c:45](../src/mtp.c#L45) |
+| `le16_unpack()` | static | [src/mtp.c:51](../src/mtp.c#L51) |
+| `le32_unpack()` | static | [src/mtp.c:56](../src/mtp.c#L56) |
+| `le64_unpack()` | static | [src/mtp.c:64](../src/mtp.c#L64) |
+| `utf8_to_ucs2_chars()` | static | [src/mtp.c:97](../src/mtp.c#L97) |
+| `ucs2_char_to_utf8()` | static | [src/mtp.c:192](../src/mtp.c#L192) |
+| `mtp_string_to_ucs2()` | internal | [src/mtp.c:209](../src/mtp.c#L209) |
+| `mtp_ucs2_to_string()` | internal | [src/mtp.c:275](../src/mtp.c#L275) |
+| `mtp_read_string()` | static | [src/mtp.c:336](../src/mtp.c#L336) |
+| `mtp_pack_string()` | static | [src/mtp.c:365](../src/mtp.c#L365) |
+| `mtp_get_storage_ids()` | internal | [src/mtp.c:387](../src/mtp.c#L387) |
+| `mtp_get_storage_info()` | internal | [src/mtp.c:440](../src/mtp.c#L440) |
+| `mtp_free_storage_info()` | internal | [src/mtp.c:499](../src/mtp.c#L499) |
+| `mtp_get_object_handles()` | internal | [src/mtp.c:512](../src/mtp.c#L512) |
+| `mtp_get_object_info()` | internal | [src/mtp.c:578](../src/mtp.c#L578) |
+| `mtp_free_object_info()` | internal | [src/mtp.c:653](../src/mtp.c#L653) |
+| `mtp_get_object()` | internal | [src/mtp.c:660](../src/mtp.c#L660) |
+| `mtp_get_object_to_file()` | internal | [src/mtp.c:685](../src/mtp.c#L685) |
+| `mtp_pack_object_info()` | static | [src/mtp.c:731](../src/mtp.c#L731) |
+| `mtp_send_object_info()` | internal | [src/mtp.c:787](../src/mtp.c#L787) |
+| `mtp_send_object()` | internal | [src/mtp.c:850](../src/mtp.c#L850) |
+| `mtp_send_object_from_file()` | internal | [src/mtp.c:869](../src/mtp.c#L869) |
+| `mtp_delete_object()` | internal | [src/mtp.c:906](../src/mtp.c#L906) |
+| `mtp_get_object_prop_value()` | internal | [src/mtp.c:939](../src/mtp.c#L939) |
+| `mtp_set_object_prop_value_u16()` | internal | [src/mtp.c:968](../src/mtp.c#L968) |
+| `mtp_set_object_prop_value_u32()` | internal | [src/mtp.c:997](../src/mtp.c#L997) |
+| `mtp_set_object_prop_value_str()` | internal | [src/mtp.c:1026](../src/mtp.c#L1026) |
+| `mtp_set_object_prop_value_ucs2()` | internal | [src/mtp.c:1061](../src/mtp.c#L1061) |
+| `mtp_get_object_prop_list()` | internal | [src/mtp.c:1109](../src/mtp.c#L1109) |
+| `mtp_get_object_references()` | internal | [src/mtp.c:1146](../src/mtp.c#L1146) |
+| `mtp_set_object_references()` | internal | [src/mtp.c:1203](../src/mtp.c#L1203) |
+| `mtp_create_folder()` | internal | [src/mtp.c:1249](../src/mtp.c#L1249) |
+| `mtp_get_representative_sample()` | internal | [src/mtp.c:1282](../src/mtp.c#L1282) |
+| `mtp_send_representative_sample()` | internal | [src/mtp.c:1332](../src/mtp.c#L1332) |
+| `mtp_pack_prop_list()` | static | [src/mtp.c:1408](../src/mtp.c#L1408) |
+| `mtp_send_object_prop_list()` | internal | [src/mtp.c:1570](../src/mtp.c#L1570) |
+| `mtp_set_object_prop_list()` | internal | [src/mtp.c:1638](../src/mtp.c#L1638) |
+| `mtp_get_props_supported()` | internal | [src/mtp.c:1675](../src/mtp.c#L1675) |
+| `mtp_get_prop_desc()` | internal | [src/mtp.c:1747](../src/mtp.c#L1747) |
+| `mtp_vendor_operation()` | internal | [src/mtp.c:1786](../src/mtp.c#L1786) |
+
+### src/mtp_text.h
+
+| Function | Scope | Definition |
+|---|---|---|
+| `mtp_text_to_array()` | static | [src/mtp_text.h:11](../src/mtp_text.h#L11) |
+| `mtp_array_to_text()` | static | [src/mtp_text.h:52](../src/mtp_text.h#L52) |
 
 ### src/mtpz.c
 
@@ -312,6 +352,48 @@ symbol outside that API; `static` means file-local or header-inline.
 | `zune_rewire_playlist()` | public | [src/playlist.c:210](../src/playlist.c#L210) |
 | `zune_purge_playlist()` | public | [src/playlist.c:240](../src/playlist.c#L240) |
 
+### src/podcast.c
+
+| Function | Scope | Definition |
+|---|---|---|
+| `podcast_ready()` | static | [src/podcast.c:16](../src/podcast.c#L16) |
+| `podcast_text_valid()` | static | [src/podcast.c:24](../src/podcast.c#L24) |
+| `podcast_filename_valid()` | static | [src/podcast.c:45](../src/podcast.c#L45) |
+| `podcast_read_text()` | static | [src/podcast.c:55](../src/podcast.c#L55) |
+| `zune_free_podcast_series()` | public | [src/podcast.c:85](../src/podcast.c#L85) |
+| `zune_get_podcast_series()` | public | [src/podcast.c:94](../src/podcast.c#L94) |
+| `podcast_preflight()` | static | [src/podcast.c:123](../src/podcast.c#L123) |
+| `podcast_date_readback()` | static | [src/podcast.c:149](../src/podcast.c#L149) |
+| `podcast_title_filename()` | static | [src/podcast.c:167](../src/podcast.c#L167) |
+| `podcast_log_filename()` | static | [src/podcast.c:178](../src/podcast.c#L178) |
+| `podcast_verify_properties()` | static | [src/podcast.c:193](../src/podcast.c#L193) |
+| `podcast_cleanup()` | static | [src/podcast.c:264](../src/podcast.c#L264) |
+| `zune_forge_podcast_series()` | public | [src/podcast.c:277](../src/podcast.c#L277) |
+| `podcast_date_valid()` | static | [src/podcast.c:313](../src/podcast.c#L313) |
+| `podcast_send_file()` | static | [src/podcast.c:332](../src/podcast.c#L332) |
+| `zune_smuggle_podcast_episode()` | public | [src/podcast.c:348](../src/podcast.c#L348) |
+| `zune_find_podcast_episode()` | public | [src/podcast.c:437](../src/podcast.c#L437) |
+| `podcast_series_by_id()` | static | [src/podcast.c:494](../src/podcast.c#L494) |
+| `podcast_series_by_feed()` | static | [src/podcast.c:500](../src/podcast.c#L500) |
+| `podcast_source_by_identity()` | static | [src/podcast.c:505](../src/podcast.c#L505) |
+| `podcast_source_by_id()` | static | [src/podcast.c:511](../src/podcast.c#L511) |
+| `podcast_u32_order()` | static | [src/podcast.c:517](../src/podcast.c#L517) |
+| `zune_free_podcast_episode_sources()` | public | [src/podcast.c:522](../src/podcast.c#L522) |
+| `zune_get_podcast_episode_sources()` | public | [src/podcast.c:529](../src/podcast.c#L529) |
+
+### src/podcast_state.c
+
+| Function | Scope | Definition |
+|---|---|---|
+| `state_u16()` | static | [src/podcast_state.c:12](../src/podcast_state.c#L12) |
+| `state_u32()` | static | [src/podcast_state.c:14](../src/podcast_state.c#L14) |
+| `state_by_id()` | static | [src/podcast_state.c:18](../src/podcast_state.c#L18) |
+| `state_by_offset()` | static | [src/podcast_state.c:23](../src/podcast_state.c#L23) |
+| `state_utf8()` | static | [src/podcast_state.c:31](../src/podcast_state.c#L31) |
+| `zune_parse_podcast_states()` | internal | [src/podcast_state.c:51](../src/podcast_state.c#L51) |
+| `zune_free_podcast_states()` | public | [src/podcast_state.c:148](../src/podcast_state.c#L148) |
+| `zune_get_podcast_states()` | public | [src/podcast_state.c:155](../src/podcast_state.c#L155) |
+
 ### src/ptp.c
 
 | Function | Scope | Definition |
@@ -343,6 +425,21 @@ symbol outside that API; `static` means file-local or header-inline.
 | `zune_find_track()` | public | [src/search.c:14](../src/search.c#L14) |
 | `zune_find_video()` | public | [src/search.c:39](../src/search.c#L39) |
 | `zune_find_photo()` | public | [src/search.c:55](../src/search.c#L55) |
+
+### src/spoken_inventory.c
+
+| Function | Scope | Definition |
+|---|---|---|
+| `spoken_ready()` | static | [src/spoken_inventory.c:7](../src/spoken_inventory.c#L7) |
+| `spoken_compare_id()` | static | [src/spoken_inventory.c:20](../src/spoken_inventory.c#L20) |
+| `spoken_handles()` | static | [src/spoken_inventory.c:26](../src/spoken_inventory.c#L26) |
+| `spoken_text()` | static | [src/spoken_inventory.c:42](../src/spoken_inventory.c#L42) |
+| `spoken_number()` | static | [src/spoken_inventory.c:62](../src/spoken_inventory.c#L62) |
+| `spoken_info()` | static | [src/spoken_inventory.c:73](../src/spoken_inventory.c#L73) |
+| `zune_free_podcast_episodes()` | public | [src/spoken_inventory.c:87](../src/spoken_inventory.c#L87) |
+| `zune_get_podcast_episodes()` | public | [src/spoken_inventory.c:96](../src/spoken_inventory.c#L96) |
+| `zune_free_audiobook_parts()` | public | [src/spoken_inventory.c:128](../src/spoken_inventory.c#L128) |
+| `zune_get_audiobook_parts()` | public | [src/spoken_inventory.c:137](../src/spoken_inventory.c#L137) |
 
 ### src/thumbnail.c
 
@@ -484,20 +581,27 @@ symbol outside that API; `static` means file-local or header-inline.
 | `zmdb_parse_photo_album()` | static | [src/zmdb.c:502](../src/zmdb.c#L502) |
 | `zmdb_discover()` | static | [src/zmdb.c:544](../src/zmdb.c#L544) |
 | `zmdb_parse()` | static | [src/zmdb.c:574](../src/zmdb.c#L574) |
-| `zmdb_usb_read()` | static | [src/zmdb.c:731](../src/zmdb.c#L731) |
-| `zune_infiltrate_legacy()` | public | [src/zmdb.c:843](../src/zmdb.c#L843) |
-| `zmdb_parse_full()` | static | [src/zmdb.c:871](../src/zmdb.c#L871) |
-| `zune_infiltrate()` | public | [src/zmdb.c:1027](../src/zmdb.c#L1027) |
-| `zune_free_scan()` | public | [src/zmdb.c:1066](../src/zmdb.c#L1066) |
-| `zune_dump_raw()` | public | [src/zmdb.c:1112](../src/zmdb.c#L1112) |
-| `zune_infiltrate_deep()` | public | [src/zmdb.c:1187](../src/zmdb.c#L1187) |
-| `zune_free_library()` | public | [src/zmdb.c:1319](../src/zmdb.c#L1319) |
+| `zune_infiltrate_legacy()` | public | [src/zmdb.c:719](../src/zmdb.c#L719) |
+| `zmdb_parse_full()` | static | [src/zmdb.c:747](../src/zmdb.c#L747) |
+| `zune_infiltrate()` | public | [src/zmdb.c:903](../src/zmdb.c#L903) |
+| `zune_free_scan()` | public | [src/zmdb.c:942](../src/zmdb.c#L942) |
+| `zune_dump_raw()` | public | [src/zmdb.c:988](../src/zmdb.c#L988) |
+| `zune_infiltrate_deep()` | public | [src/zmdb.c:1063](../src/zmdb.c#L1063) |
+| `zune_free_library()` | public | [src/zmdb.c:1195](../src/zmdb.c#L1195) |
+
+### src/zmdb_io.c
+
+| Function | Scope | Definition |
+|---|---|---|
+| `rd16()` | static | [src/zmdb_io.c:7](../src/zmdb_io.c#L7) |
+| `rd32()` | static | [src/zmdb_io.c:8](../src/zmdb_io.c#L8) |
+| `zune_zmdb_read_payload()` | internal | [src/zmdb_io.c:10](../src/zmdb_io.c#L10) |
 
 ### src/zune_internal.h
 
 | Function | Scope | Definition |
 |---|---|---|
-| `zune_wound_is_mortal()` | static | [src/zune_internal.h:75](../src/zune_internal.h#L75) |
+| `zune_wound_is_mortal()` | static | [src/zune_internal.h:76](../src/zune_internal.h#L76) |
 
 ## Headers, types and constants
 
@@ -518,20 +622,25 @@ See [PUBLIC_CREDENTIALS.md](PUBLIC_CREDENTIALS.md) for the runtime override.
 
 | File | Lines |
 |---|---|
-| [include/zune.h](../include/zune.h) | 654 |
+| [include/zune.h](../include/zune.h) | 812 |
 | [src/album.c](../src/album.c) | 458 |
-| [src/device.c](../src/device.c) | 584 |
+| [src/audiobook.c](../src/audiobook.c) | 345 |
+| [src/device.c](../src/device.c) | 585 |
 | [src/driverkit_usb.c](../src/driverkit_usb.c) | 434 |
 | [src/finalize.c](../src/finalize.c) | 183 |
-| [src/mtp.c](../src/mtp.c) | 1791 |
-| [src/mtp.h](../src/mtp.h) | 587 |
+| [src/mtp.c](../src/mtp.c) | 1813 |
+| [src/mtp.h](../src/mtp.h) | 588 |
+| [src/mtp_text.h](../src/mtp_text.h) | 84 |
 | [src/mtpz.c](../src/mtpz.c) | 1972 |
 | [src/mtpz.h](../src/mtpz.h) | 39 |
 | [src/photo.c](../src/photo.c) | 497 |
 | [src/playlist.c](../src/playlist.c) | 252 |
+| [src/podcast.c](../src/podcast.c) | 637 |
+| [src/podcast_state.c](../src/podcast_state.c) | 178 |
 | [src/ptp.c](../src/ptp.c) | 940 |
 | [src/ptp.h](../src/ptp.h) | 317 |
 | [src/search.c](../src/search.c) | 67 |
+| [src/spoken_inventory.c](../src/spoken_inventory.c) | 166 |
 | [src/thumbnail.c](../src/thumbnail.c) | 128 |
 | [src/track.c](../src/track.c) | 654 |
 | [src/transcode.c](../src/transcode.c) | 317 |
@@ -540,37 +649,56 @@ See [PUBLIC_CREDENTIALS.md](PUBLIC_CREDENTIALS.md) for the runtime override.
 | [src/usb_recovery.c](../src/usb_recovery.c) | 40 |
 | [src/util.c](../src/util.c) | 826 |
 | [src/video.c](../src/video.c) | 635 |
-| [src/zmdb.c](../src/zmdb.c) | 1337 |
-| [src/zune_internal.h](../src/zune_internal.h) | 115 |
+| [src/zmdb.c](../src/zmdb.c) | 1213 |
+| [src/zmdb_io.c](../src/zmdb_io.c) | 127 |
+| [src/zune_internal.h](../src/zune_internal.h) | 122 |
 
 ## Tools and regression tests
 
 These are development tools, not additional library API. Software tests do not
 replace device authentication, transfer and readback tests on real hardware.
 
+- [tools/audiobook_test.h](../tools/audiobook_test.h)
+  - `book_test_load()`: [tools/audiobook_test.h:12](../tools/audiobook_test.h#L12)
+  - `book_test_inventory()`: [tools/audiobook_test.h:37](../tools/audiobook_test.h#L37)
+  - `book_test_verify()`: [tools/audiobook_test.h:46](../tools/audiobook_test.h#L46)
+  - `cmd_audiobook_test()`: [tools/audiobook_test.h:79](../tools/audiobook_test.h#L79)
+- [tools/inspect-podcast-state.mjs](../tools/inspect-podcast-state.mjs)
+- [tools/media_capabilities.h](../tools/media_capabilities.h)
+  - `media_probe_format()`: [tools/media_capabilities.h:10](../tools/media_capabilities.h#L10)
+  - `media_probe_report()`: [tools/media_capabilities.h:23](../tools/media_capabilities.h#L23)
+- [tools/podcast_send.h](../tools/podcast_send.h)
+  - `cmd_podcast_send()`: [tools/podcast_send.h:7](../tools/podcast_send.h#L7)
+- [tools/podcast_test.h](../tools/podcast_test.h)
+  - `podcast_test_interrupt()`: [tools/podcast_test.h:7](../tools/podcast_test.h#L7)
+  - `podcast_test_new_id()`: [tools/podcast_test.h:9](../tools/podcast_test.h#L9)
+  - `podcast_test_same_file()`: [tools/podcast_test.h:18](../tools/podcast_test.h#L18)
+  - `cmd_podcast_test()`: [tools/podcast_test.h:33](../tools/podcast_test.h#L33)
 - [tools/ptp-decode.py](../tools/ptp-decode.py)
 - [tools/update-api-reference.mjs](../tools/update-api-reference.mjs)
 - [tools/update-toc.mjs](../tools/update-toc.mjs)
 - [tools/zunetool.c](../tools/zunetool.c)
-  - `die()`: [tools/zunetool.c:31](../tools/zunetool.c#L31)
-  - `connect_or_die()`: [tools/zunetool.c:40](../tools/zunetool.c#L40)
-  - `cmd_info()`: [tools/zunetool.c:53](../tools/zunetool.c#L53)
-  - `cmd_list()`: [tools/zunetool.c:68](../tools/zunetool.c#L68)
-  - `cmd_send()`: [tools/zunetool.c:85](../tools/zunetool.c#L85)
-  - `cmd_purge()`: [tools/zunetool.c:107](../tools/zunetool.c#L107)
-  - `cmd_torture()`: [tools/zunetool.c:120](../tools/zunetool.c#L120)
-  - `interrupt_video_test()`: [tools/zunetool.c:156](../tools/zunetool.c#L156)
-  - `video_test_string()`: [tools/zunetool.c:161](../tools/zunetool.c#L161)
-  - `video_test_number()`: [tools/zunetool.c:176](../tools/zunetool.c#L176)
-  - `video_test_readback()`: [tools/zunetool.c:191](../tools/zunetool.c#L191)
-  - `cmd_video_title_test()`: [tools/zunetool.c:212](../tools/zunetool.c#L212)
-  - `cmd_audit()`: [tools/zunetool.c:316](../tools/zunetool.c#L316)
-  - `cmd_refs()`: [tools/zunetool.c:401](../tools/zunetool.c#L401)
-  - `cmd_playlists()`: [tools/zunetool.c:431](../tools/zunetool.c#L431)
-  - `cmd_mkplaylist()`: [tools/zunetool.c:448](../tools/zunetool.c#L448)
-  - `cmd_zmdbdump()`: [tools/zunetool.c:467](../tools/zunetool.c#L467)
-  - `cmd_extract()`: [tools/zunetool.c:476](../tools/zunetool.c#L476)
-  - `main()`: [tools/zunetool.c:486](../tools/zunetool.c#L486)
+  - `die()`: [tools/zunetool.c:32](../tools/zunetool.c#L32)
+  - `connect_or_die()`: [tools/zunetool.c:41](../tools/zunetool.c#L41)
+  - `cmd_info()`: [tools/zunetool.c:54](../tools/zunetool.c#L54)
+  - `cmd_list()`: [tools/zunetool.c:69](../tools/zunetool.c#L69)
+  - `cmd_send()`: [tools/zunetool.c:86](../tools/zunetool.c#L86)
+  - `cmd_purge()`: [tools/zunetool.c:108](../tools/zunetool.c#L108)
+  - `cmd_torture()`: [tools/zunetool.c:121](../tools/zunetool.c#L121)
+  - `interrupt_video_test()`: [tools/zunetool.c:157](../tools/zunetool.c#L157)
+  - `video_test_string()`: [tools/zunetool.c:162](../tools/zunetool.c#L162)
+  - `video_test_number()`: [tools/zunetool.c:177](../tools/zunetool.c#L177)
+  - `video_test_readback()`: [tools/zunetool.c:192](../tools/zunetool.c#L192)
+  - `cmd_video_title_test()`: [tools/zunetool.c:213](../tools/zunetool.c#L213)
+  - `cmd_audit()`: [tools/zunetool.c:317](../tools/zunetool.c#L317)
+  - `cmd_refs()`: [tools/zunetool.c:402](../tools/zunetool.c#L402)
+  - `cmd_playlists()`: [tools/zunetool.c:432](../tools/zunetool.c#L432)
+  - `cmd_mkplaylist()`: [tools/zunetool.c:449](../tools/zunetool.c#L449)
+  - `cmd_zmdbdump()`: [tools/zunetool.c:468](../tools/zunetool.c#L468)
+  - `cmd_extract()`: [tools/zunetool.c:477](../tools/zunetool.c#L477)
+  - `cmd_media_capabilities()`: [tools/zunetool.c:487](../tools/zunetool.c#L487)
+  - `cmd_podcasts()`: [tools/zunetool.c:503](../tools/zunetool.c#L503)
+  - `main()`: [tools/zunetool.c:517](../tools/zunetool.c#L517)
 - [tests/artist_reuse.c](../tests/artist_reuse.c)
   - `zune_set_error()`: [tests/artist_reuse.c:7](../tests/artist_reuse.c#L7)
   - `zune_autopsy_name()`: [tests/artist_reuse.c:8](../tests/artist_reuse.c#L8)
@@ -583,15 +711,72 @@ replace device authentication, transfer and readback tests on real hardware.
   - `mtp_delete_object()`: [tests/artist_reuse.c:41](../tests/artist_reuse.c#L41)
   - `check()`: [tests/artist_reuse.c:43](../tests/artist_reuse.c#L43)
   - `main()`: [tests/artist_reuse.c:47](../tests/artist_reuse.c#L47)
+- [tests/audiobook_gate.c](../tests/audiobook_gate.c)
+  - `__wrap_zune_breach()`: [tests/audiobook_gate.c:13](../tests/audiobook_gate.c#L13)
+  - `__wrap_mtp_get_object_prop_value()`: [tests/audiobook_gate.c:17](../tests/audiobook_gate.c#L17)
+  - `__wrap_mtp_get_object_handles()`: [tests/audiobook_gate.c:28](../tests/audiobook_gate.c#L28)
+  - `check()`: [tests/audiobook_gate.c:40](../tests/audiobook_gate.c#L40)
+  - `main()`: [tests/audiobook_gate.c:47](../tests/audiobook_gate.c#L47)
+- [tests/media_capabilities.c](../tests/media_capabilities.c)
+  - `ptp_transaction()`: [tests/media_capabilities.c:12](../tests/media_capabilities.c#L12)
+  - `check()`: [tests/media_capabilities.c:55](../tests/media_capabilities.c#L55)
+  - `report()`: [tests/media_capabilities.c:61](../tests/media_capabilities.c#L61)
+  - `main()`: [tests/media_capabilities.c:77](../tests/media_capabilities.c#L77)
 - [tests/metadata_probe.c](../tests/metadata_probe.c)
   - `check()`: [tests/metadata_probe.c:7](../tests/metadata_probe.c#L7)
   - `same()`: [tests/metadata_probe.c:13](../tests/metadata_probe.c#L13)
   - `empty()`: [tests/metadata_probe.c:17](../tests/metadata_probe.c#L17)
   - `load()`: [tests/metadata_probe.c:23](../tests/metadata_probe.c#L23)
   - `main()`: [tests/metadata_probe.c:30](../tests/metadata_probe.c#L30)
+- [tests/podcast-state.c](../tests/podcast-state.c)
+  - `check()`: [tests/podcast-state.c:6](../tests/podcast-state.c#L6)
+  - `zune_set_error()`: [tests/podcast-state.c:9](../tests/podcast-state.c#L9)
+  - `zune_get_error()`: [tests/podcast-state.c:11](../tests/podcast-state.c#L11)
+  - `put32()`: [tests/podcast-state.c:12](../tests/podcast-state.c#L12)
+  - `put16()`: [tests/podcast-state.c:14](../tests/podcast-state.c#L14)
+  - `fixture()`: [tests/podcast-state.c:18](../tests/podcast-state.c#L18)
+  - `parse()`: [tests/podcast-state.c:37](../tests/podcast-state.c#L37)
+  - `fake_read()`: [tests/podcast-state.c:48](../tests/podcast-state.c#L48)
+  - `fake_write()`: [tests/podcast-state.c:59](../tests/podcast-state.c#L59)
+  - `transport_fixture()`: [tests/podcast-state.c:67](../tests/podcast-state.c#L67)
+  - `get()`: [tests/podcast-state.c:74](../tests/podcast-state.c#L74)
+  - `main()`: [tests/podcast-state.c:83](../tests/podcast-state.c#L83)
+- [tests/podcasts.c](../tests/podcasts.c)
+  - `read32()`: [tests/podcasts.c:14](../tests/podcasts.c#L14)
+  - `read16()`: [tests/podcasts.c:15](../tests/podcasts.c#L15)
+  - `put32()`: [tests/podcasts.c:16](../tests/podcasts.c#L16)
+  - `check()`: [tests/podcasts.c:17](../tests/podcasts.c#L17)
+  - `zune_set_error()`: [tests/podcasts.c:18](../tests/podcasts.c#L18)
+  - `zune_get_error()`: [tests/podcasts.c:19](../tests/podcasts.c#L19)
+  - `object()`: [tests/podcasts.c:20](../tests/podcasts.c#L20)
+  - `prop()`: [tests/podcasts.c:21](../tests/podcasts.c#L21)
+  - `reply()`: [tests/podcasts.c:22](../tests/podcasts.c#L22)
+  - `reset()`: [tests/podcasts.c:23](../tests/podcasts.c#L23)
+  - `duplicate()`: [tests/podcasts.c:28](../tests/podcasts.c#L28)
+  - `type_for()`: [tests/podcasts.c:32](../tests/podcasts.c#L32)
+  - `ptp_transaction()`: [tests/podcasts.c:39](../tests/podcasts.c#L39)
+  - `forge()`: [tests/podcasts.c:120](../tests/podcasts.c#L120)
+  - `main()`: [tests/podcasts.c:121](../tests/podcasts.c#L121)
 - [tests/run-artist-reuse.sh](../tests/run-artist-reuse.sh)
+- [tests/run-audiobook-gate.sh](../tests/run-audiobook-gate.sh)
+- [tests/run-media-capabilities.sh](../tests/run-media-capabilities.sh)
 - [tests/run-metadata-probe.sh](../tests/run-metadata-probe.sh)
+- [tests/run-podcast-state.sh](../tests/run-podcast-state.sh)
+- [tests/run-podcasts.sh](../tests/run-podcasts.sh)
+- [tests/run-spoken-inventory.sh](../tests/run-spoken-inventory.sh)
 - [tests/run-video-named.sh](../tests/run-video-named.sh)
+- [tests/spoken-inventory.c](../tests/spoken-inventory.c)
+  - `zune_set_error()`: [tests/spoken-inventory.c:9](../tests/spoken-inventory.c#L9)
+  - `check()`: [tests/spoken-inventory.c:12](../tests/spoken-inventory.c#L12)
+  - `next()`: [tests/spoken-inventory.c:16](../tests/spoken-inventory.c#L16)
+  - `mtp_get_object_handles()`: [tests/spoken-inventory.c:21](../tests/spoken-inventory.c#L21)
+  - `mtp_get_object_info()`: [tests/spoken-inventory.c:33](../tests/spoken-inventory.c#L33)
+  - `mtp_free_object_info()`: [tests/spoken-inventory.c:40](../tests/spoken-inventory.c#L40)
+  - `number()`: [tests/spoken-inventory.c:41](../tests/spoken-inventory.c#L41)
+  - `string()`: [tests/spoken-inventory.c:45](../tests/spoken-inventory.c#L45)
+  - `mtp_get_object_prop_value()`: [tests/spoken-inventory.c:52](../tests/spoken-inventory.c#L52)
+  - `reset()`: [tests/spoken-inventory.c:68](../tests/spoken-inventory.c#L68)
+  - `main()`: [tests/spoken-inventory.c:73](../tests/spoken-inventory.c#L73)
 - [tests/video_named.c](../tests/video_named.c)
   - `check()`: [tests/video_named.c:20](../tests/video_named.c#L20)
   - `property()`: [tests/video_named.c:26](../tests/video_named.c#L26)
@@ -629,6 +814,9 @@ architecture/API narratives may describe an earlier implementation.
 | [MTPZ_PROTOCOL.md](MTPZ_PROTOCOL.md) | MTPZ Authentication Protocol |
 | [PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md) | libzune project overview |
 | [PUBLIC_CREDENTIALS.md](PUBLIC_CREDENTIALS.md) | Private and public authentication builds |
+| [RELEASE_0.2.0.md](RELEASE_0.2.0.md) | libzune 0.2.0 |
+| [SPOKEN_MEDIA.md](SPOKEN_MEDIA.md) | Podcasts and audiobooks: integration guide |
+| [SPOKEN_MEDIA_RESEARCH.md](SPOKEN_MEDIA_RESEARCH.md) | Spoken media and HD artist-art research |
 | [SYNC_PIPELINE.md](SYNC_PIPELINE.md) | Building a sync pipeline with libzune |
 | [VIDEO_TITLES.md](VIDEO_TITLES.md) | Video display titles and transport filenames |
 | [WHY_C.md](WHY_C.md) | Why C? |

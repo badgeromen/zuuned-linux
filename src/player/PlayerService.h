@@ -44,6 +44,9 @@ class PlayerService : public QObject {
     Q_PROPERTY(QString currentTitle READ currentTitle NOTIFY metadataChanged)
     Q_PROPERTY(QString currentArtist READ currentArtist NOTIFY metadataChanged)
     Q_PROPERTY(QString currentAlbum READ currentAlbum NOTIFY metadataChanged)
+    Q_PROPERTY(QString mediaKind READ mediaKind NOTIFY queueChanged)
+    Q_PROPERTY(double playbackRate READ playbackRate NOTIFY spokenControlsChanged)
+    Q_PROPERTY(int sleepMinutes READ sleepMinutes NOTIFY spokenControlsChanged)
 
 public:
     explicit PlayerService(QObject *parent = nullptr);
@@ -55,13 +58,16 @@ public:
     double durationMs() const { return m_durationSec * 1000.0; }
     double volume() const { return m_volume; }
     bool muted() const { return m_muted; }
-    bool shuffled() const { return m_shuffled; }
-    int repeatMode() const { return m_repeatMode; }
+    bool shuffled() const { return !isSpoken() && m_shuffled; }
+    int repeatMode() const { return isSpoken() ? 0 : m_repeatMode; }
     QVariantList queue() const { return m_queue; }
     int queueIndex() const { return m_queueIndex; }
     QString currentTitle() const { return m_title; }
     QString currentArtist() const { return m_artist; }
     QString currentAlbum() const { return m_album; }
+    QString mediaKind() const;
+    double playbackRate() const;
+    int sleepMinutes() const { return m_sleepMinutes; }
 
     // Position-persistence hook: (libraryId, positionMs). Set by the
     // integration layer; items with libraryId < 0 are never saved.
@@ -86,6 +92,8 @@ public:
     Q_INVOKABLE void toggleShuffle();
     Q_INVOKABLE void cycleRepeat();
     Q_INVOKABLE void clearQueue();
+    Q_INVOKABLE void setSpokenRate(double rate);
+    Q_INVOKABLE void setSleepMinutes(int minutes);
 
 signals:
     void stateChanged();
@@ -95,6 +103,7 @@ signals:
     void modeChanged();
     void queueChanged();
     void metadataChanged();
+    void spokenControlsChanged();
 
 private:
     enum State { Stopped, Playing, Paused };
@@ -109,6 +118,7 @@ private:
     void savePlaybackPosition();
     void setState(State s);
     qint64 currentLibraryId() const;
+    bool isSpoken() const { return mediaKind() != QStringLiteral("music"); }
 
     MpvController *m_mpv = nullptr;
     State m_state = Stopped;
@@ -128,5 +138,8 @@ private:
     QString m_title, m_artist, m_album;
     bool m_isJumping = false;
     QTimer m_saveTimer;
+    QTimer m_sleepTimer;
+    double m_spokenRate = 1.0;
+    int m_sleepMinutes = 0;
     std::function<void(qint64, int)> m_saveHook;
 };

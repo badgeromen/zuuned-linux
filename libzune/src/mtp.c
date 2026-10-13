@@ -15,6 +15,7 @@
  */
 
 #include "mtp.h"
+#include "mtp_text.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -533,23 +534,27 @@ int mtp_get_object_handles(ptp_session_t *s, uint32_t storage,
                           &resp, NULL, NULL);
     if (ret < 0) {
         fprintf(stderr, "[mtp] get_object_handles: failed (response 0x%04X)\n", resp);
+        free(data);
         return -1;
     }
 
     if (!data || len < 4) {
         fprintf(stderr, "[mtp] get_object_handles: no data or too short\n");
         free(data);
-        /* Zero handles is valid — some storages are empty */
-        return (len == 0) ? 0 : -1;
+        /* Empty inventory still has its uint32 zero count. A missing payload
+         * is not proof that creation is safe. */
+        return -1;
     }
 
     uint32_t n = le32_unpack(data);
-    if (len < 4 + n * 4) {
+    if (n > (len - 4) / 4) {
         fprintf(stderr, "[mtp] get_object_handles: truncated (count=%u, len=%u)\n",
                 n, len);
         free(data);
         return -1;
     }
+
+    if (n == 0) { free(data); return 0; }
 
     uint32_t *result = (uint32_t *)malloc(n * sizeof(uint32_t));
     if (!result) {
@@ -1410,12 +1415,13 @@ static uint8_t *mtp_pack_prop_list(mtp_prop_entry_t *props, int num_props,
      */
     uint8_t **str_wires = NULL;
     uint32_t *str_lens = NULL;
-    uint32_t total_size;
+    uint64_t total_size;
     uint8_t *buf;
     uint32_t off;
     int i;
 
-    if (num_props <= 0) {
+    if (num_props < 0 || num_props > 4096 || (num_props && !props)) return NULL;
+    if (num_props == 0) {
         /* Empty list: just the count */
         buf = (uint8_t *)malloc(4);
         if (!buf) return NULL;
@@ -1470,6 +1476,11 @@ static uint8_t *mtp_pack_prop_list(mtp_prop_entry_t *props, int num_props,
             total_size += wire_len;
             break;
         }
+        case PTP_DTC_AUINT16:
+            str_wires[i] = mtp_text_to_array(props[i].value.str, &str_lens[i]);
+            if (!str_wires[i]) goto fail;
+            total_size += str_lens[i];
+            break;
         default:
             fprintf(stderr, "[mtp] pack_prop_list: unsupported data type "
                     "0x%04X for prop 0x%04X\n",
@@ -1479,6 +1490,7 @@ static uint8_t *mtp_pack_prop_list(mtp_prop_entry_t *props, int num_props,
     }
 
     /* Pass 2: allocate and pack */
+    if (total_size > UINT32_MAX) goto fail;
     buf = (uint8_t *)malloc(total_size);
     if (!buf) goto fail;
 
@@ -1523,6 +1535,7 @@ static uint8_t *mtp_pack_prop_list(mtp_prop_entry_t *props, int num_props,
             le64_pack(buf + off, props[i].value.u64);
             off += 8;
             break;
+        case PTP_DTC_AUINT16:
         case PTP_DTC_STR:
             memcpy(buf + off, str_wires[i], str_lens[i]);
             off += str_lens[i];
@@ -1685,6 +1698,7 @@ int mtp_get_props_supported(ptp_session_t *s, uint16_t format_code,
     if (ret < 0) {
         fprintf(stderr, "[mtp] get_props_supported format 0x%04X: "
                 "failed (response 0x%04X)\n", format_code, resp);
+        free(data);
         return -1;
     }
 
@@ -1696,11 +1710,19 @@ int mtp_get_props_supported(ptp_session_t *s, uint16_t format_code,
     }
 
     uint32_t n = le32_unpack(data);
-    if (len < 4 + n * 2) {
+    /* Subtract before comparing so a device-controlled count cannot wrap
+     * the byte calculation. Property codes are uint16, at most 65536 values. */
+    if (n > 65536u || n > (len - 4) / 2) {
         fprintf(stderr, "[mtp] get_props_supported: truncated "
                 "(count=%u, len=%u)\n", n, len);
         free(data);
         return -1;
+    }
+
+    /* Empty is a valid successful inventory, independent of malloc(0). */
+    if (n == 0) {
+        free(data);
+        return 0;
     }
 
     uint16_t *result = (uint16_t *)malloc(n * sizeof(uint16_t));

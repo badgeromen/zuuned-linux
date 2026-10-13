@@ -9,13 +9,21 @@ Popup {
     id: sheet
 
     property double elapsedMs: 0
+    property int podcasts: 0
+    property int podcastsRemoved: 0
+    property string cleanupWarning: ""
+    property int audiobooks: 0
     property int tracks: 0
     property int videos: 0
     property int photos: 0
     property int skipped: 0
     property int failed: 0
 
-    function openWith(elapsed, t, v, p, s, f) {
+    function openWith(elapsed, t, v, p, s, f, podcastCount, audiobookCount, removedCount, warning) {
+        podcastsRemoved = removedCount ?? 0
+        cleanupWarning = warning || ""
+        audiobooks = audiobookCount ?? 0
+        podcasts = podcastCount ?? 0
         elapsedMs = elapsed
         tracks = t; videos = v; photos = p; skipped = s; failed = f
         open()
@@ -85,15 +93,35 @@ Popup {
                     color: Theme.textPrimary
                 }
             }
+            CountRow { glyph: "▤"; label: "book part"; count: sheet.audiobooks }
+            CountRow { glyph: "🎙"; label: "podcast"; count: sheet.podcasts }
             CountRow { glyph: "🎵"; label: "song"; count: sheet.tracks }
             CountRow { glyph: "🎬"; label: "video"; count: sheet.videos }
             CountRow { glyph: "🖼"; label: "photo"; count: sheet.photos }
         }
 
         Text {
+            objectName: "syncPodcastsRemoved"
+            Layout.alignment: Qt.AlignHCenter
+            visible: sheet.podcastsRemoved > 0
+            text: sheet.podcastsRemoved + (sheet.podcastsRemoved === 1 ? " played podcast removed" : " played podcasts removed")
+            font.pixelSize: Theme.spokenBody
+            color: Theme.textPrimary
+        }
+        Text {
+            objectName: "syncCleanupWarning"
+            Layout.fillWidth: true
+            visible: !!sheet.cleanupWarning
+            text: sheet.cleanupWarning
+            wrapMode: Text.Wrap
+            font.pixelSize: Theme.spokenCaption
+            color: Theme.warning
+        }
+
+        Text {
             Layout.alignment: Qt.AlignHCenter
             visible: sheet.skipped > 0
-            text: sheet.skipped + " already on the zune (skipped)"
+            text: sheet.skipped + " skipped"
             font.pixelSize: 12
             color: Theme.textDim
         }
@@ -106,7 +134,7 @@ Popup {
         }
         Text {
             Layout.alignment: Qt.AlignHCenter
-            visible: sheet.tracks + sheet.videos + sheet.photos === 0
+            visible: sheet.tracks + sheet.videos + sheet.photos + sheet.podcasts + sheet.audiobooks === 0
             text: "nothing new to send"
             font.pixelSize: 13
             color: Theme.textDim

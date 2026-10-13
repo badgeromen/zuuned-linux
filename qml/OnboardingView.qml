@@ -3,14 +3,9 @@ import QtQuick.Controls.Basic
 import QtQuick.Layouts
 import QtQuick.Dialogs
 
-// First-run onboarding wizard — port of OnboardingView.swift: 3
-// fullscreen steps (welcome → typed folders + poster source →
-// scanning), max content width 600, step dots, back/skip. Folders are
-// STAGED locally and only committed as watch folders on "next"; step 3
-// kicks the scan and the open button never blocks on it.
-//
-// Fills its parent, paints Theme.bg, emits finished(); the container
-// owns dismissal. Shows whenever the library is empty (mac behavior).
+// First-run folders, spoken-media preferences, appearance and walkthrough.
+// Podcast choices stay staged until completion; book imports use the same
+// explicit preview/review/save workflow as Settings.
 Item {
     id: root
 
@@ -27,12 +22,14 @@ Item {
     readonly property int stepMusic:    1
     readonly property int stepVideo:    2
     readonly property int stepPhotos:   3
-    readonly property int stepPlayer:   4
-    readonly property int stepBackdrop: 5
-    readonly property int stepFont:     6
-    readonly property int stepWalk:     7
-    readonly property int stepScan:     8
-    readonly property int stepCount:    9
+    readonly property int stepPodcasts: 4
+    readonly property int stepBooks:    5
+    readonly property int stepPlayer:   6
+    readonly property int stepBackdrop: 7
+    readonly property int stepFont:     8
+    readonly property int stepWalk:     9
+    readonly property int stepScan:     10
+    readonly property int stepCount:    11
 
     // Folders are staged locally across the three folder screens, then
     // committed ALL AT ONCE when leaving the last one — one batch, one
@@ -59,7 +56,23 @@ Item {
         return Theme.textSecondary
     }
 
+    property bool draftPodcastQueue: AppSettings.podcastAutoQueue
+    property int draftPodcastCount: AppSettings.podcastAutoQueueCount
+    property bool draftPodcastCleanup: AppSettings.podcastAutoCleanup
+    property bool podcastPreferencesEdited: false
+    property bool importedBooks: false
+    property bool completed: false
+
     function complete() {
+        if (completed) return
+        root.forceActiveFocus() // Commit a custom count still being edited.
+        completed = true
+        if (podcastPreferencesEdited) {
+            AppSettings.podcastAutoQueueCount = draftPodcastCount
+            AppSettings.podcastAutoCleanup = draftPodcastCleanup
+            // Enable last so the planner sees the chosen count on its first pass.
+            AppSettings.podcastAutoQueue = draftPodcastQueue
+        }
         AppSettings.onboardingComplete = true
         root.finished()
     }
@@ -414,8 +427,63 @@ Item {
                         label: root.countFor(["photos"]) > 0 ? "next" : "skip"
                         onActivated: {
                             root.commitAllFolders()
-                            root.step = root.stepPlayer
+                            root.step = root.stepPodcasts
                         }
+                    }
+                }
+
+                ColumnLayout {
+                    spacing: Theme.spaceXl
+                    Text { text: "your podcasts?"; font.pixelSize: Theme.spokenDetailTitleSize; font.weight: Font.ExtraLight; color: Theme.textPrimary }
+                    PodcastPreferences {
+                        Layout.fillWidth: true
+                        autoQueue: root.draftPodcastQueue
+                        episodeCount: root.draftPodcastCount
+                        autoCleanup: root.draftPodcastCleanup
+                        onQueuePicked: value => { root.draftPodcastQueue = value; root.podcastPreferencesEdited = true }
+                        onCountPicked: value => { root.draftPodcastCount = value; root.podcastPreferencesEdited = true }
+                        onCleanupPicked: value => { root.draftPodcastCleanup = value; root.podcastPreferencesEdited = true }
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        text: "Add and star shows in Podcasts after setup. You can change these choices later in Settings → Library."
+                        wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: Theme.spokenCaption
+                    }
+                    PinkCta {
+                        objectName: "onboardingPodcastsNext"
+                        label: root.podcastPreferencesEdited ? "next" : "skip"
+                        onActivated: { root.forceActiveFocus(); root.step = root.stepBooks }
+                    }
+                }
+
+                ColumnLayout {
+                    spacing: Theme.spaceXl
+                    Text { text: "your audiobooks?"; font.pixelSize: Theme.spokenDetailTitleSize; font.weight: Font.ExtraLight; color: Theme.textPrimary }
+                    Text {
+                        Layout.fillWidth: true
+                        text: "Bring one book or a collection of book folders. Review titles and part order before importing. Your files stay in place; books transfer as a whole when you add them to the Zune queue."
+                        wrapMode: Text.WordWrap; color: Theme.textSecondary; font.pixelSize: Theme.spokenBody
+                    }
+                    SpokenButton {
+                        objectName: "onboardingImportAudiobooks"
+                        text: "import audiobook folder…"
+                        enabled: !SpokenMediaService.busy
+                        onClicked: audiobookFolderImport.begin()
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        text: root.importedBooks ? "Your books have been imported." : "No books yet? You can skip this step."
+                        wrapMode: Text.WordWrap; color: Theme.textSecondary; font.pixelSize: Theme.spokenBody
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        text: "Import more books later in Settings → Library. Run the import again when you add files; audiobook folders are not watched automatically."
+                        wrapMode: Text.WordWrap; color: Theme.textDim; font.pixelSize: Theme.spokenCaption
+                    }
+                    PinkCta {
+                        objectName: "onboardingBooksNext"
+                        label: root.importedBooks ? "next" : "skip"
+                        onActivated: root.step = root.stepPlayer
                     }
                 }
 
@@ -810,7 +878,7 @@ Item {
                     // target and lights up on hover.
                     Rectangle {
                         Layout.fillWidth: true
-                        implicitHeight: 190
+                        implicitHeight: Theme.spokenDetailCoverSize + Theme.spaceXxl
                         radius: Theme.radiusMd
                         color: Theme.bg
                         border.width: 1
@@ -838,7 +906,7 @@ Item {
                             anchors.verticalCenter: parent.verticalCenter
                             anchors.leftMargin: Theme.spaceMd
                             title: "LIBRARY"
-                            sections: ["music", "videos", "photos", "playlists"]
+                            sections: ["music", "videos", "photos", "podcasts", "audiobooks", "playlists"]
                             accent: Theme.green
                             dropLabel: "＋ add to library"
                             sourceActive: walkStep.phase === 0
@@ -853,7 +921,7 @@ Item {
                             anchors.rightMargin: Theme.spaceMd
                             title: "ZUNE"
                             battery: true
-                            sections: ["music", "videos", "pictures", "playlists"]
+                            sections: ["music", "videos", "pictures", "podcasts", "audiobooks", "playlists"]
                             accent: Theme.pink
                             dropLabel: "＋ zune"
                             sourceActive: walkStep.phase === 1
@@ -1323,6 +1391,12 @@ Item {
             LibraryService.rescan()
     }
 
+    SpokenFolderImport {
+        id: audiobookFolderImport
+        objectName: "onboardingBookImport"
+        onImported: root.importedBooks = true
+    }
+
     // ── Pink CTA button (mac's zunePink capsule) ──
     component PinkCta: Rectangle {
         id: cta
@@ -1509,7 +1583,7 @@ Item {
         property bool sourceActive: false
         property bool dropTarget: false
         width: 118
-        height: 150
+        height: Theme.spokenCardSize
         radius: Theme.radiusMd
         color: dropTarget ? Qt.rgba(accent.r, accent.g, accent.b, 0.12) : Theme.cardBg
         border.width: dropTarget ? 2 : 1

@@ -13,6 +13,10 @@
 #include "id3_rewrite.h"
 #include "disc_tag.h"
 
+#include <errno.h>
+#include <fcntl.h>
+#include <limits.h>
+#include <sys/stat.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -31,6 +35,7 @@
 #include <libswscale/swscale.h>
 #include <libavutil/hwcontext.h>
 #include <libavutil/audio_fifo.h>
+#include <libavutil/time.h>
 
 /* LAME MP3 encoder (standalone library) */
 #include <lame/lame.h>
@@ -407,6 +412,311 @@ cleanup:
         return NULL;
     }
     return output_path;
+}
+
+/* Keep chapter input local and self-contained, matching AudiobookProbe. A
+ * container must never open another path or URL through an internal reference. */
+typedef struct {
+    int fd;
+    int64_t size;
+    int64_t deadline;
+} AudioRangeInput;
+
+static int range_interrupted(void *opaque)
+{
+    AudioRangeInput *input = opaque;
+    return g_transcode_abort || (input->deadline && av_gettime_relative() > input->deadline);
+}
+
+static int range_read(void *opaque, uint8_t *buffer, int size)
+{
+    AudioRangeInput *input = opaque;
+    if (range_interrupted(input)) return AVERROR_EXIT;
+    ssize_t result;
+    do { result = read(input->fd, buffer, size); } while (result < 0 && errno == EINTR && !g_transcode_abort);
+    return result < 0 ? AVERROR(errno) : result == 0 ? AVERROR_EOF : (int)result;
+}
+
+static int64_t range_seek(void *opaque, int64_t offset, int whence)
+{
+    AudioRangeInput *input = opaque;
+    if (range_interrupted(input)) return AVERROR_EXIT;
+    if (whence == AVSEEK_SIZE) return input->size;
+    whence &= ~AVSEEK_FORCE;
+    int64_t origin = 0;
+    if (whence == SEEK_CUR) origin = lseek(input->fd, 0, SEEK_CUR);
+    else if (whence == SEEK_END) origin = input->size;
+    else if (whence != SEEK_SET) return AVERROR(EINVAL);
+    if (origin < 0 || offset > INT64_MAX - origin || offset < -origin)
+        return AVERROR(EINVAL);
+    off_t position = lseek(input->fd, origin + offset, SEEK_SET);
+    return position < 0 ? AVERROR(errno) : position;
+}
+
+static int range_deny_open(AVFormatContext *context, AVIOContext **io, const char *url,
+                           int flags, AVDictionary **options)
+{
+    (void)context; (void)io; (void)url; (void)flags; (void)options;
+    return AVERROR(EPERM);
+}
+
+/* A chapter is trimmed in decoded sample space, before resampling. Seeking only
+ * locates a preceding packet; packet boundaries must never become chapter cuts. */
+typedef struct {
+    SwrContext *swr;
+    lame_t lame;
+    FILE *output;
+    AVStream *stream;
+    int rate;
+    int channels;
+    enum AVSampleFormat format;
+    int64_t origin;
+    int64_t start;
+    int64_t end;
+    int64_t cursor;
+    int64_t encoded;
+    zuuned_progress_cb progress;
+    void *userdata;
+} AudioRange;
+
+static int range_encode_pcm(AudioRange *range, int16_t *pcm, int samples)
+{
+    uint8_t output[16384];
+    for (int offset = 0; offset < samples; offset += 4096) {
+        if (g_transcode_abort) return -1;
+        int count = samples - offset;
+        if (count > 4096) count = 4096;
+        int bytes = lame_encode_buffer_interleaved(range->lame, pcm + (size_t)offset * 2,
+                                                   count, output, sizeof(output));
+        if (bytes < 0 || (bytes && fwrite(output, 1, bytes, range->output) != (size_t)bytes))
+            return -1;
+        range->encoded += count;
+    }
+    return 0;
+}
+
+static int range_resample(AudioRange *range, const uint8_t **input, int samples)
+{
+    int capacity = swr_get_out_samples(range->swr, samples);
+    if (capacity < 0 || capacity > INT_MAX / (2 * (int)sizeof(int16_t))) return -1;
+    if (capacity == 0) return 0;
+    int16_t *pcm = av_malloc((size_t)capacity * 2 * sizeof(int16_t));
+    if (!pcm) return -1;
+    uint8_t *output = (uint8_t *)pcm;
+    int count = swr_convert(range->swr, &output, capacity, input, samples);
+    int result = count < 0 ? -1 : range_encode_pcm(range, pcm, count);
+    av_free(pcm);
+    return result < 0 ? -1 : count;
+}
+
+static int range_frame(AudioRange *range, AVFrame *frame)
+{
+    if (g_transcode_abort || frame->sample_rate != range->rate ||
+        frame->format != range->format || frame->ch_layout.nb_channels != range->channels)
+        return -1;
+    int64_t pts = frame->best_effort_timestamp;
+    if (pts == AV_NOPTS_VALUE ||
+        (range->origin < 0 && pts > INT64_MAX + range->origin) ||
+        (range->origin > 0 && pts < INT64_MIN + range->origin))
+        return -1; /* Never guess a chapter's position. */
+    int64_t first = av_rescale_q(pts - range->origin, range->stream->time_base,
+                                 (AVRational){1, range->rate});
+    if (first > INT64_MAX - frame->nb_samples || first == INT64_MIN) return -1;
+    int64_t last = first + frame->nb_samples;
+    if (last <= range->cursor) return 0;
+    if (first >= range->end) return 1;
+    /* Timestamps can be rounded to the demuxer's clock. Carry the continuous
+     * sample cursor across that rounding, but refuse actual gaps. */
+    int64_t clock_sample = av_rescale_q_rnd(1, range->stream->time_base,
+                                           (AVRational){1, range->rate}, AV_ROUND_UP);
+    if (first > range->cursor) {
+        if (first - range->cursor > clock_sample) return -1;
+        first = range->cursor;
+        last = first + frame->nb_samples;
+    }
+    int skip = (int)(range->cursor - first);
+    if (skip < 0 || skip >= frame->nb_samples) return -1;
+    int take = frame->nb_samples - skip;
+    if (take > range->end - range->cursor) take = (int)(range->end - range->cursor);
+    int planar = av_sample_fmt_is_planar(range->format);
+    int planes = planar ? range->channels : 1;
+    int stride = av_get_bytes_per_sample(range->format) * (planar ? 1 : range->channels);
+    const uint8_t **input = av_calloc(planes, sizeof(*input));
+    if (!input || stride <= 0) { av_free(input); return -1; }
+    for (int i = 0; i < planes; ++i) input[i] = frame->extended_data[i] + (size_t)skip * stride;
+    int result = range_resample(range, input, take);
+    av_free(input);
+    if (result < 0) return -1;
+    range->cursor += take;
+    if (range->progress) {
+        float fraction = (float)((double)(range->cursor - range->start) /
+                                  (double)(range->end - range->start));
+        if (fraction > 0.99f) fraction = 0.99f;
+        range->progress(fraction, range->userdata);
+    }
+    return range->cursor >= range->end ? 1 : 0;
+}
+
+char *zuuned_transcode_audio_range(const char *input_path, int64_t start_ms, int64_t end_ms,
+                                  zuuned_progress_cb progress, void *userdata)
+{
+    if (!input_path || !*input_path || start_ms < 0 || end_ms <= start_ms ||
+        end_ms > INT64_MAX / 1000000 || g_transcode_abort) return NULL;
+    AVFormatContext *format = NULL;
+    AVIOContext *io = NULL;
+    AVCodecContext *decoder = NULL;
+    AVFrame *frame = NULL;
+    AVPacket *packet = NULL;
+    AudioRangeInput input = {.fd = -1};
+    AudioRange range = {0};
+    char *path = NULL;
+    int success = 0;
+    input.fd = open(input_path, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
+    struct stat before;
+    if (input.fd < 0 || fstat(input.fd, &before) || !S_ISREG(before.st_mode) || before.st_size <= 0)
+        goto done;
+    input.size = before.st_size;
+    input.deadline = av_gettime_relative() + 15000000;
+    uint8_t *buffer = av_malloc(32768);
+    io = buffer ? avio_alloc_context(buffer, 32768, 0, &input, range_read, NULL, range_seek) : NULL;
+    if (!io) { av_free(buffer); goto done; }
+    format = avformat_alloc_context();
+    if (!format) goto done;
+    format->pb = io;
+    format->flags |= AVFMT_FLAG_CUSTOM_IO;
+    format->interrupt_callback = (AVIOInterruptCB){range_interrupted, &input};
+    format->io_open = range_deny_open;
+    AVDictionary *options = NULL;
+    av_dict_set(&options, "format_whitelist", "mp3,mov,asf,wav,flac,ogg,aac", 0);
+    av_dict_set(&options, "protocol_whitelist", "", 0);
+    av_dict_set(&options, "probesize", "8388608", 0);
+    av_dict_set(&options, "analyzeduration", "5000000", 0);
+    int opened = avformat_open_input(&format, NULL, NULL, &options);
+    av_dict_free(&options);
+    if (opened < 0 || avformat_find_stream_info(format, NULL) < 0 || range_interrupted(&input))
+        goto done;
+    input.deadline = 0; /* Encoding is cancellable, not bounded to probe time. */
+    int index = av_find_best_stream(format, AVMEDIA_TYPE_AUDIO, -1, -1, NULL, 0);
+    if (index < 0) goto done;
+    range.stream = format->streams[index];
+    const AVCodec *codec = avcodec_find_decoder(range.stream->codecpar->codec_id);
+    if (!codec || !(decoder = avcodec_alloc_context3(codec)) ||
+        avcodec_parameters_to_context(decoder, range.stream->codecpar) < 0 ||
+        avcodec_open2(decoder, codec, NULL) < 0 || decoder->sample_rate <= 0 ||
+        decoder->sample_rate > 768000 || decoder->ch_layout.nb_channels <= 0 ||
+        decoder->ch_layout.nb_channels > 64) goto done;
+    range.rate = decoder->sample_rate;
+    range.channels = decoder->ch_layout.nb_channels;
+    range.format = decoder->sample_fmt;
+    range.origin = range.stream->start_time == AV_NOPTS_VALUE ? 0 : range.stream->start_time;
+    range.start = av_rescale_rnd(start_ms, range.rate, 1000, AV_ROUND_UP);
+    range.end = av_rescale_rnd(end_ms, range.rate, 1000, AV_ROUND_UP);
+    range.cursor = range.start;
+    range.progress = progress;
+    range.userdata = userdata;
+    /* At 320 kbit/s the final payload must fit the application's 512 MiB
+     * per-part guard. Refuse a huge range before allocating/writing output. */
+    if (end_ms - start_ms > ((int64_t)512 * 1024 * 1024 - 65536) / 40) goto done;
+    int64_t duration = range.stream->duration;
+    if (duration != AV_NOPTS_VALUE && duration > 0) {
+        int64_t available = av_rescale_q(duration, range.stream->time_base,
+                                         (AVRational){1, range.rate});
+        /* Import stores milliseconds, so its rounded final endpoint may lie
+         * less than one millisecond past the last decoded sample. */
+        if (range.start >= available || range.end > available + (range.rate + 999) / 1000)
+            goto done;
+        if (range.end > available) range.end = available;
+    }
+    AVChannelLayout stereo = AV_CHANNEL_LAYOUT_STEREO;
+    if (swr_alloc_set_opts2(&range.swr, &stereo, AV_SAMPLE_FMT_S16, 44100,
+                           &decoder->ch_layout, decoder->sample_fmt, decoder->sample_rate,
+                           0, NULL) < 0 || swr_init(range.swr) < 0) goto done;
+    range.lame = lame_init();
+    if (!range.lame) goto done;
+    lame_set_in_samplerate(range.lame, 44100);
+    lame_set_num_channels(range.lame, 2);
+    lame_set_VBR(range.lame, vbr_off);
+    lame_set_brate(range.lame, 320);
+    lame_set_quality(range.lame, 2);
+    /* The Info/LAME frame stores encoder delay and padding. Without it every
+     * split acquires a short silence and decoded chapter durations drift. */
+    lame_set_bWriteVbrTag(range.lame, 1);
+    if (lame_init_params(range.lame) < 0) goto done;
+    char pattern[] = "/tmp/zuuned_chapter_XXXXXX.mp3";
+    int fd = mkstemps(pattern, 4);
+    if (fd < 0) goto done;
+    path = strdup(pattern);
+    if (!path) { close(fd); unlink(pattern); goto done; }
+    range.output = fdopen(fd, "w+b");
+    if (!range.output) { close(fd); goto done; }
+    frame = av_frame_alloc();
+    packet = av_packet_alloc();
+    if (!frame || !packet) goto done;
+    if (start_ms > 0) {
+        int64_t preroll_ms = start_ms > 1000 ? start_ms - 1000 : 0;
+        int64_t relative = av_rescale_q(preroll_ms, (AVRational){1, 1000},
+                                       range.stream->time_base);
+        if (relative < 0 || range.origin > INT64_MAX - relative) goto done;
+        int64_t seek = range.origin + relative;
+        if (avformat_seek_file(format, index, INT64_MIN, seek, seek, 0) < 0) goto done;
+        avcodec_flush_buffers(decoder);
+    }
+    int finished = 0;
+    while (!finished) {
+        if (g_transcode_abort) goto done;
+        int read = av_read_frame(format, packet);
+        if (read < 0 && read != AVERROR_EOF) goto done;
+        if (read >= 0 && packet->stream_index != index) {
+            av_packet_unref(packet);
+            continue;
+        }
+        int sent = avcodec_send_packet(decoder, read == AVERROR_EOF ? NULL : packet);
+        av_packet_unref(packet);
+        if (sent < 0) goto done;
+        int received;
+        while ((received = avcodec_receive_frame(decoder, frame)) >= 0) {
+            int result = range_frame(&range, frame);
+            av_frame_unref(frame);
+            if (result < 0) goto done;
+            if (result > 0) { finished = 1; break; }
+        }
+        if (!finished && received != AVERROR(EAGAIN) && received != AVERROR_EOF) goto done;
+        if (read == AVERROR_EOF) break;
+    }
+    if (g_transcode_abort || range.cursor < range.end || range.cursor == range.start) goto done;
+    int flushed;
+    do { flushed = range_resample(&range, NULL, 0); } while (flushed > 0);
+    if (flushed < 0 || g_transcode_abort || range.encoded == 0) goto done;
+    uint8_t output[16384];
+    int bytes = lame_encode_flush(range.lame, output, sizeof(output));
+    if (bytes < 0 || (bytes && fwrite(output, 1, bytes, range.output) != (size_t)bytes)) goto done;
+    lame_mp3_tags_fid(range.lame, range.output);
+    if (ferror(range.output) || fflush(range.output) != 0 || g_transcode_abort) goto done;
+    if (fclose(range.output) != 0) { range.output = NULL; goto done; }
+    range.output = NULL;
+    struct stat after;
+    if (fstat(input.fd, &after) || after.st_size != before.st_size || after.st_mtime != before.st_mtime)
+        goto done;
+#ifdef __APPLE__
+    if (after.st_mtimespec.tv_nsec != before.st_mtimespec.tv_nsec) goto done;
+#else
+    if (after.st_mtim.tv_nsec != before.st_mtim.tv_nsec) goto done;
+#endif
+    success = 1;
+    if (progress) progress(1.0f, userdata);
+
+done:
+    if (range.output) fclose(range.output);
+    if (range.lame) lame_close(range.lame);
+    swr_free(&range.swr);
+    av_packet_free(&packet);
+    av_frame_free(&frame);
+    avcodec_free_context(&decoder);
+    avformat_close_input(&format);
+    if (io) { av_freep(&io->buffer); avio_context_free(&io); }
+    if (input.fd >= 0) close(input.fd);
+    if (!success) { if (path) unlink(path); free(path); return NULL; }
+    return path;
 }
 
 /* ==================================================================== */

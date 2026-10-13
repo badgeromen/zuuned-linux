@@ -1,6 +1,10 @@
 pragma Singleton
 import QtQuick
 QtObject {
+    property bool podcastAutoCleanup: false
+    property bool podcastAutoQueue: false
+    property int podcastAutoQueueCount: 10
+    property bool letterBreaks: false
     property string headerFont: "marker"
     readonly property string artworkStyle: "original"
     readonly property int artworkCleanDetail: 100

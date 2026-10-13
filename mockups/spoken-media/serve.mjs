@@ -1,0 +1,10 @@
+import {createServer} from 'node:http';
+import {readFile,readdir} from 'node:fs/promises';
+import {fileURLToPath} from 'node:url';
+import {join,extname} from 'node:path';
+const root=fileURLToPath(new URL('.',import.meta.url));
+const paths=new Map(['/index.html','/style.css','/mockup.js','/customize-drag.js'].map(p=>[p,join(root,p)]));
+for(const name of await readdir(join(root,'assets')))paths.set('/assets/'+name,join(root,'assets',name));
+for(const name of ['PermanentMarker-Regular.ttf','SpecimenAlien-Regular.ttf'])paths.set('/qml/fonts/'+name,join(root,'../../qml/fonts',name));
+const types={'.html':'text/html; charset=utf-8','.css':'text/css','.js':'text/javascript','.jpg':'image/jpeg','.svg':'image/svg+xml','.ttf':'font/ttf'};
+createServer(async(req,res)=>{try{let path=new URL(req.url,'http://localhost').pathname;if(path==='/')path='/index.html';const file=paths.get(path);if(!file||!['GET','HEAD'].includes(req.method)){res.writeHead(404);res.end();return;}const bytes=await readFile(file);res.writeHead(200,{'Content-Type':types[extname(file)],'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end(req.method==='HEAD'?undefined:bytes);}catch{res.writeHead(404);res.end();}}).listen(8341,'127.0.0.1',()=>console.log('Zuuned spoken media study: http://127.0.0.1:8341'));

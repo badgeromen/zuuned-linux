@@ -4,10 +4,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
+import {omitVisualizer, stripVisualizer} from './public-export-without-visualizer.mjs';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const destination=process.argv[2] && path.resolve(process.argv[2]);
-if (!destination || fs.existsSync(destination) || destination===root || root.startsWith(destination+path.sep)) {
-    console.error('Usage: node tools/export-public-source.mjs NEW_EMPTY_DESTINATION'); process.exit(2);
+const args=process.argv.slice(2);
+const withoutVisualizer=args.includes('--without-visualizer');
+const positional=args.filter(arg=>arg!=='--without-visualizer');
+const destination=positional[0] && path.resolve(positional[0]);
+if (positional.length!==1 || positional[0]?.startsWith('--') || args.filter(a=>a==='--without-visualizer').length>1 || !destination || fs.existsSync(destination) || destination===root || root.startsWith(destination+path.sep)) {
+    console.error('Usage: node tools/export-public-source.mjs NEW_EMPTY_DESTINATION [--without-visualizer]'); process.exit(2);
 }
 const keyHeader=fs.readFileSync(path.join(root,'libzune/src/mtpz_keys.h'),'utf8');
 const privateValues=[];
@@ -38,7 +42,7 @@ function rejected(name) {
 const files=[...new Set([...list(root),...list(path.join(root,'libzune')).map(p=>'libzune/'+p)])].sort();
 const staged=[];
 for(const name of files) {
-    if(rejected(name)){excluded.push(name);continue;}
+    if(rejected(name) || (withoutVisualizer && omitVisualizer(name))){excluded.push(name);continue;}
     const src=path.join(root,name);
     if(!fs.existsSync(src)) continue; // Intentionally deleted working-tree files.
     let stat=fs.lstatSync(src);
@@ -53,19 +57,22 @@ for(const name of files) {
     if(bytes.subarray(0,4).equals(Buffer.from([0x7f,0x45,0x4c,0x46])) || bytes.subarray(0,8).toString()==='!<arch>\n') throw Error('Compiled artifact detected in '+name);
     staged.push({name,bytes,mode:stat.mode&0o777});
 }
+const transformed=withoutVisualizer ? stripVisualizer(staged) : [];
 fs.mkdirSync(destination,{recursive:true,mode:0o700});
 for(const item of staged){const target=path.join(destination,item.name);fs.mkdirSync(path.dirname(target),{recursive:true});fs.writeFileSync(target,item.bytes,{mode:item.mode});}
 fs.appendFileSync(path.join(destination,'.gitignore'),'\n# Private authentication material must never enter the public repository.\n/libzune/src/mtpz_keys.h\n.mtpz-data\n*.pem\n*.key\n');
 const readme=path.join(destination,'README.md');
 if(fs.existsSync(readme)) {
     const publicReadme=fs.readFileSync(readme,'utf8')
-        .replace('git clone --recurse-submodules https://github.com/badgeromen/zuuned-linux.git','git clone https://github.com/badgeromen/zuuned-linux.git')
+        .replace(/^> \*\*Public source snapshot:\*\*[^\n]*\n\n/, '')
+        .replace('git clone --recurse-submodules https://gitea.badgeromen.xyz/badgero1234/zuunedlinux.git','git clone https://github.com/badgeromen/zuuned-linux.git')
         .replace('git clone --recurse-submodules https://github.com/badgeromen/zuuned-linux.git','git clone https://github.com/badgeromen/zuuned-linux.git')
         .replace('cd zuunedlinux\n','cd zuuned-linux\n')
-        .replace('[libzune](https://github.com/badgeromen/libzune)','[libzune](libzune/)')
+        .replace('[libzune](https://gitea.badgeromen.xyz/badgero1234/libzune)','[libzune](libzune/)')
         .replace('libzune/      submodule','libzune/      included source');
     fs.writeFileSync(readme,'> **Public source snapshot:** read [PUBLIC_SOURCE.md](PUBLIC_SOURCE.md) for credential requirements and differences from private builds.\n\n'+publicReadme);
 }
 fs.writeFileSync(path.join(destination,'PUBLIC_SOURCE.md'),`# Public source snapshot\n\nThis snapshot contains application and libzune source, without private Git history.\nlibzune is included as ordinary source, not a private Gitea submodule.\n\nMTPZ certificate/key material is deliberately absent. This source builds without\nembedded credentials. Zune authentication requires separately supplied local\ncredentials in ~/.mtpz-data. Local library and playback do not require them.\nSee [Building with Zune authentication](docs/BUILD_WITH_MTPZ.md) for obtaining\nthe external data file and creating a local embedded-data header. No credential\nvalues are included in this source snapshot.\n\nBundled TMDB/Fanart API defaults are retained as requested. The existing\ntmdbApiKey and fanarttvApiKey settings still allow overrides.\n\nExisting AppImages built with embedded credentials still contain those credentials.\nThis snapshot is not represented as the exact source for those older binaries.\nRetain all original and third-party license notices. This export is a technical\nseparation, not a conclusion about third-party redistribution rights.\n\nBuild on Linux using the dependencies in README.md:\n\n    cmake -B build -G Ninja\n    cmake --build build\n\n`);
-fs.writeFileSync(path.join(destination,'PUBLIC_EXPORT.json'),JSON.stringify({format:1,historyIncluded:false,privateCredentialsIncluded:false,bundledApiDefaultsIncluded:true,files:staged.length,excluded},null,2)+'\n');
+if(withoutVisualizer) fs.appendFileSync(path.join(destination,'PUBLIC_SOURCE.md'), 'The private visualizer is excluded from this public source and its build dependencies.\nPlayback, the Now Playing island and video controls remain available.\nSee PUBLIC_EXPORT.json for omitted files and transformed integration points.\n');
+fs.writeFileSync(path.join(destination,'PUBLIC_EXPORT.json'),JSON.stringify({format:2,visualizerExcluded:withoutVisualizer,transformed,historyIncluded:false,privateCredentialsIncluded:false,bundledApiDefaultsIncluded:true,files:staged.length,excluded},null,2)+'\n');
 console.log('Public source staged: '+destination+' ('+staged.length+' files; '+excluded.length+' excluded).');

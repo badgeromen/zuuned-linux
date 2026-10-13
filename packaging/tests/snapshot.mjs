@@ -140,6 +140,83 @@ process.exit(23);
   assert.equal(contents(failed, 'app.cpp'), 'committed app\n');
   assert.equal(fs.existsSync(path.dirname(fs.readFileSync(failedArchive, 'utf8'))), false);
   pass('failed archive keeps partial evidence without provenance and removes only its temporary tar tree');
+
+  const publicSource = path.join(temporary, 'public-source');
+  fs.mkdirSync(path.join(publicSource, 'libzune'), {recursive:true});
+  git(publicSource, 'init', '-q', '--initial-branch=main');
+  fs.writeFileSync(path.join(publicSource, 'app.cpp'), 'public committed app\n');
+  fs.writeFileSync(path.join(publicSource, 'libzune/protocol.c'), 'public committed protocol\n');
+  git(publicSource, 'add', '.');
+  const publicTree = git(publicSource, 'rev-parse', `${git(publicSource, 'write-tree')}:libzune`);
+  const publicManifest = {revision:protocolRevision, tree:publicTree};
+  const manifestPath = path.join(publicSource, 'PUBLIC_LIBZUNE.json');
+  fs.writeFileSync(manifestPath, JSON.stringify(publicManifest));
+  git(publicSource, 'add', '.');
+  git(publicSource, 'commit', '-qm', 'Public vendored fixture');
+  const publicRevision = git(publicSource, 'rev-parse', 'HEAD');
+  const publicBin = path.join(temporary, 'public-bin');
+  fs.mkdirSync(publicBin);
+  fs.writeFileSync(path.join(publicBin, 'git.mjs'), `#!${process.execPath}
+import fs from 'node:fs';
+import path from 'node:path';
+import {spawnSync} from 'node:child_process';
+const args = process.argv.slice(2);
+if (args.includes('archive')) {
+  const root = args[args.indexOf('-C') + 1];
+  for (const relative of ['app.cpp', 'libzune/protocol.c', 'PUBLIC_LIBZUNE.json'])
+    fs.writeFileSync(path.join(root, relative), 'concurrent uncommitted edit\\n');
+}
+const result = spawnSync(${JSON.stringify(realGit)}, args, {stdio:'inherit'});
+if (result.error) throw result.error;
+process.exit(result.status ?? 1);
+`, {mode:0o755});
+  fs.symlinkSync('git.mjs', path.join(publicBin, 'git'));
+  process.env.PATH = `${publicBin}:${initialPath}`;
+  const publicClean = exportSnapshot(publicSource, path.join(temporary, 'public-clean'));
+  process.env.PATH = initialPath;
+  assert.equal(contents(publicSource, 'libzune/protocol.c'), 'concurrent uncommitted edit\n');
+  assert.equal(contents(publicClean, 'app.cpp'), 'public committed app\n');
+  assert.equal(contents(publicClean, 'libzune/protocol.c'), 'public committed protocol\n');
+  assert.deepEqual(JSON.parse(contents(publicClean, 'PUBLIC_LIBZUNE.json')), publicManifest);
+  assert.deepEqual(metadata(publicClean), {
+    ZUUNED_SOURCE_REVISION:publicRevision, ZUUNED_LIBZUNE_REVISION:protocolRevision,
+    ZUUNED_SOURCE_DIRTY:'false', ZUUNED_LIBZUNE_DIRTY:'false',
+    SOURCE_DATE_EPOCH:git(publicSource, 'show', '-s', '--format=%ct', publicRevision)
+  });
+  assert.equal(fs.existsSync(path.join(publicSource, 'libzune/.git')), false);
+  assert.equal(fs.existsSync(path.join(publicClean, '.git')), false);
+  git(publicSource, 'restore', '--', '.');
+  pass('committed public tree and provenance ignore concurrent edits and require no nested Git');
+
+  for (const relative of ['app.cpp', 'libzune/protocol.c', 'libzune/untracked.c']) {
+    fs.writeFileSync(path.join(publicSource, relative), 'uncommitted bytes\n');
+    const rejected = path.join(temporary, `public-dirty-${checks}`);
+    assert.throws(() => exportSnapshot(publicSource, rejected), /requires a clean app checkout/);
+    assert.equal(fs.existsSync(rejected), false);
+    if (relative.endsWith('untracked.c')) fs.rmSync(path.join(publicSource, relative));
+    else git(publicSource, 'restore', '--', relative);
+    pass(`public vendored snapshots reject dirty ${relative} before creating output`);
+  }
+
+  fs.writeFileSync(manifestPath, JSON.stringify({...publicManifest, tree:'0'.repeat(40)}));
+  git(publicSource, 'add', '.');
+  git(publicSource, 'commit', '-qm', 'Mismatched vendored tree');
+  assert.throws(() => exportSnapshot(publicSource, path.join(temporary, 'public-mismatch')),
+    /tree does not match committed libzune/);
+  pass('committed public metadata with a mismatched library tree is rejected');
+
+  fs.writeFileSync(manifestPath, JSON.stringify({...publicManifest, revision:'not-a-revision'}));
+  git(publicSource, 'add', '.');
+  git(publicSource, 'commit', '-qm', 'Malformed library provenance');
+  assert.throws(() => exportSnapshot(publicSource, path.join(temporary, 'public-malformed')),
+    /requires 40-hex revision and tree/);
+  pass('committed public metadata requires valid library revision and tree hashes');
+
+  git(publicSource, 'rm', 'PUBLIC_LIBZUNE.json');
+  git(publicSource, 'commit', '-qm', 'Missing library provenance');
+  assert.throws(() => exportSnapshot(publicSource, path.join(temporary, 'public-missing')),
+    /requires committed PUBLIC_LIBZUNE.json/);
+  pass('vendored library without committed public metadata is rejected');
   console.log(`${checks} isolated snapshot export checks passed`);
 } finally {
   process.env.PATH = initialPath;

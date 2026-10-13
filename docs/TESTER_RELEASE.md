@@ -7,9 +7,10 @@ hardware tests or include later source changes. Use the exact release notes
 and checksum to identify a download; this checklist is not a certification of
 every published artifact. See [documentation status](README.md).
 
-The container snapshot exporter still requires a libzune submodule, while the
-public repository includes ordinary libzune source files. See [BUILDING.md](../BUILDING.md)
-for this packaging limitation before running the maintainer commands below.
+For 0.2.0, the container exporter supports clean public commits with included
+libzune source verified against `PUBLIC_LIBZUNE.json`, as well as private
+submodules. See [BUILDING.md](../BUILDING.md) and the
+[0.2.0 release notes](releases/RELEASE_0.2.0.md) for current scope.
 
 The recorded `tester-r2` desktop-dialog candidate is built and passes the clean
 runtime, native picker and report-export rehearsal. Its exact artifact and

@@ -1,0 +1,15 @@
+# HD app audiobook retry
+[spoken-hardware] PASS application DeviceService connected
+[spoken-hardware] PASS selected book parts imported and added to typed app queue
+[spoken-hardware] PASS app queue transferred audiobook item=301991999; music count=0; successful queue swept
+[spoken-hardware] PASS app finalize/release completed; unplug and inspect device category, cover and playback
+# HD app audiobook repeat
+[spoken-hardware] PASS application DeviceService connected
+[spoken-hardware] PASS existing episode excluded from queue; no upload or mutation
+
+# Exact app payload readback; only failed first test part cover repaired
+[book-verify] part=1 exact-audio=1
+[book-verify] part=1 exact-cover=1 repaired=1
+[book-verify] part=2 exact-audio=1
+[book-verify] part=2 exact-cover=1 repaired=0
+[book-verify] PASS

@@ -63,6 +63,22 @@ char *zuuned_transcode_audio(const char *input_path,
 char *zuuned_transcode_audio_with_disc(const char *input_path, const char *album_artist,
                                       int disc_number, zuuned_progress_cb progress, void *userdata);
 
+/* Transcode decoded audio in the half-open presentation interval [start_ms,
+ * end_ms) into a unique temporary MP3. Milliseconds are relative to the audio
+ * stream start. Cuts are made on PCM samples, never packet boundaries; the
+ * Info/LAME header preserves encoder delay/padding for gapless-aware playback.
+ * Local regular input only; matching AudiobookProbe, external container
+ * references and network opens are refused and probing has a 15-second bound.
+ * Refuses invalid/missing timestamps, unavailable intervals and ranges whose
+ * 320 kbit/s output would exceed 512 MiB. Source endpoint rounding is limited
+ * to one millisecond. No source tags or embedded chapters are copied: the
+ * caller supplies chapter identity through its typed device metadata.
+ * Polls the existing cancellation flag; failure/cancel removes partial output.
+ * On success caller owns both the malloc path and file (free + unlink).
+ */
+char *zuuned_transcode_audio_range(const char *input_path, int64_t start_ms, int64_t end_ms,
+                                  zuuned_progress_cb progress, void *userdata);
+
 /* ---- Video Transcoding ---- */
 
 /*

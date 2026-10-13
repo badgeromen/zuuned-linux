@@ -1,7 +1,12 @@
 pragma Singleton
 import QtQuick
 QtObject {
+    property bool devicePresent: false
     property bool connected: false
+    property var podcastEpisodesList: []
+    property var podcastStatuses: ({})
+    function podcastDeviceStatus(feed, source) { return podcastStatuses[feed + "|" + source] || {known:false,onDevice:false,playedKnown:false,played:false} }
+    function ensureSpokenMedia() {}
     property var photoOnDeviceKeys: ({})
     property var onDeviceKeys: ({})
     property int musicIdentityRevision: 0

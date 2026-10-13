@@ -23,3 +23,6 @@ Build on Linux using the dependencies in README.md:
     cmake -B build -G Ninja
     cmake --build build
 
+The private visualizer is excluded from this public source and its build dependencies.
+Playback, the Now Playing island and video controls remain available.
+See PUBLIC_EXPORT.json for omitted files and transformed integration points.

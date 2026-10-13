@@ -31,6 +31,13 @@ QVariant SyncQueueModel::data(const QModelIndex &index, int role) const {
 }
 
 QString SyncQueueModel::groupKeyFor(const SyncQueueEntry &e) {
+    if (e.type == QLatin1String("podcast-removal"))
+        return QStringLiteral("podcast-removal\x01") + e.podcast.value("feedUrl").toString();
+    if (e.type == QLatin1String("audiobook"))
+        return QStringLiteral("audiobook\x01") + (e.audiobook.value("bookId").toString().isEmpty()
+            ? e.audiobook.value("bookKey").toString() : e.audiobook.value("bookId").toString());
+    if (e.type == QLatin1String("podcast"))
+        return QStringLiteral("podcast\x01") + e.podcast.value("feedUrl").toString();
     if (e.type == QLatin1String("video") && !e.videoSeries.isEmpty()
         && e.videoEpisode > 0)
         return QStringLiteral("s\x01%1\x01%2")
@@ -123,8 +130,10 @@ QVariantList SyncQueueModel::groupSummary() const {
         const QString key = groupKeyFor(e);
         const bool done = e.status == QLatin1String("verified")
             || e.status == QLatin1String("sent")
-            || e.status == QLatin1String("skipped");
-        const bool failed = e.status == QLatin1String("failed");
+            || e.status == QLatin1String("skipped")
+            || e.status == QLatin1String("removed");
+        const bool failed = e.status == QLatin1String("failed")
+            || e.status == QLatin1String("removal-unconfirmed");
 
         const auto it = indexByKey.constFind(key);
         if (it != indexByKey.constEnd()) {
@@ -146,7 +155,15 @@ QVariantList SyncQueueModel::groupSummary() const {
         QString kind = QStringLiteral("single");
         QString title = e.title;
         QString subtitle;
-        if (key.startsWith(QLatin1String("s\x01"))) {
+        if (e.type == "podcast-removal") {
+            kind = "podcast-removals";
+            title = e.album.isEmpty() ? QStringLiteral("Played podcasts") : e.album;
+            subtitle = "remove from Zune";
+        } else if (e.type == "audiobook") {
+            kind = "audiobooks"; title = e.album; subtitle = "audiobook";
+        } else if (e.type == "podcast") {
+            kind = "podcasts"; title = e.album; subtitle = "podcast";
+        } else if (key.startsWith(QLatin1String("s\x01"))) {
             kind = QStringLiteral("series");
             // Keep the season at the start of the second line. Narrow
             // panels can elide a long show name without hiding its season.
@@ -219,8 +236,9 @@ void SyncQueueModel::removeGroup(const QString &groupKey) {
 double SyncQueueModel::pendingEstimatedBytes() const {
     qint64 sum = 0;
     for (const SyncQueueEntry &e : m_entries)
-        if (e.status == QLatin1String("pending")
-            || e.status == QLatin1String("failed"))
+        if (e.type != QLatin1String("podcast-removal") &&
+            (e.status == QLatin1String("pending")
+            || e.status == QLatin1String("failed")))
             sum += e.estimatedBytes;
     return double(sum);
 }
@@ -336,6 +354,7 @@ QString SyncQueueModel::addPhoto(const QString &filepath, const QString &filenam
 }
 
 void SyncQueueModel::restoreEntry(const SyncQueueEntry &e) {
+    if (e.type == QLatin1String("podcast-removal")) return;
     if (e.entryId.isEmpty())
         return;
     // No dedup here — the saved queue IS the truth being restored.
@@ -411,4 +430,113 @@ int SyncQueueModel::indexOfEntry(const QString &entryId) const {
         if (m_entries[i].entryId == entryId)
             return i;
     return -1;
+}
+
+QString SyncQueueModel::addPodcast(const QVariantMap &episode, qint64 bytes) {
+    const auto feed = episode.value("feedUrl").toString();
+    const auto identity = episode.value("identity").toString();
+    if (feed.isEmpty() || identity.isEmpty() || (episode.value("filepath").toString().isEmpty() && !episode.value("needsPreparation").toBool())) return {};
+    for (const auto &e : std::as_const(m_entries))
+        if (e.type == "podcast" && e.podcast.value("feedUrl") == feed &&
+            (e.podcast.value("identity") == identity || e.podcast.value("sourceUrl") == episode.value("sourceUrl"))) return {};
+    SyncQueueEntry e;
+    e.entryId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    e.type = "podcast"; e.podcast = episode;
+    e.filepath = episode.value("filepath").toString();
+    e.title = episode.value("title").toString();
+    e.artist = episode.value("artist").toString();
+    e.album = episode.value("album").toString();
+    e.durationMs = episode.value("durationMs").toInt();
+    e.videoPosterPath = episode.value("posterPath").toString();
+    e.estimatedBytes = bytes;
+    const auto id = e.entryId;
+    insertGrouped(std::move(e));
+    return id;
+}
+
+QString SyncQueueModel::addAudiobook(const QVariantMap &episode, qint64 bytes) {
+    const auto feed = episode.value("bookKey").toString();
+    const auto identity = episode.value("identity").toString();
+    if (feed.isEmpty() || identity.isEmpty() || (episode.value("filepath").toString().isEmpty() && !episode.value("needsPreparation").toBool())) return {};
+    if (containsAudiobook(episode)) return {};
+    SyncQueueEntry e;
+    e.entryId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    e.type = "audiobook"; e.audiobook = episode;
+    e.filepath = episode.value("filepath").toString();
+    e.title = episode.value("title").toString();
+    e.artist = episode.value("artist").toString();
+    e.album = episode.value("album").toString();
+    e.durationMs = episode.value("durationMs").toInt();
+    e.videoPosterPath = episode.value("posterPath").toString();
+    e.estimatedBytes = bytes;
+    const auto id = e.entryId;
+    insertGrouped(std::move(e));
+    return id;
+}
+
+
+void SyncQueueModel::updateSpokenPayload(const QString &entryId, const QVariantMap &payload, qint64 bytes) {
+    const int i = indexOfEntry(entryId);
+    if (i < 0 || (m_entries[i].type != "podcast" && m_entries[i].type != "audiobook")) return;
+    auto &entry = m_entries[i];
+    if (entry.type == "audiobook") entry.audiobook = payload;
+    else entry.podcast = payload;
+    entry.filepath = payload.value("filepath").toString();
+    entry.durationMs = payload.value("durationMs").toInt();
+    entry.videoPosterPath = payload.value("posterPath").toString();
+    entry.estimatedBytes = bytes;
+    emit dataChanged(index(i,0), index(i,0));
+    emit estimateChanged();
+}
+
+
+bool SyncQueueModel::containsAudiobook(const QVariantMap &part) const {
+    for (const auto &entry : m_entries) {
+        if (entry.type != "audiobook") continue;
+        const auto saved = entry.audiobook;
+        const bool sameBook = saved.value("bookKey") == part.value("bookKey") ||
+            (!part.value("bookId").toString().isEmpty() && saved.value("bookId") == part.value("bookId"));
+        if (sameBook && (saved.value("identity")==part.value("identity") || saved.value("partNumber")==part.value("partNumber"))) return true;
+        // Queues saved before immediate admission have content keys but no
+        // bookId. Exact source/range and metadata identify those existing rows.
+        if (saved.value("bookId").toString().isEmpty() && !part.value("identity").toString().isEmpty() &&
+            saved.value("identity")==part.value("identity") && saved.value("album")==part.value("album") &&
+            saved.value("artist")==part.value("artist")) return true;
+    }
+    return false;
+}
+
+
+QString SyncQueueModel::addPodcastRemoval(const QVariantMap &episode) {
+    const auto itemId = episode.value("itemId").toUInt();
+    if (!itemId || itemId == 0xffffffffu) return {};
+    for (const auto &entry : std::as_const(m_entries))
+        if (entry.type == "podcast-removal" && entry.podcast.value("itemId").toUInt() == itemId)
+            return entry.entryId;
+    SyncQueueEntry entry;
+    entry.entryId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    entry.type = "podcast-removal";
+    entry.title = episode.value("deviceTitle", episode.value("title")).toString();
+    if (entry.title.isEmpty()) entry.title = "Podcast episode";
+    entry.artist = episode.value("deviceAuthor", episode.value("artist")).toString();
+    entry.album = episode.value("album", episode.value("showTitle")).toString();
+    entry.videoPosterPath = episode.value("posterPath").toString();
+    entry.status = "pending-removal";
+    entry.statusNote = "Will remove on sync";
+    entry.podcast = episode;
+    const auto id = entry.entryId;
+    insertGrouped(std::move(entry));
+    return id;
+}
+
+void SyncQueueModel::clearPodcastRemovals() {
+    bool removed = false;
+    for (int i = m_entries.size() - 1; i >= 0; --i) {
+        if (m_entries[i].type != "podcast-removal") continue;
+        beginRemoveRows({}, i, i);
+        m_entries.removeAt(i);
+        endRemoveRows();
+        removed = true;
+    }
+    if (removed) { emit countChanged(); emit estimateChanged(); }
 }

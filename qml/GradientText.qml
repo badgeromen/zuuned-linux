@@ -9,6 +9,7 @@ Item {
     property alias text: label.text
     property alias font: label.font
     property alias tracking: label.font.letterSpacing
+    property bool wrap: false
 
     implicitWidth: label.implicitWidth
     implicitHeight: label.implicitHeight
@@ -16,6 +17,8 @@ Item {
     Text {
         id: label
         visible: false
+        width: root.wrap ? root.width : implicitWidth
+        wrapMode: root.wrap ? Text.Wrap : Text.NoWrap
     }
 
     LinearGradient {

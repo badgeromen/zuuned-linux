@@ -1,0 +1,31 @@
+Keel / Zune 30, 2026-10-10. Isolated two-second generated MP3.
+Same episode title as the failed Nontendo #190 transfer.
+No original object IDs were passed to cleanup.
+
+Before correction:
+[podcast-test] created isolated folder=83887865
+[podcast-test] series result=0 id=251660024
+[podcast-test] PASS repeated series reuses id=251660024
+[libzune-podcast] text mismatch item=268437249 property=0xDC07 expected-bytes=16 actual-bytes=78
+[libzune-podcast] first-difference=0 expected-byte=84 actual-byte=87
+[libzune-podcast] returned filename="What the HECK is happening with the PS5 right now? | Nontendo Podcast #190.mp3"
+[podcast-test] episode result=-2 id=0
+[podcast-test] FAIL: Podcast episode readback failed (0x2001, Podcast readback mismatch on item 268437249 property 0xDC07 (1 mismatches)); new item 268437249 removed (autopsy=0x2001)
+[podcast-test] PASS remove created id=251660024
+[podcast-test] PASS remove created id=83887865
+[podcast-test] PASS original handle inventory restored
+[podcast-test] FAIL; playback/category after eject remains a separate gate
+
+After correction:
+[podcast-test] created isolated folder=83887866
+[podcast-test] series result=0 id=251660025
+[podcast-test] PASS repeated series reuses id=251660025
+[podcast-test] episode result=0 id=268437250
+[podcast-test] PASS repeated episode reuses id=268437250
+[podcast-test] PASS extracted episode bytes match generated source
+[podcast-test] wildcard inventory before=1396 after=1398 (not a podcast-specific inventory)
+[podcast-test] PASS remove created id=268437250
+[podcast-test] PASS remove created id=251660025
+[podcast-test] PASS remove created id=83887866
+[podcast-test] PASS original handle inventory restored
+[podcast-test] PASS; playback/category after eject remains a separate gate

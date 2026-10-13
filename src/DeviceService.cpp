@@ -4,6 +4,7 @@
 #include "UsbWatcher.h"
 #include "UdevSetup.h"
 #include "library/VideoIdentity.h"
+#include "sync/RecoveryIdentity.h"
 
 #include <QDir>
 #include <QProcess>
@@ -12,8 +13,12 @@
 #include <QStandardPaths>
 #include <QTimer>
 #include <QUrl>
+#include <QUuid>
 
-DeviceService::DeviceService(QObject *parent) : QObject(parent) {
+DeviceService::DeviceService(QObject *parent) : DeviceService(parent, true) {}
+
+DeviceService::DeviceService(QObject *parent, bool watchDevice) : QObject(parent) {
+    m_spokenArtSession = QUuid::createUuid().toString(QUuid::Id128);
     m_artCacheDir = QStandardPaths::writableLocation(QStandardPaths::CacheLocation)
                     + QStringLiteral("/art");
     QDir().mkpath(m_artCacheDir);
@@ -27,6 +32,64 @@ DeviceService::DeviceService(QObject *parent) : QObject(parent) {
     connect(this, &DeviceService::workerSever, m_worker, &DeviceWorker::doSever);
     connect(this, &DeviceService::workerGrabArt, m_worker, &DeviceWorker::doGrabArt);
     connect(this, &DeviceService::workerGrabPhotoThumb, m_worker, &DeviceWorker::doGrabPhotoThumb);
+    connect(this, &DeviceService::workerReadSpokenMedia, m_worker, &DeviceWorker::doReadSpokenMedia);
+    connect(this, &DeviceService::workerPurgeSpokenItems, m_worker, &DeviceWorker::doPurgeSpokenItems);
+    connect(m_worker, &DeviceWorker::spokenPurgeProgress, this,
+            [this](quint64 generation, quint64 request, const QString &serial, int current, int total) {
+        if (generation != m_spokenGeneration || request != m_spokenRequest || !m_connected || serial != m_serial)
+            return;
+        m_purgeCurrent = current;
+        m_purgeTotal = total;
+        m_status = QStringLiteral("Deleting %1 of %2…").arg(current).arg(total);
+        emit purgeChanged();
+        emit stateChanged();
+    });
+    connect(m_worker, &DeviceWorker::spokenMediaRead, this,
+            [this](quint64 generation, quint64 request, const QString &serial, const QVariantList &podcasts,
+                   const QVariantList &books, const QString &error) {
+        if (generation != m_spokenGeneration || request != m_spokenRequest || !m_connected || serial != m_serial)
+            return;
+        m_spokenMediaLoading = false;
+        m_spokenMediaError = error;
+        m_podcastDeviceStatus.clear();
+        m_podcastMembershipKnown = false;
+        m_podcastStatusWarning.clear();
+        if (error.isEmpty()) {
+            // Device IDs can be recycled after deletion. Each successful
+            // inventory gets a fresh spoken-art namespace, including disk cache.
+            ++m_spokenArtRevision;
+            for (quint32 id : std::as_const(m_spokenArtIds)) {
+                m_artPaths.remove(QString::number(id));
+                m_artRequested.remove(id);
+                m_artAliases.remove(id);
+            }
+            m_podcastEpisodesList = podcasts;
+            m_audiobookPartsList = books;
+            rebuildPodcastDeviceStatus();
+            fprintf(stderr, "[device] spoken inventory: %lld podcast episodes, %lld audiobook parts\n",
+                    static_cast<long long>(podcasts.size()), static_cast<long long>(books.size()));
+            m_spokenArtIds.clear();
+            for (const auto &list : {podcasts, books})
+                for (const QVariant &value : list)
+                    m_spokenArtIds.insert(value.toMap().value(QStringLiteral("artItemId")).toUInt());
+            for (quint32 id : std::as_const(m_spokenArtIds)) {
+                m_artPaths.remove(QString::number(id));
+                m_artRequested.remove(id);
+                m_artAliases.remove(id);
+            }
+        }
+        emit spokenMediaChanged();
+        if (error.isEmpty()) emit artChanged();
+        emit stateChanged();
+    });
+    connect(m_worker, &DeviceWorker::spokenItemsPurged, this,
+            [this](quint64 generation, quint64 request, const QString &serial, const QVariantList &ids,
+                   int failCount, const QString &error) {
+        if (generation != m_spokenGeneration || request != m_spokenRequest || !m_connected || serial != m_serial)
+            return;
+        m_spokenMediaError = error;
+        onPurgeDone(ids.size(), failCount, ids);
+    });
 
     // worker → UI
     connect(m_worker, &DeviceWorker::breachDone, this, &DeviceService::onBreachDone);
@@ -137,16 +200,27 @@ DeviceService::DeviceService(QObject *parent) : QObject(parent) {
     connect(m_worker, &DeviceWorker::purgeDone, this, &DeviceService::onPurgeDone);
     connect(m_worker, &DeviceWorker::finalizeDone, this, &DeviceService::onFinalizeDone);
 
+    const auto retrySpokenRead = [this] {
+        if (!m_spokenReadDeferred || !m_connected || m_spokenMediaLoading || m_busy || m_purging
+            || m_pulling || m_syncActive || m_ejecting || m_awaitingDisconnect) return;
+        m_spokenReadDeferred = false;
+        QTimer::singleShot(0, this, &DeviceService::refreshSpokenMedia);
+    };
+    connect(this, &DeviceService::stateChanged, this, retrySpokenRead);
+    connect(this, &DeviceService::purgeChanged, this, retrySpokenRead);
+    connect(this, &DeviceService::pullChanged, this, retrySpokenRead);
     m_workerThread.start();
 
-    m_watcher = new UsbWatcher(this);
-    connect(m_watcher, &UsbWatcher::zuneArrived, this, &DeviceService::onZuneArrived);
-    connect(m_watcher, &UsbWatcher::zuneLeft, this, &DeviceService::onZuneLeft);
-    m_watcher->start();
+    if (watchDevice) {
+        m_watcher = new UsbWatcher(this);
+        connect(m_watcher, &UsbWatcher::zuneArrived, this, &DeviceService::onZuneArrived);
+        connect(m_watcher, &UsbWatcher::zuneLeft, this, &DeviceService::onZuneLeft);
+        m_watcher->start();
+    }
 }
 
 DeviceService::~DeviceService() {
-    m_watcher->stop();
+    if (m_watcher) m_watcher->stop();
     if (m_connected)
         emit workerSever();
     m_workerThread.quit();
@@ -191,6 +265,24 @@ void DeviceService::onZuneLeft() {
 }
 
 void DeviceService::clearDeviceState() {
+    ++m_spokenGeneration;
+    m_worker->setSpokenGeneration(m_spokenGeneration);
+    m_podcastEpisodesList.clear();
+    m_podcastDeviceStatus.clear();
+    m_podcastMembershipKnown = false;
+    m_podcastStatusWarning.clear();
+    m_spokenRequested = false;
+    m_spokenReadDeferred = false;
+    m_audiobookPartsList.clear();
+    m_spokenArtIds.clear();
+    m_spokenMediaLoading = false;
+    m_spokenMediaError.clear();
+    m_purging = false;
+    m_purgeCurrent = m_purgeTotal = 0;
+    m_artPaths.clear();
+    emit spokenMediaChanged();
+    emit purgeChanged();
+    emit artChanged();
     m_moodColor = QColor();
     m_connectionStage.clear();
     m_connectionProgress = 0;
@@ -417,7 +509,8 @@ void DeviceService::requestArt(quint32 itemId) {
 
     // Track ids carry no art on the Zune — redirect to the MTP album
     // object that owns the track (the mac's getAlbumList() route).
-    const quint32 target = m_trackToAlbumArt.value(itemId, itemId);
+    const bool spoken = m_spokenArtIds.contains(itemId);
+    const quint32 target = spoken ? itemId : m_trackToAlbumArt.value(itemId, itemId);
 
     const QString key = QString::number(target);
     if (m_artPaths.contains(key)) { // album already fetched — just alias
@@ -430,7 +523,10 @@ void DeviceService::requestArt(quint32 itemId) {
     if (m_artAliases[target].size() > 1)
         return; // fetch already in flight for this album
 
-    const QString path = m_artCacheDir + QStringLiteral("/%1.jpg").arg(target);
+    const QString path = m_artCacheDir + (spoken
+        ? QStringLiteral("/spoken_%1_%2_%3_%4.jpg").arg(m_spokenArtSession)
+            .arg(m_spokenGeneration).arg(m_spokenArtRevision).arg(target)
+        : QStringLiteral("/%1.jpg").arg(target));
     emit workerGrabArt(target, path);
 }
 
@@ -790,8 +886,168 @@ bool DeviceService::purgeInterruptedVideo(const QString &filename) {
     return true;
 }
 
+void DeviceService::setSyncActive(bool active) {
+    if (m_syncActive == active)
+        return;
+    m_syncActive = active;
+    if (!active && m_spokenRequested && m_connected)
+        QTimer::singleShot(0, this, &DeviceService::refreshSpokenMedia);
+}
+
+void DeviceService::rebuildPodcastDeviceStatus() {
+    m_podcastDeviceStatus.clear();
+    m_podcastMembershipKnown = true;
+    m_podcastStatusWarning.clear();
+    QSet<quint32> ids;
+    for (const auto &value : m_podcastEpisodesList) {
+        const auto row = value.toMap();
+        const auto key = qMakePair(row.value("feedUrl").toString(), row.value("sourceUrl").toString());
+        const auto id = RecoveryIdentity::objectId(row.value("itemId"));
+        if (!id || id == 0xffffffffu || ids.contains(id) || m_podcastDeviceStatus.contains(key)) {
+            m_podcastDeviceStatus.clear(); m_podcastMembershipKnown = false;
+            m_podcastStatusWarning = QStringLiteral("Podcast source identities are ambiguous; device badges are unavailable.");
+            return;
+        }
+        ids.insert(id);
+        if (!row.value("sourceKnown", !key.first.isEmpty() && !key.second.isEmpty()).toBool()
+            || key.first.isEmpty() || key.second.isEmpty()) {
+            m_podcastMembershipKnown = false;
+            m_podcastStatusWarning = QStringLiteral("Some podcast source identities are unavailable; device badges may be incomplete.");
+            continue;
+        }
+        m_podcastDeviceStatus.insert(key, row);
+    }
+}
+
+QVariantMap DeviceService::podcastDeviceStatus(const QString &feedUrl, const QString &sourceUrl) const {
+    QVariantMap result{{"known", false}, {"onDevice", false}, {"playedKnown", false}, {"played", false}, {"bookmarkMs", 0u}};
+    if (!m_connected || feedUrl.isEmpty() || sourceUrl.isEmpty()) return result;
+    const auto key = qMakePair(feedUrl, sourceUrl);
+    if (m_podcastDeviceStatus.contains(key)) {
+        const auto row = m_podcastDeviceStatus.value(key);
+        result["known"] = true; result["onDevice"] = true;
+        const bool known = row.value("playedKnown").toBool();
+        result["playedKnown"] = known;
+        result["played"] = known && row.value("played").toBool();
+        result["bookmarkMs"] = known ? row.value("bookmarkMs").toUInt() : 0u;
+    } else result["known"] = m_podcastMembershipKnown;
+    return result;
+}
+
+void DeviceService::prunePodcastDeviceStatus(const QSet<quint32> &ids) {
+    for (auto it = m_podcastDeviceStatus.begin(); it != m_podcastDeviceStatus.end();)
+        if (ids.contains(it.value().value("itemId").toUInt())) it = m_podcastDeviceStatus.erase(it);
+        else ++it;
+}
+
+void DeviceService::notePodcastOnDevice(quint64 generation, const QString &serial,
+                                       const QVariantMap &episode, quint32 itemId) {
+    if (!m_connected || generation != m_spokenGeneration || serial != m_serial
+        || !itemId || itemId == 0xffffffffu) return;
+    const auto key = qMakePair(episode.value("feedUrl").toString(), episode.value("sourceUrl").toString());
+    if (key.first.isEmpty() || key.second.isEmpty() || key.first.contains(QChar(0)) || key.second.contains(QChar(0))) return;
+    auto row = m_podcastDeviceStatus.value(key);
+    if (row.value("itemId").toUInt() != itemId) {
+        // A confirmed new/reused identity proves presence, not playback state.
+        row = {{"itemId", itemId}, {"playedKnown", false}, {"played", false}, {"bookmarkMs", 0u}};
+    }
+    for (auto it = m_podcastDeviceStatus.begin(); it != m_podcastDeviceStatus.end();)
+        if (it.key() != key && it.value().value("itemId").toUInt() == itemId) {
+            m_podcastMembershipKnown = false;
+            it = m_podcastDeviceStatus.erase(it);
+        } else ++it;
+    m_podcastDeviceStatus.insert(key, row);
+    if (m_spokenMediaLoading) { ++m_spokenRequest; m_spokenMediaLoading = false; }
+    emit spokenMediaChanged();
+}
+
+void DeviceService::ensureSpokenMedia() {
+    if (m_connected && !m_spokenRequested) refreshSpokenMedia();
+}
+
+void DeviceService::refreshSpokenMedia() {
+    if (!m_connected || m_spokenMediaLoading) return;
+    m_spokenRequested = true;
+    if (m_busy || m_purging || m_pulling || m_syncActive || m_ejecting || m_awaitingDisconnect) {
+        m_spokenReadDeferred = true;
+        m_spokenMediaError = QStringLiteral("Wait for the current device operation, then refresh.");
+        emit spokenMediaChanged();
+        return;
+    }
+    m_spokenReadDeferred = false;
+    m_spokenMediaLoading = true;
+    m_spokenMediaError.clear();
+    emit spokenMediaChanged();
+    emit stateChanged();
+    emit workerReadSpokenMedia(m_spokenGeneration, ++m_spokenRequest, m_serial);
+}
+
+// Called only after SyncEngine correlates a successful worker deletion result.
+// Keep the browser truthful even when cleanup is cancelled after partial success.
+void DeviceService::applyPodcastCleanup(quint64 generation, const QString &serial,
+                                        const QVariantList &rows) {
+    if (!m_connected || generation != m_spokenGeneration || serial != m_serial) return;
+    QSet<quint32> ids;
+    qint64 freed = 0;
+    for (const auto &value : rows) {
+        const auto row = value.toMap();
+        const auto id = RecoveryIdentity::objectId(row.value("itemId"));
+        if (!id || id == 0xffffffffu || ids.contains(id)) continue;
+        ids.insert(id);
+        freed += qBound<qint64>(0, row.value("sizeBytes").toLongLong(), UINT32_MAX);
+    }
+    for (int i = m_podcastEpisodesList.size() - 1; i >= 0; --i)
+        if (ids.contains(m_podcastEpisodesList[i].toMap().value("itemId").toUInt()))
+            m_podcastEpisodesList.removeAt(i);
+    prunePodcastDeviceStatus(ids);
+    noteBytesFreed(freed);
+    emit spokenMediaChanged();
+}
+
+void DeviceService::purgeSpokenItems(const QString &kind, const QVariantList &itemIds) {
+    if (!m_connected || busy() || m_pulling || m_syncActive || m_ejecting || m_awaitingDisconnect)
+        return;
+    if (m_serial.isEmpty()) {
+        m_spokenMediaError = QStringLiteral("The Zune has no readable serial number. Reconnect before deleting.");
+        emit spokenMediaChanged();
+        return;
+    }
+    if ((kind != QStringLiteral("podcast") && kind != QStringLiteral("audiobook")) || itemIds.isEmpty())
+        return;
+    const QVariantList &inventory = kind == QStringLiteral("podcast")
+        ? m_podcastEpisodesList : m_audiobookPartsList;
+    QHash<quint32, QVariantMap> known;
+    for (const auto &value : inventory) {
+        const auto row = value.toMap();
+        known.insert(row.value(QStringLiteral("itemId")).toUInt(), row);
+    }
+    QVariantList selected;
+    QSet<quint32> seen;
+    for (const auto &value : itemIds) {
+        const quint32 id = RecoveryIdentity::objectId(value);
+        if (!id || id == 0xffffffffu || !known.contains(id)) {
+            m_spokenMediaError = QStringLiteral("The selection changed. Refresh the Zune and select it again.");
+            emit spokenMediaChanged();
+            return;
+        }
+        if (!seen.contains(id)) {
+            seen.insert(id);
+            selected.append(known.value(id));
+        }
+    }
+    m_spokenMediaError.clear();
+    m_purging = true;
+    m_purgeCurrent = 0;
+    m_purgeTotal = selected.size();
+    m_status = QStringLiteral("Deleting %1 item(s)…").arg(selected.size());
+    emit spokenMediaChanged();
+    emit purgeChanged();
+    emit stateChanged();
+    emit workerPurgeSpokenItems(m_spokenGeneration, ++m_spokenRequest, m_serial, kind, selected);
+}
+
 void DeviceService::purgeItems(const QVariantList &itemIds) {
-    if (!m_connected || itemIds.isEmpty())
+    if (!m_connected || busy() || m_pulling || m_syncActive || itemIds.isEmpty())
         return;
     m_purging = true;
     m_purgeCurrent = 0;
@@ -831,6 +1087,12 @@ void DeviceService::onPurgeDone(int okCount, int failCount,
         if (ids.contains(m.value(QStringLiteral("itemId")).toUInt()))
             freed += qint64(m.value(QStringLiteral("sizeMB")).toDouble() * 1e6);
     }
+    for (const auto &list : {m_podcastEpisodesList, m_audiobookPartsList})
+        for (const QVariant &v : list) {
+            const auto row = v.toMap();
+            if (ids.contains(row.value(QStringLiteral("itemId")).toUInt()))
+                freed += row.value(QStringLiteral("sizeBytes")).toLongLong();
+        }
     noteBytesFreed(freed);
     m_tracks.removeByItemIds(ids);
     m_trackCount = m_tracks.rowCount();
@@ -844,6 +1106,22 @@ void DeviceService::onPurgeDone(int okCount, int failCount,
     };
     dropPurged(m_videosList);
     dropPurged(m_photosList);
+    dropPurged(m_podcastEpisodesList);
+    dropPurged(m_audiobookPartsList);
+    prunePodcastDeviceStatus(ids);
+    QSet<quint32> remainingArt;
+    for (const auto &list : {m_podcastEpisodesList, m_audiobookPartsList})
+        for (const QVariant &value : list)
+            remainingArt.insert(value.toMap().value(QStringLiteral("artItemId")).toUInt());
+    for (quint32 id : std::as_const(m_spokenArtIds)) {
+        if (remainingArt.contains(id)) continue;
+        m_artPaths.remove(QString::number(id));
+        m_artRequested.remove(id);
+        m_artAliases.remove(id);
+    }
+    m_spokenArtIds = remainingArt;
+    emit artChanged();
+    emit spokenMediaChanged();
     pruneDevicePlaylists(m_playlistsList, ids);
     rebuildOnDeviceKeys();
     // Do NOT re-read the device here: right after DeleteObject the Zune
@@ -875,6 +1153,11 @@ void DeviceService::requestPhotoThumb(quint32 itemId) {
 }
 
 void DeviceService::onArtDone(quint32 itemId, const QString &path, bool ok) {
+    if (QFileInfo(path).fileName().startsWith(QStringLiteral("spoken_"))
+        && (!m_connected || !m_spokenArtIds.contains(itemId) || !QFileInfo(path).fileName().startsWith(
+            QStringLiteral("spoken_%1_%2_%3_").arg(m_spokenArtSession)
+                .arg(m_spokenGeneration).arg(m_spokenArtRevision))))
+        return;
     const QList<quint32> requesters = m_artAliases.take(itemId);
     const QVariantList importedAlbums = m_importedAlbumArtTargets.take(itemId);
     if (!ok)

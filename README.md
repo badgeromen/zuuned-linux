@@ -4,12 +4,12 @@
 
 **Bring your Zune back into the rebellion.**
 
-**Website:** [zuuned.com](https://zuuned.com)
+[zuuned.com](https://zuuned.com) · [Downloads](https://github.com/badgeromen/zuuned-linux/releases) · [libzune](https://github.com/badgeromen/libzune)
 
 ![Welcome to Zuuned: your Zune, at home on Linux](docs/readme-screenshots/welcome.png)
 
 Zuuned is a native Linux app for managing Microsoft Zune players and enjoying
-your local media collection. Browse music, movies and photos, build playlists,
+your local media collection. Browse music, movies, photos, podcasts and audiobooks, build playlists,
 customize artwork and metadata, and transfer media to your Zune over USB.
 
 ![Zuuned's music library with album artwork and a connected Zune HD](docs/readme-screenshots/music-library.png)
@@ -22,6 +22,12 @@ customize artwork and metadata, and transfer media to your Zune over USB.
   playlists and mixtapes.
 - **Organize videos:** browse movies, TV shows and anime with poster artwork,
   play local videos and convert supported media for transfer.
+- **Follow podcasts:** subscribe by RSS, download episodes, star shows and choose
+  how many episodes to queue automatically. Optionally remove completed device
+  episodes on sync, with per-episode keep protection.
+- **Bring your books:** import audiobook files or folders, organize virtual
+  Libraries, resume local playback and queue whole books. Chaptered sources are
+  prepared as ordered device parts while the original files stay intact.
 - **Make it yours:** edit local metadata and artwork, and choose your preferred
   appearance.
 - **Organize photos:** browse folders and create custom albums with nested
@@ -53,9 +59,11 @@ wallpaper shown belong to the example library and are not supplied media.
 
 Application source and Linux releases live together at
 [badgeromen/zuuned-linux](https://github.com/badgeromen/zuuned-linux).
-**[Download Zuuned Linux 0.1.1](https://github.com/badgeromen/zuuned-linux/releases/tag/v0.1.1)**
-for Linux x86_64 with glibc 2.41 or newer, X11/XWayland and OpenGL. Choose the
-AppImage and its matching checksum. [Older releases](https://github.com/badgeromen/zuuned-linux/releases)
+**[Download Zuuned Linux 0.2.0](https://github.com/badgeromen/zuuned-linux/releases/tag/v0.2.0)**
+for 64-bit Linux with glibc 2.41 or newer, X11/XWayland and OpenGL. Choose
+`x86_64` for Intel/AMD PCs or experimental `aarch64` for ARM64 desktops, and
+verify the matching checksum. ARM requires a 64-bit Debian 13/Trixie-compatible
+system; this is not a 32-bit or Debian 12/Bookworm build. [Older releases](https://github.com/badgeromen/zuuned-linux/releases)
 remain available. Source archives are for building, not ready-to-run installers.
 Use each release's checksum and compatibility notes. A migrated download keeps
 its original version and binary contents; it does not automatically include
@@ -89,14 +97,14 @@ data file and populate `libzune/src/mtpz_keys.h` before building. Official
 downloads already include authentication.
 
 For the native build and the existing maintainer AppImage workflow, see
-[BUILDING.md](BUILDING.md). The public snapshot vendors libzune; the AppImage
-snapshot exporter still requires the private development submodule layout.
+[BUILDING.md](BUILDING.md). The public snapshot includes libzune, verified against the exact library
+revision and tree recorded in `PUBLIC_LIBZUNE.json` for AppImage packaging.
 The commands below are the short path
 for running a development build on the current machine.
 
 Qt **6.8 or newer** is required. Qt 6.11.2 is the current tested development
 version; 6.8 is the API floor, not a claim that every older distro has passed.
-The Linux player requires OpenGL. The tester AppImage targets x86_64 desktops
+The Linux player requires OpenGL. The AppImages target x86_64 and experimental aarch64 desktops
 using X11 or XWayland; its release notes specify the tested distro/glibc floor.
 
 Arch dependencies:

@@ -1,5 +1,126 @@
 # AGENTS.md — AI Assistant Guide for ZuunedLinux
 
+**Local build handoff (user decision, 2026-10-13):** after a completed
+user-facing local build, restart only Zuuned with the fresh executable, preserving
+the current profile and workspace. Do not interrupt an active device sync; defer
+the restart until it finishes. Never close the terminal, Codex or desktop session.
+
+**2026-10-13 compact playback UI:** windows below the existing 1100-logical-pixel
+headroom breakpoint use Now Playing instead of the top ribbon, as do narrow
+windows. Resizing an existing queue opens the island unless a builder is active;
+closing it persists through track advances. The island has a fixed top-right X
+that turns red on hover/press/focus, with no background, and focus-scoped Escape dismissal. Verification and desktop
+limits are tracked in `docs/PLAYER_LAYOUT_AUDIT_2026-10-12.md` and
+`tests/player-layout/README.md`.
+
+**Scope update:** podcasts and audiobooks are active; defer HD artist backgrounds
+until both work. Use the dedicated `feature/podcasts-audiobooks` branches.
+
+**Active private workstream, 2026-10-08:** read
+`docs/SPOKEN_MEDIA_AND_DEVICE_ART.md` before podcast, audiobook or Zune HD artist
+background changes. Both repositories use `feature/podcasts-audiobooks`,
+based on the private visualizer checkpoint. Device protocols belong in libzune;
+feeds, downloads, local persistence and provider art selection belong in native
+app services. Preserve serialized device ownership. Advertised descriptors are
+not hardware write validation; keep category, resume and artwork gates separate.
+The initial `zunetool media-capabilities` probe is read-only after connection.
+Experimental podcast C APIs now have 50 software checks. After a physical reconnect,
+the Keel gate passes isolated series/MP3 creation, repeat reuse, byte-for-byte
+extraction and cleanup with the original wildcard inventory restored. This does
+not prove playback, resume or HD support. The subsequent real Moonbound trailer
+transfer passed repeat reuse and byte readback; the user confirmed podcast
+category presentation on the Classic. That initial trailer had no artwork. The
+October 9 app transfer sends show artwork. The user subsequently confirmed
+podcast audio playback and images work on the Classic. Firmware resume and
+other models remain separate gates.
+Counted UTF-16 text requires a terminal NUL; preserve the documented Keel
+filename/schema/timestamp readback semantics and successful-auth write guard.
+`src/spoken/` now includes the native RSS parser, local audiobook probe,
+serial service and separate `spoken/spoken.db` schema 1. The first native pages
+support RSS preview/subscription/downloads, ordered local book imports, chapters,
+custom covers and local playback/resume/bookmarks. Customize is right-click only;
+podcast covers reuse split + / arrow; books use one whole-book +. Podcast transfer and drags now use
+typed SyncEngine/DeviceWorker admission
+and recovery. Audiobooks now have dedicated typed admission and sends, book/part
+drags and explicit selection. Small multipart MP3 protocol gates pass on Classic
+and HD. Chaptered sources now prepare ordered device parts through native PCM
+range encoding; the complete source timeline is preserved. Local image drops work offline. Do not use music identities for spoken media.
+Gates: `tests/spoken-media/run.sh` and `tests/spoken-media/native/run.sh`; the
+latter uses real native services/QML/mpv, isolated profiles, loopback HTTP and no
+USB. See the dated audiobook hardware evidence and remaining resume/chapter
+gates in the spoken-media plan.
+This work stays on private Gitea until approved for wider distribution. Existing
+per-push approval and visualizer/public-export restrictions remain in force.
+
+**2026-10-09 spoken UI correction:** playback belongs in the existing top ribbon
+and now-playing island, never a separate bottom strip. Both use spoken cover IDs,
+mic/book icons and skips/speed/bookmarks/sleep/chapter controls. Music modes stay
+preserved but inactive for spoken queues; music speed resets to 1×. Settings →
+Library offers reviewed native audiobook folder import (one book or one book per
+immediate subfolder), with nested discs, natural order, atomic batch saves,
+repeat reuse and overlap refusal. It is a manual importer, not a watch folder.
+See the private plan and `tests/spoken-media/native/run.sh` for exact contracts.
+
+**2026-10-09 podcast readback correction:** Pavo schema-0x10 podcast objects
+normalize redundant SeriesName to empty and MetaGenre to zero, as Keel does.
+libzune preserves exact series/source/title/size checks. Explicit
+`ZUNE_PODCAST_FAILED_CLEANED` proves new-object deletion; the app retires recovery
+only for that correlated outcome, never merely ID zero. Unknown writes retain
+review. See the private spoken plan; HD playback and Classic retest remain gates.
+
+**2026-10-09 device spoken browser:** the Zune island includes Podcasts and
+Audiobooks with lazy serialized native inventory, series/folder-ID grouping,
+covers, selection and confirmed removal. Keep request/serial/session guards,
+live full-selection validation before deletion and successful-ID-only pruning.
+Tests: `tests/device-spoken/` and libzune `tests/run-spoken-inventory.sh`.
+No browsing action authorizes deletion; live deletion remains user-confirmed.
+
+**2026-10-09 spoken organization:** local podcasts use Shows, Starred shows and
+Starred episodes; audiobooks use Books, Libraries and Starred. Show/episode/book
+favorites are independent and persist through refresh/import. Sublibraries are
+ordered many-to-many virtual collections, never folders or transfer identities.
+Use native revision-checked atomic saves/deletes; deleting a collection preserves
+all books/files. Preserve shared GalleryView/header/breadcrumb styling, offline
+organization, right-click Customize and whole-book queue actions. Gates:
+`tests/spoken-organization/run-qml.sh` and `tests/spoken-media/native/run.sh`.
+
+**2026-10-09 podcast retention:** optional `podcastAutoCleanup` defaults off.
+Sync may run with an empty queue to clean firmware-marked-played podcasts.
+Persist exact device-scoped listening history before deletion; then revalidate the
+complete plan on the worker. Unknown state never authorizes deletion. Preserve
+Keep on Zune independently of favorites, local files and other media. Remembered
+consumed history suppresses re-addition only for the same device while enabled.
+Podcast cover-arrow/show-drag selection offers newest/oldest count and manual
+selection, with optional unplayed filter and per-show preferences. No background
+queueing on feed refresh. See the spoken plan for tests and hardware limits.
+
+**2026-10-10 podcast visibility:** local episodes expose played/played-on-Zune
+and the existing PNG device badge from exact feed/source inventory. Cache status
+per session, defer reads during device work, treat unavailable state as unknown,
+and prune only confirmed deletion IDs. The show picker defaults to newest 10
+unless a saved preference exists, with oldest/count/manual options preserved.
+Cleanup actions appear as transient `podcast-removal` queue rows with truthful
+progress. Never persist/replay these actions or count them as upload capacity.
+See the private spoken plan for current contracts and verification.
+
+**2026-10-10 cleanup preview correction:** removal actions must appear before
+Sync, from correlated device source/played cache plus local retention choices.
+Sync still revalidates the complete plan before deletion. Removing a preview
+row/group or clearing the queue excludes those episodes for the current
+connection; Keep on Zune is persistent protection. Previewing never writes
+listening history or sends a delete. See the spoken plan for live Classic
+preview evidence and the remaining actual-deletion gate.
+
+**2026-10-10 starred podcast queue:** Settings → Library offers opt-in queueing
+of newest unplayed episodes from starred shows on connection, with 5/10/custom
+count and saved per-show count overrides. Native `PodcastQueuePlanner` owns RSS
+refresh/selection; + honors saved selection and accepts feed-only entries.
+Existing device episodes count toward N before upload filtering. Preserve exact
+identity, unknown-inventory deferral, connection generation guards, pending-edit
+ordering and one-pass behavior. Clear queue cancels in-flight additions; transfers
+and played cleanup still require explicit Sync. See the spoken plan and native
+planner gates; this does not authorize device deletion or public distribution.
+
 ## Project Overview
 
 ZuunedLinux is a native Qt 6 / QML application for managing Microsoft Zune
@@ -29,15 +150,7 @@ Debian build dependencies; the app also links mpv, FFmpeg, LAME and SQLite.
 CMake drives `make -C libzune` automatically — after C changes just
 rebuild; no manual copy step (unlike ZuunedMac's `cp libzune.a ../lib/`).
 
-## Shared library discipline (public source snapshot)
-
-This public checkout vendors `libzune/` as ordinary files. The historical private
-checkout used a submodule; the rules below describe that original workflow.
-Do not run remote submodule updates in this public snapshot. Make shared protocol
-changes in `badgeromen/libzune`, then integrate a reviewed revision here with tests.
-See `BUILDING.md` for the public native build and packaging limitations.
-
-### Historical private submodule workflow
+## Submodule Discipline — READ THIS BEFORE TOUCHING libzune
 
 These rules exist because each was violated once and each violation cost
 real debugging time (2026-08-27):
@@ -107,7 +220,7 @@ zuunedlinux/
 │   └── fonts/              Permanent Marker, Specimen Alien (bundled)
 ├── packaging/
 │   └── 68-zuuned.rules     installed as both 68- and 72- rules
-└── libzune/                included C library source
+└── libzune/                submodule — branch master
 ```
 
 ## Code Conventions
@@ -131,7 +244,7 @@ zuunedlinux/
 
 ### C (libzune)
 - C99, Zune Rebellion naming (breach/smuggle/forge/purge…).
-- See `libzune/CLAUDE.md` for full conventions and `libzune/docs/TOC.md`
+- See `libzune/AGENTS.md` for full conventions and `libzune/docs/TOC.md`
   before searching the filesystem.
 
 ## Device Testing
@@ -351,7 +464,7 @@ licenses. Source will be available elsewhere; keep release source links accurate
 **GitHub distribution (user decision, 2026-10-04):** `badgeromen/zuuned-linux`
 hosts Linux application source AND releases. `badgeromen/libzune` hosts the shared
 C library. This supersedes the earlier downloads-only repository decision for
-`badgeromen/zuuned-linux`. Move public-facing links to the new account; do not alter
+`badger-orson/zuuned`. Move public-facing links to the new account; do not alter
 historical release evidence. Keep populated MTPZ data and private history out of
 public source. Prepare clean histories and review author identities before push.
 
@@ -562,3 +675,134 @@ the Zune is left with a truncated media entry that CRASHES THE
 FIRMWARE on playback (device restarts when playing). Happened
 2026-08-29 with a 2.65GB movie mid-wire. Recovery: delete the partial
 object off the device, then clean Eject to trigger re-index.
+
+## 2026-10-05: Experimental music visualizer
+
+Read `docs/MUSIC_VISUALIZER.md` before extending `VisualizerService`.
+`ZUUNED_VISUALIZER` defaults OFF; current development builds opt in with projectM
+4.1.7 and libpulse. Preserve process-specific mpv stream identity and exact
+per-stream monitoring; never capture desktop audio or microphones as fallback.
+OpenGL creation must wait for a usable drawable, and default draw/read buffers
+must be restored explicitly. Escape preserves music and the library window.
+The isolated native gate is `tests/visualizer`; existing playback regression is
+`node tests/customize/run-backend.mjs --player`. Preset/product polish and
+AppImage packaging remain follow-up gates, not completed release claims.
+
+**Live mouth correction, 2026-10-05:** Zuuned Viz now uses `PortalState.h` and
+`PortalRenderer.h`, independently of the unchanged Winamp/projectM preset.
+The mouth is the current PCM-derived contour. Store immutable previous contours
+for trails, expand/fade them, and mask them against the live mouth before drawing
+its edge. Never let retained pixels determine the opening. The later approved
+base-shape scheduler is described below; palette changes stay audio-driven.
+Colors follow a slow separate envelope.
+The response and real-GL mouth tests in `tests/visualizer` verify the actual
+contour and clear opening; generic pixel movement is insufficient. User visual
+acceptance and packaging remain separate. See `docs/MUSIC_VISUALIZER.md`.
+
+**Bass/color/smoke, 2026-10-06:** Zuuned Viz uses continuous low-pass bass RMS
+and a separate transient envelope so normalization cannot flatten low-end
+response. Keep the slow, rate-limited audio-steered palette. Smoke surrounds
+saved contours outside the live-mouth mask; it never reshapes the mouth.
+Gates: 13 state, 8 GL, 14 host checks; visual acceptance remains separate.
+
+**Sustained bands/random shapes, 2026-10-06:** the user now explicitly wants
+smoothly varying base shapes as well as the live audio deformation. Preserve
+`PortalShapeMorph`'s minimum hold, 3.2-second eased transitions, no immediate
+family repeats and silence/pause freeze. Spectral sustain determines per-point
+line width; saved contours retain their widths. Space broad bands apart and
+keep the opening masked even under the thick live rim. Note duration remains
+an approximation from mixed audio. Gates: 21 state, 10 GL, 14 host checks.
+
+**Tiny mouth/travel, 2026-10-06:** keep audio-space radii separate from the 0.1
+opening projection in `PortalRenderer`, and apply that projection to the mask
+as well as the ribbons. Centers are viewport fractions; never amplify them by
+depth scale. Historical centers ease into the path with age while contour
+snapshots remain immutable. Pause freezes travel. Preserve visible foreground
+walls despite the tiny opening. Gates: 25 state, 30 GL, 14 host checks; square,
+ultrawide and portrait readbacks assert a nonempty clear mouth. User visual
+acceptance and release packaging remain separate.
+
+**Private checkpoint, 2026-10-08 (user decision):** the current application
+snapshot, including the experimental visualizer, is for private Gitea only.
+Do not publish this checkpoint or its visualizer to GitHub, export it as public
+source, or include it in public releases without a new user decision. Preserve
+the corresponding libzune checkpoint when restoring the application. A local
+checkpoint is not a release gate or permission to push; the existing per-push
+approval rule still applies.
+
+
+**2026-10-09 podcast app transfer:** typed podcast queue and worker routing now
+exist. Podcast show covers use DragGhost to open episode selection on device
+drop; episode selections drag into the existing device queue. Feed-only selection
+originally downloaded before live admission; the quiet queue correction below
+moves that work into sync. Persist `deviceSourceUrl` across GUID-preserving
+feed refreshes, and never use music canonicalization/identities for podcasts.
+Read-only exact feed/source lookup excludes already-present episodes before
+queue insertion and repeats before send. Keep the unknown-write recovery marker;
+podcast auto-purge is not supported. Spoken worker jobs dispatch one at a time
+because the HTTP nested event loop otherwise reenters subsequent database jobs.
+Keel app-object hardware gate uploaded Moonbound episode 13, accepted show art,
+finalized, and excluded the same episode on a later admission. The user confirmed
+podcast playback and visible artwork on Classic; firmware resume and HD podcast
+acceptance remain pending. Audiobook integration and limits are recorded below.
+
+
+**2026-10-09 audiobook GUI candidate:** libzune exposes experimental
+`zune_find_audiobook_part` / `zune_smuggle_audiobook_part` for Keel/Pavo.
+Small two-part MP3 gates proved schema 0x12, ordered metadata and exact audio/JPEG
+readback on both; the user accepted the Classic test. The HD omits native book
+parts from MP3-filtered inventories, so lookup uses wildcard inventory then
+schema filtering. Never infer absence from the MP3 listing. The app hashes the
+reviewed whole-book source set, keeps book/part identities separate from music,
+rechecks device identity before sending, copies and verifies immutable source input before audio
+preparation, and reports books separately. Books use one + or cover/row drag for the whole book, with no part picker.
+Chaptered M4B sources now map to ordered named device parts; intros/gaps/outros
+are included. Source copies are verified once per source and reused across ranges;
+large source containers are supported, prepared parts remain capped at 512 MiB.
+Whole-book capacity admission is atomic. Local chapter playback remains.
+Unknown writes keep manual-review recovery, never speculative purge/retry.
+Firmware resume and HD visual/playback acceptance remain separate gates.
+
+
+**2026-10-09 whole-book correction:** the user rejected partial book selection
+and requires chaptered M4B. `queueAudiobooks` accepts book or part IDs but always
+expands whole parent books. Podcast selection stays unchanged. Native range
+encoding uses local-only FFmpeg decoding, PCM sample trimming, LAME delay/padding
+metadata and cancellation cleanup. Never send an entire chaptered source once
+per chapter or infer duplicate identity from its shared filepath. Range fields
+persist in queue/recovery. Source immutability covers the entire sync using a
+shared temporary copy; release it after its final range. See the latest section
+of the spoken plan and `tests/audio-ranges/` for verification and hardware limits.
+
+
+**2026-10-09 quiet spoken queue correction:** adding either spoken type must use
+cached library metadata synchronously, through the existing queue. No file stat,
+probe, full-file hash, download or live device query belongs on the add path.
+No success/preparation toast or library-page busy banner for normal admission.
+Connection/capacity and queued-identity checks still apply. Books remain whole-book
+operations; podcast episode selection remains explicit. Drafts persist with
+`needsPreparation`, including feed-only podcasts without a local path. Sync alone
+requests token-correlated quiet preparation from SpokenMediaService, resolves
+book hashes/episode downloads and verifies the queued manifest, then encodes and
+sends with live device dedup. Cancellation/disconnect must drain the correlated
+preparation before another run. Never send a provisional book key to libzune.
+Use `foregroundBusy` for library task feedback; sync work belongs in the existing
+queue/device progress. Keep stable bookId grouping across content-key resolution.
+
+**2026-10-10 spoken onboarding:** optional Podcasts and Audiobooks steps follow
+Photos. `PodcastPreferences` is shared with Settings → Library; keep setup edits
+staged until completion and commit a focused custom-count field before saving.
+Automation/cleanup remain opt-in. Audiobook import reuses the reviewed manual
+folder importer; only successful import changes Skip to Next. No watch-folder
+promise or implicit book sync. See the spoken plan and organization QML gates.
+
+**2026-10-11 audiobook Libraries builder:** `BookTrayState` and `BookLibraryTray`
+replace the modal spoken collection editor. The user-facing label is Libraries;
+existing native collection IDs/schema remain unchanged. Local book drags into
+this organizer are explicitly offline using `zuuned-local-books`; device keys
+remain connection-gated. Cover/detail + feeds the draft while building. Preserve
+whole-book identity, ordered deduplication, revision-checked saves, pending-write
+locks and dirty replacement/cancel confirmation. Playlist/photo/book drafts stay
+independent in the shared sidebar location. `RoundedArtwork` clips rectangular
+spoken covers using Theme.radiusMd; fitted portraits retain their full image.
+See the spoken plan and `tests/spoken-organization/` for gesture/regression gates.

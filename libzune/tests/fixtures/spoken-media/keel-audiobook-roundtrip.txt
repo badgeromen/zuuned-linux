@@ -1,0 +1,26 @@
+2026-10-09 private audiobook research gate
+Generated two-part MP3 book; 45 seconds each; 240x240 JPEG
+Raw auth diagnostics and serials omitted.
+User subsequently confirmed: "That worked." Resume not separately established.
+[audiobook-test] book=ZUUNED Book Test 1791568842-85024240 root=83887862 folder=83887863
+[audiobook-test] uploaded part=1 id=301991678 schema=0x12
+[audiobook-test] property=0xDC46 text=ZUUNED match=1
+[audiobook-test] property=0xDC44 text=01 Chapter One match=1
+[audiobook-test] property=0xDA9A text=ZUUNED Book Test 1791568842-85024240 match=1
+[audiobook-test] property=0xDC8B value=1 match=1
+[audiobook-test] property=0xDC95 value=0 match=1
+[audiobook-test] property=0xDC89 value=45000 match=1
+[audiobook-test] part=1 metadata=1 info=1 exact-audio=1
+[audiobook-test] part=1 exact-cover=1
+[audiobook-test] uploaded part=2 id=301991679 schema=0x12
+[audiobook-test] property=0xDC46 text=ZUUNED match=1
+[audiobook-test] property=0xDC44 text=02 Chapter Two match=1
+[audiobook-test] property=0xDA9A text=ZUUNED Book Test 1791568842-85024240 match=1
+[audiobook-test] property=0xDC8B value=2 match=1
+[audiobook-test] property=0xDC95 value=0 match=1
+[audiobook-test] property=0xDC89 value=45000 match=1
+[audiobook-test] part=2 metadata=1 info=1 exact-audio=1
+[audiobook-test] part=2 exact-cover=1
+[audiobook-test] original wildcard inventory preserved=1
+[audiobook-test] retained new handles root=83887862 folder=83887863 part1=301991678 part2=301991679
+[audiobook-test] PASS; category, playback, ordering and resume require device-screen testing

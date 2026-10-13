@@ -10,11 +10,181 @@
 #include <QThread>
 
 #include <vector>
+#include <functional>
 
 #include <algorithm>
 
 extern "C" {
 #include "zune.h"
+}
+
+namespace {
+QString readSpokenInventory(ZuneDevice *dev, QVariantList &podcasts, QVariantList &books, bool enrichStatus = true) {
+    ZunePodcastEpisode *episodes = nullptr;
+    ZunePodcastSeries *series = nullptr;
+    ZuneAudiobookPart *parts = nullptr;
+    ZunePodcastEpisodeSource *sources = nullptr;
+    ZunePodcastState *states = nullptr;
+    int episodeCount = 0, seriesCount = 0, partCount = 0, sourceCount = 0, stateCount = 0;
+    QString error;
+    if (zune_get_podcast_episodes(dev, &episodes, &episodeCount)
+        || zune_get_podcast_series(dev, &series, &seriesCount)
+        || zune_get_audiobook_parts(dev, &parts, &partCount)) {
+        error = QString::fromUtf8(zune_get_error());
+        if (error.isEmpty()) error = QStringLiteral("Could not read spoken media from this Zune.");
+    } else {
+        // Source identities enrich badges; they must not disable otherwise
+        // valid device browsing or explicitly confirmed management.
+        bool sourcesKnown = episodeCount == 0
+            || (enrichStatus && zune_get_podcast_episode_sources(dev, &sources, &sourceCount) == 0);
+        if (sourceCount != episodeCount) sourcesKnown = false;
+        QHash<quint32, ZunePodcastEpisodeSource> sourceById;
+        QSet<QPair<QString, QString>> sourceKeys;
+        for (int i = 0; i < sourceCount; ++i) {
+            const auto &source = sources[i];
+            const auto key = qMakePair(QString::fromUtf8(source.feed_url), QString::fromUtf8(source.source_url));
+            if (!source.item_id || sourceById.contains(source.item_id) || key.first.isEmpty()
+                || key.second.isEmpty() || sourceKeys.contains(key)) {
+                sourcesKnown = false;
+                break;
+            }
+            sourceById.insert(source.item_id, source); sourceKeys.insert(key);
+        }
+        // Firmware state is optional for browsing. Failure never means unplayed.
+        QHash<quint32, ZunePodcastState> stateById;
+        if (enrichStatus && episodeCount > 0 && zune_get_podcast_states(dev, &states, &stateCount) == 0) {
+            bool valid = true;
+            for (int i = 0; i < stateCount; ++i) {
+                if (!states[i].item_id || stateById.contains(states[i].item_id)) { valid = false; break; }
+                stateById.insert(states[i].item_id, states[i]);
+            }
+            if (!valid) stateById.clear();
+        }
+        QHash<quint32, QString> showNames;
+        for (int i = 0; i < seriesCount; ++i)
+            showNames.insert(series[i].item_id, QString::fromUtf8(series[i].name));
+        for (int i = 0; i < episodeCount; ++i) {
+            const auto &e = episodes[i];
+            const auto showName = showNames.value(e.series_id, QString::fromUtf8(e.series_name));
+            const bool sourceKnown = sourcesKnown && sourceById.contains(e.item_id)
+                && sourceById.value(e.item_id).series_id == e.series_id
+                && sourceById.value(e.item_id).parent_id == e.parent_id;
+            const auto source = sourceById.value(e.item_id);
+            const auto state = stateById.value(e.item_id);
+            const bool playedKnown = stateById.contains(e.item_id) && state.series_id == e.series_id
+                && state.duration_ms == e.duration_ms && state.title
+                && QString::fromUtf8(state.title) == QString::fromUtf8(e.title);
+            podcasts.append(QVariantMap{{"itemId", e.item_id}, {"parentId", e.parent_id},
+                {"sourceKnown", sourceKnown},
+                {"feedUrl", sourceKnown ? QString::fromUtf8(source.feed_url) : QString()},
+                {"sourceUrl", sourceKnown ? QString::fromUtf8(source.source_url) : QString()},
+                {"playedKnown", playedKnown}, {"played", playedKnown && state.marked_played && (state.raw_flags & 0x200u)},
+                {"bookmarkMs", playedKnown ? state.bookmark_ms : 0u},
+                {"seriesId", e.series_id}, {"title", QString::fromUtf8(e.title)},
+                {"author", QString::fromUtf8(e.author)}, {"seriesName", showName},
+                {"durationMs", e.duration_ms}, {"sizeMB", e.filesize / 1e6},
+                {"sizeBytes", QVariant::fromValue<qulonglong>(e.filesize)}, {"artItemId", e.series_id}});
+        }
+        for (int i = 0; i < partCount; ++i) {
+            const auto &p = parts[i];
+            books.append(QVariantMap{{"itemId", p.item_id}, {"parentId", p.parent_id},
+                {"partNumber", p.part_number}, {"title", QString::fromUtf8(p.title)},
+                {"author", QString::fromUtf8(p.author)}, {"bookTitle", QString::fromUtf8(p.book_title)},
+                {"durationMs", p.duration_ms}, {"sizeMB", p.filesize / 1e6},
+                {"sizeBytes", QVariant::fromValue<qulonglong>(p.filesize)}, {"artItemId", p.item_id}});
+        }
+    }
+    if (!error.isEmpty()) { podcasts.clear(); books.clear(); }
+    zune_free_podcast_states(states, stateCount);
+    zune_free_podcast_episode_sources(sources, sourceCount);
+    zune_free_podcast_episodes(episodes, episodeCount);
+    zune_free_podcast_series(series, seriesCount);
+    zune_free_audiobook_parts(parts, partCount);
+    return error;
+}
+}
+
+void DeviceWorker::doReadSpokenMedia(quint64 generation, quint64 request, const QString &serial) {
+    QVariantList podcasts, books;
+    QString error;
+    if (generation != m_spokenGeneration.load() || !m_dev
+        || QString::fromUtf8(zune_get_serial(m_dev)) != serial)
+        error = QStringLiteral("The Zune disconnected or changed. Reconnect and refresh.");
+    else {
+        zune_clear_abort(m_dev);
+        error = readSpokenInventory(m_dev, podcasts, books);
+    }
+    emit spokenMediaRead(generation, request, serial, podcasts, books, error);
+}
+
+void DeviceWorker::doPurgeSpokenItems(quint64 generation, quint64 request, const QString &serial,
+                                     const QString &kind, const QVariantList &rows) {
+    QVariantList podcasts, books, purged;
+    QString error;
+    const auto currentDevice = [this, generation, &serial] {
+        return generation == m_spokenGeneration.load() && m_dev
+            && QString::fromUtf8(zune_get_serial(m_dev)) == serial;
+    };
+    if (serial.isEmpty() || !currentDevice())
+        error = QStringLiteral("The Zune disconnected or changed. Nothing was deleted.");
+    else if (kind != QStringLiteral("podcast") && kind != QStringLiteral("audiobook"))
+        error = QStringLiteral("Unknown spoken media category. Nothing was deleted.");
+    else {
+        zune_clear_abort(m_dev);
+        error = readSpokenInventory(m_dev, podcasts, books, false);
+    }
+    if (error.isEmpty()) {
+        QHash<quint32, QVariantMap> live;
+        for (const QVariant &value : kind == QStringLiteral("podcast") ? podcasts : books) {
+            const auto row = value.toMap();
+            live.insert(row.value(QStringLiteral("itemId")).toUInt(), row);
+        }
+        // Validate the complete selection before the first write, including
+        // its category, parent and metadata. A recycled ID alone is insufficient.
+        QSet<quint32> seen;
+        for (const QVariant &value : rows) {
+            const auto row = value.toMap();
+            const quint32 id = RecoveryIdentity::objectId(row.value(QStringLiteral("itemId")));
+            auto expectedIdentity = row;
+            auto liveIdentity = live.value(id);
+            // Compare every original browse identity field. Optional badge and
+            // listening enrichments are not deletion identities; transient
+            // availability must not prevent management of legacy podcasts/books.
+            const bool compareSources = row.value("sourceKnown").toBool() && liveIdentity.value("sourceKnown").toBool();
+            for (const auto &key : {"sourceKnown", "playedKnown", "played", "bookmarkMs"}) {
+                expectedIdentity.remove(key); liveIdentity.remove(key);
+            }
+            if (!compareSources) {
+                for (const auto &key : {"feedUrl", "sourceUrl"}) {
+                    expectedIdentity.remove(key); liveIdentity.remove(key);
+                }
+            }
+            if (!id || id == 0xffffffffu || seen.contains(id) || !live.contains(id) || liveIdentity != expectedIdentity) {
+                error = QStringLiteral("The device selection changed. Refresh before deleting.");
+                break;
+            }
+            seen.insert(id);
+        }
+    }
+    if (error.isEmpty()) {
+        for (int i = 0; i < rows.size(); ++i) {
+            if (!currentDevice()) {
+                error = QStringLiteral("The Zune disconnected during deletion.");
+                break;
+            }
+            emit spokenPurgeProgress(generation, request, serial, i + 1, rows.size());
+            const quint32 id = rows[i].toMap().value(QStringLiteral("itemId")).toUInt();
+            if (zune_purge_track(m_dev, id) == 0)
+                purged.append(id);
+            else {
+                error = QStringLiteral("Some items could not be deleted: %1")
+                    .arg(QString::fromUtf8(zune_autopsy_name(zune_autopsy(m_dev))));
+                break;
+            }
+            QThread::msleep(100);
+        }
+    }
+    emit spokenItemsPurged(generation, request, serial, purged, rows.size() - purged.size(), error);
 }
 
 void DeviceWorker::doBreach() {
@@ -837,4 +1007,326 @@ void DeviceWorker::doGrabArt(quint32 itemId, const QString &cachePath) {
     }
     int rc = zune_grab_thumb(m_dev, itemId, cachePath.toUtf8().constData());
     emit artDone(itemId, cachePath, rc == 0 && QFile::exists(cachePath));
+}
+
+namespace {
+// One complete read plus exact feed/enclosure resolution. Unknown state remains
+// absent from the plan. All failures discard the entire plan before any write.
+QString inspectPlayedPodcasts(ZuneDevice *dev, const QVariantList &episodes,
+                              const std::function<bool()> &current,
+                              QVariantList &result) {
+    result.clear();
+    if (episodes.size() > 5000)
+        return QStringLiteral("Too many podcast episodes selected for cleanup.");
+    QSet<QString> localIds;
+    QSet<QPair<QString, QString>> identities, sources;
+    for (const auto &value : episodes) {
+        const auto row = value.toMap();
+        const auto id = row.value("spokenId").toString();
+        const auto identity = row.value("identity").toString();
+        const auto feed = row.value("feedUrl").toString();
+        const auto source = row.value("sourceUrl").toString();
+        const auto valid = [](const QString &s) { return !s.trimmed().isEmpty() && !s.contains(QChar(0)); };
+        if (!valid(id) || !valid(identity) || !valid(feed) || !valid(source)
+            || localIds.contains(id) || identities.contains({feed, identity}) || sources.contains({feed, source}))
+            return QStringLiteral("Podcast cleanup identities are missing or ambiguous.");
+        localIds.insert(id); identities.insert({feed, identity}); sources.insert({feed, source});
+    }
+    const auto active = [&] { return current() && !zune_is_aborted(dev); };
+    if (!active()) return QStringLiteral("Podcast cleanup was cancelled or the Zune changed.");
+    struct Snapshot {
+        ZunePodcastState *states = nullptr;
+        ZunePodcastEpisode *episodes = nullptr;
+        ZunePodcastEpisodeSource *sources = nullptr;
+        int stateCount = 0, episodeCount = 0, sourceCount = 0;
+        ~Snapshot() {
+            zune_free_podcast_states(states, stateCount);
+            zune_free_podcast_episodes(episodes, episodeCount);
+            zune_free_podcast_episode_sources(sources, sourceCount);
+        }
+    } snapshot;
+    if (zune_get_podcast_states(dev, &snapshot.states, &snapshot.stateCount)
+        || !active()
+        || zune_get_podcast_episodes(dev, &snapshot.episodes, &snapshot.episodeCount)
+        || !active())
+        return QStringLiteral("Could not read complete podcast listening state. Nothing was deleted.");
+    QHash<quint32, ZunePodcastState> states;
+    QHash<quint32, ZunePodcastEpisode> live;
+    for (int i = 0; i < snapshot.stateCount; ++i) {
+        const auto &state = snapshot.states[i];
+        if (!state.item_id || state.item_id == 0xffffffffu || states.contains(state.item_id))
+            return QStringLiteral("Podcast listening state contains ambiguous device IDs.");
+        states.insert(state.item_id, state);
+    }
+    for (int i = 0; i < snapshot.episodeCount; ++i) {
+        const auto &episode = snapshot.episodes[i];
+        if (!episode.item_id || episode.item_id == 0xffffffffu || live.contains(episode.item_id))
+            return QStringLiteral("Podcast inventory contains ambiguous device IDs.");
+        live.insert(episode.item_id, episode);
+    }
+    bool anyPlayed = false;
+    for (const auto &state : states)
+        anyPlayed = anyPlayed || (state.marked_played && (state.raw_flags & 0x200u));
+    // Most syncs have nothing finished. Avoid repeated exact USB identity
+    // searches when the complete snapshot proves there are no candidates.
+    if (!anyPlayed) {
+        if (!active()) return QStringLiteral("Podcast cleanup was cancelled or the Zune changed.");
+        return {};
+    }
+    if (zune_get_podcast_episode_sources(dev, &snapshot.sources, &snapshot.sourceCount) || !active())
+        return QStringLiteral("Could not verify complete podcast source identities. Nothing was deleted.");
+    QHash<QPair<QString, QString>, ZunePodcastEpisodeSource> deviceSources;
+    QSet<quint32> sourceIds;
+    for (int i = 0; i < snapshot.sourceCount; ++i) {
+        const auto &source = snapshot.sources[i];
+        const auto key = qMakePair(QString::fromUtf8(source.feed_url), QString::fromUtf8(source.source_url));
+        if (!source.item_id || source.item_id == 0xffffffffu || !source.series_id || source.series_id == 0xffffffffu
+            || key.first.isEmpty() || key.second.isEmpty() || sourceIds.contains(source.item_id) || deviceSources.contains(key))
+            return QStringLiteral("Podcast source inventory contains ambiguous identities.");
+        sourceIds.insert(source.item_id);
+        deviceSources.insert(key, source);
+    }
+    QVariantList planned;
+    QSet<quint32> mappedIds;
+    for (const auto &value : episodes) {
+        if (!active()) return QStringLiteral("Podcast cleanup was cancelled or the Zune changed.");
+        auto row = value.toMap();
+        if (row.value("keepOnDevice").toBool()) continue;
+        const auto key = qMakePair(row.value("feedUrl").toString(), row.value("sourceUrl").toString());
+        if (!deviceSources.contains(key)) continue;
+        const auto source = deviceSources.value(key);
+        const quint32 episode = source.item_id, show = source.series_id;
+        if (!show || show == 0xffffffffu || mappedIds.contains(episode))
+            return QStringLiteral("Podcast cleanup matched an ambiguous device identity.");
+        mappedIds.insert(episode);
+        if (!states.contains(episode)) continue; // Missing is unknown, never played.
+        const auto state = states.value(episode);
+        if (!live.contains(episode) || state.series_id != show || live.value(episode).series_id != show
+            || source.parent_id != live.value(episode).parent_id
+            || state.duration_ms != live.value(episode).duration_ms
+            || !state.title || QString::fromUtf8(state.title) != QString::fromUtf8(live.value(episode).title))
+            return QStringLiteral("Podcast identity and listening inventory disagree. Nothing was deleted.");
+        if (!state.marked_played || !(state.raw_flags & 0x200u)) continue;
+        const auto e = live.value(episode);
+        row["itemId"] = episode; row["seriesId"] = show;
+        row["durationMs"] = state.duration_ms; row["bookmarkMs"] = state.bookmark_ms;
+        row["rawFlags"] = state.raw_flags;
+        row["parentId"] = e.parent_id;
+        row["sizeBytes"] = QVariant::fromValue<qulonglong>(e.filesize);
+        row["deviceTitle"] = QString::fromUtf8(e.title);
+        row["deviceAuthor"] = QString::fromUtf8(e.author);
+        row["deviceDurationMs"] = e.duration_ms;
+        planned.append(row);
+    }
+    if (!active()) return QStringLiteral("Podcast cleanup was cancelled or the Zune changed.");
+    result = planned;
+    return {};
+}
+}
+
+void DeviceWorker::doInspectPodcastCleanup(quint64 generation, const QString &token,
+                                           const QString &serial, const QVariantList &episodes) {
+    QVariantList rows;
+    QString error;
+    const auto current = [this, generation, &serial] {
+        return m_dev && generation == m_spokenGeneration.load() && !serial.isEmpty()
+            && QString::fromUtf8(zune_get_serial(m_dev)) == serial;
+    };
+    if (token.isEmpty() || !current())
+        error = QStringLiteral("The Zune disconnected or changed. Podcast cleanup was skipped.");
+    else {
+        zune_clear_abort(m_dev);
+        error = inspectPlayedPodcasts(m_dev, episodes, current, rows);
+    }
+    emit podcastCleanupInspected(generation, token, serial, rows, error);
+}
+
+void DeviceWorker::doPurgePlayedPodcasts(quint64 generation, const QString &token,
+                                         const QString &serial, const QVariantList &rows) {
+    QVariantList live, purged;
+    QString error;
+    const auto current = [this, generation, &serial] {
+        return m_dev && generation == m_spokenGeneration.load() && !serial.isEmpty()
+            && QString::fromUtf8(zune_get_serial(m_dev)) == serial;
+    };
+    if (token.isEmpty() || !current())
+        error = QStringLiteral("The Zune disconnected or changed. Nothing was deleted.");
+    else {
+        // Do not clear abort here: cancellation between planning and this queued
+        // write must survive. Revalidate ALL rows before the first deletion.
+        error = inspectPlayedPodcasts(m_dev, rows, current, live);
+        if (error.isEmpty() && live != rows)
+            error = QStringLiteral("Podcast listening state or identity changed. Nothing was deleted.");
+    }
+    if (error.isEmpty()) {
+        for (const auto &value : rows) {
+            if (!current() || zune_is_aborted(m_dev)) {
+                error = QStringLiteral("Podcast cleanup was cancelled or the Zune changed.");
+                break;
+            }
+            const auto id = RecoveryIdentity::objectId(value.toMap().value("itemId"));
+            emit podcastCleanupProgress(generation, token, serial, id, false);
+            if (!current() || zune_is_aborted(m_dev)) {
+                error = QStringLiteral("Podcast cleanup was cancelled or the Zune changed.");
+                break;
+            }
+            if (!id || id == 0xffffffffu || zune_purge_track(m_dev, id) != 0) {
+                error = QStringLiteral("The Zune could not confirm deletion of a played podcast.");
+                break;
+            }
+            purged.append(value); // Only a successful device response retires it.
+            emit podcastCleanupProgress(generation, token, serial, id, true);
+        }
+    }
+    emit playedPodcastsPurged(generation, token, serial, purged, error);
+}
+
+void DeviceWorker::doInspectPodcasts(const QString &token, const QString &serial,
+                                     const QVariantList &episodes) {
+    QVariantList result;
+    QString error;
+    if (!m_dev || QString::fromUtf8(zune_get_serial(m_dev)) != serial)
+        error = QStringLiteral("The Zune disconnected or changed; add the episodes again.");
+    else {
+        zune_clear_abort(m_dev);
+        for (const auto &value : episodes) {
+            auto row = value.toMap();
+            uint32_t folder = 0, show = 0, episode = 0;
+            const auto feed = row.value("feedUrl").toString().toUtf8();
+            const auto source = row.value("sourceUrl").toString().toUtf8();
+            if (zune_find_podcast_episode(m_dev, feed.constData(), source.constData(), &folder, &show, &episode)) {
+                error = QString::fromUtf8(zune_get_error());
+                break;
+            }
+            row["onDevice"] = episode != 0;
+            result.append(row);
+        }
+    }
+    emit podcastsInspected(token, serial, result, error);
+}
+
+void DeviceWorker::doSendPodcast(const QString &entryId, const QString &filepath,
+                                  const QVariantMap &episode) {
+    if (!m_dev) {
+        emit podcastSendDone(entryId, false, 0, QStringLiteral("Zune disconnected"), false);
+        return;
+    }
+    zune_clear_abort(m_dev);
+    uint32_t folder = 0, show = 0, id = 0;
+    const auto feed = episode.value("feedUrl").toString().toUtf8();
+    const auto source = episode.value("sourceUrl").toString().toUtf8();
+    auto fail = [&](int result = -1) {
+        emit podcastSendDone(entryId, false, id, QString::fromUtf8(zune_get_error()), false,
+                             result != ZUNE_PODCAST_FAILED_CLEANED);
+    };
+    if (zune_find_podcast_episode(m_dev, feed.constData(), source.constData(), &folder, &show, &id)) {
+        fail(); return;
+    }
+    // Live preflight repeats after preparation. Existing objects are never sent
+    // again or rewritten, including a previous run whose receipt was lost.
+    if (id) {
+        emit podcastSendDone(entryId, true, id, QString(), true); return;
+    }
+    const auto title = episode.value("title").toString().toUtf8();
+    const auto author = episode.value("artist").toString().toUtf8();
+    auto name = episode.value("album").toString().toUtf8();
+    const auto description = episode.value("description").toString().toUtf8();
+    const auto date = episode.value("dateAuthored").toString().toUtf8();
+    if (!show) {
+        const auto folderName = (QStringLiteral("Zuuned Podcasts ") + entryId).toUtf8();
+        folder = zune_forge_folder(m_dev, folderName.constData(), UINT32_MAX);
+        if (!folder || folder == UINT32_MAX) { fail(); return; }
+        const int result = zune_forge_podcast_series(m_dev, folder, "Podcast.ser", name.constData(),
+                                      author.constData(), feed.constData(), &show);
+        if (result) {
+            id = show; fail(result); return;
+        }
+    } else {
+        // Feed display titles can change. Preserve the live device show's name.
+        ZunePodcastSeries *series = nullptr; int count = 0;
+        if (zune_get_podcast_series(m_dev, &series, &count)) { fail(); return; }
+        for (int i = 0; i < count; ++i)
+            if (series[i].item_id == show) name = series[i].name;
+        zune_free_podcast_series(series, count);
+    }
+    ZunePodcastEpisodeInput input{};
+    input.filename = "Episode.mp3";
+    input.title = title.constData(); input.author = author.constData();
+    input.series_name = name.constData(); input.source_url = source.constData();
+    input.description = description.constData(); input.date_authored = date.constData();
+    input.series_id = show; input.duration_ms = episode.value("durationMs").toUInt();
+    const auto path = filepath.toUtf8();
+    emit sendProgress(entryId, 0);
+    const int result = zune_smuggle_podcast_episode(m_dev, folder, path.constData(), &input, &id);
+    if (result) {
+        fail(result); return;
+    }
+    emit sendProgress(entryId, 1);
+    // Representative-sample artwork is optional. Refusal must not turn a
+    // verified audio upload into a failed item that the user might retry.
+    QString warning;
+    QFile art(episode.value("posterPath").toString());
+    if (art.exists() && art.size() > 0 && art.size() <= 10 * 1024 * 1024 && art.open(QIODevice::ReadOnly)) {
+        const auto bytes = art.readAll();
+        if (zune_brand(m_dev, show, reinterpret_cast<const uint8_t *>(bytes.constData()), size_t(bytes.size())))
+            warning = QStringLiteral("Episode synced; this device did not accept the show cover.");
+    }
+    emit podcastSendDone(entryId, true, id, warning, false);
+}
+
+namespace {
+struct BookTransferInput {
+    QByteArray key, name, author, title;
+    ZuneAudiobookPartInput input{};
+    explicit BookTransferInput(const QVariantMap &row)
+        : key(row.value("bookKey").toString().toUtf8()), name(row.value("album").toString().toUtf8()),
+          author(row.value("artist").toString().toUtf8()), title(row.value("title").toString().toUtf8()) {
+        input.book_key=key.constData(); input.book_title=name.constData();
+        input.author=author.constData(); input.title=title.constData();
+        input.part_number=quint16(row.value("partNumber").toUInt());
+        input.duration_ms=row.value("durationMs").toUInt();
+    }
+};
+}
+void DeviceWorker::doInspectAudiobooks(const QString &token, const QString &serial, const QVariantList &parts) {
+    QVariantList result; QString error;
+    if (!m_dev || QString::fromUtf8(zune_get_serial(m_dev)) != serial)
+        error="The Zune disconnected or changed; add the book again.";
+    else {
+        zune_clear_abort(m_dev);
+        for (const auto &value : parts) {
+            auto row=value.toMap(); BookTransferInput p(row); uint32_t folder=0,id=0;
+            if (row.value("partNumber").toInt()<1 || row.value("partNumber").toInt()>65535 ||
+                zune_find_audiobook_part(m_dev,&p.input,&folder,&id)) {
+                error=QString::fromUtf8(zune_get_error()); break;
+            }
+            row["onDevice"]=id!=0;result.append(row);
+        }
+    }
+    emit audiobooksInspected(token,serial,result,error);
+}
+void DeviceWorker::doSendAudiobook(const QString &entryId, const QString &filepath, const QVariantMap &part) {
+    if (!m_dev) { emit audiobookSendDone(entryId,false,0,"Zune disconnected",false); return; }
+    zune_clear_abort(m_dev);
+    if (part.value("partNumber").toInt()<1 || part.value("partNumber").toInt()>65535) {
+        emit audiobookSendDone(entryId,false,0,"Invalid audiobook part order",false);return;
+    }
+    BookTransferInput p(part); uint32_t folder=0,id=0;
+    if (zune_find_audiobook_part(m_dev,&p.input,&folder,&id)) {
+        emit audiobookSendDone(entryId,false,0,QString::fromUtf8(zune_get_error()),false);return;
+    }
+    if(id) { emit audiobookSendDone(entryId,true,id,QString(),true);return; }
+    emit sendProgress(entryId,0);
+    if(zune_smuggle_audiobook_part(m_dev,filepath.toUtf8().constData(),&p.input,&id)) {
+        emit audiobookSendDone(entryId,false,id,QString::fromUtf8(zune_get_error()),false);return;
+    }
+    emit sendProgress(entryId,1);
+    QString warning;
+    QFile art(part.value("posterPath").toString());
+    if(art.exists() && art.size()>0 && art.size()<=10*1024*1024 && art.open(QIODevice::ReadOnly)) {
+        const auto bytes=art.readAll();
+        if(zune_brand(m_dev,id,reinterpret_cast<const uint8_t*>(bytes.constData()),size_t(bytes.size())))
+            warning="Book part synced; this device did not accept its cover.";
+    }
+    emit audiobookSendDone(entryId,true,id,warning,false);
 }

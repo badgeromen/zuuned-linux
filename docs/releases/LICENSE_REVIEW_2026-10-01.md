@@ -2,7 +2,7 @@
 
 Candidate: `Zuuned-Test-0.1.0-x86_64.AppImage`, app `426005d74320`,
 libzune `d29bf7a5492b`. Rename does not change binary bytes or checksum.
-Requested destination: GitHub `badgeromen/zuuned-linux`.
+Requested destination: GitHub `badger-orson/zuuned`.
 Status: not uploaded; technical packaging gates passed, publication review open.
 This is a technical inventory and proposed distribution approach, not legal clearance.
 
@@ -86,7 +86,7 @@ GitHub prerelease with binary attachments, not committing the AppImage to Git.
 
 ## Downloads-only GitHub repository: review conclusion
 
-Owner decision: `badgeromen/zuuned-linux` is a distribution repository. Do not push
+Owner decision: `badger-orson/zuuned` is a distribution repository. Do not push
 the application codebase or libzune there. Its intended contents are a tester
 README, reporting form and release assets. Keep development repositories
 separate. This decision alone does not say whether source elsewhere is public

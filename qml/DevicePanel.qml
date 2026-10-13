@@ -697,9 +697,8 @@ Item {
                 height: Math.max(implicitHeight, parent.parent.height)
                 spacing: 0
 
-                // B2: the app died mid-send last run — the device may
-                // hold a truncated object that CRASHES firmware on
-                // playback. Tell the user exactly what to hunt down.
+                // An unresolved transfer may belong to this session or an earlier
+                // one. Confirmed cleanup never creates this recovery notice.
                 Rectangle {
                     visible: SyncEngine.interruptedSend !== ""
                     Layout.fillWidth: true
@@ -721,7 +720,7 @@ Item {
                         spacing: Theme.spaceSm
 
                         Text {
-                            text: "a sync was interrupted last run"
+                            text: "a transfer needs review"
                             font.pixelSize: 12
                             font.weight: Font.DemiBold
                             color: Theme.error
@@ -730,10 +729,8 @@ Item {
                         }
                         Text {
                             text: "'" + SyncEngine.interruptedSend
-                                  + "' may be truncated on the zune — playing"
-                                  + " it can crash the device. Find it in the"
-                                  + " device library, delete it, then eject to"
-                                  + " re-index."
+                                  + "' could not be confirmed complete or removed."
+                                  + " Review it in the device library before playback."
                             font.pixelSize: 11
                             font.weight: Font.Light
                             color: Theme.textSecondary
@@ -802,6 +799,8 @@ Item {
                         BrowseButton { title: "videos"; page: "deviceVideos" }
                         BrowseButton { title: "photos"; page: "devicePictures" }
                         BrowseButton { title: "playlists"; page: "devicePlaylists" }
+                        BrowseButton { title: "podcasts"; page: "devicePodcasts" }
+                        BrowseButton { title: "audiobooks"; page: "deviceAudiobooks" }
                     }
 
                     Item { Layout.fillHeight: true }
@@ -1027,11 +1026,14 @@ Item {
                         text: {
                             const s = SyncEngine.lastSync
                             const parts = []
+                            if (s.podcasts > 0) parts.push(s.podcasts + " podcasts")
                             if (s.tracks > 0) parts.push(s.tracks + " tracks")
                             if (s.videos > 0) parts.push(s.videos + " videos")
                             if (s.photos > 0) parts.push(s.photos + " photos")
                             let line = "last sync: "
                                 + (parts.length ? parts.join(", ") : "nothing new")
+                            if (s.podcastsRemoved > 0) line += " · " + s.podcastsRemoved + " played podcasts removed"
+                            if (s.podcastCleanupWarning) line += " · " + s.podcastCleanupWarning
                             if (s.skipped > 0) line += " · " + s.skipped + " skipped"
                             if (s.failed > 0) line += " · " + s.failed + " FAILED"
                             const mins = Math.floor(
@@ -1111,7 +1113,7 @@ Item {
                                 syncLocked: root.isSyncing
                                 onToggleRequested: key => root.toggleQueueGroup(key)
                                 onRemoveGroupRequested: key => {
-                                    if (!root.isSyncing) SyncEngine.queue.removeGroup(key)
+                                    if (!root.isSyncing) SyncEngine.removeGroup(key)
                                 }
                                 onRemoveEntryRequested: id => {
                                     if (!root.isSyncing) SyncEngine.removeEntry(id)
@@ -1210,7 +1212,7 @@ Item {
                 AccentButton {
                     Layout.alignment: Qt.AlignRight
                     title: "sync now"
-                    disabled: root.queueCount === 0 || !DeviceService.connected || root.isSyncing
+                    disabled: (root.queueCount === 0 && !AppSettings.podcastAutoCleanup) || !DeviceService.connected || root.isSyncing
                     onClicked: SyncEngine.startSync()
                 }
 
@@ -1222,8 +1224,9 @@ Item {
                     RowLayout {
                         Layout.fillWidth: true
                         Text {
-                            text: "syncing " + root.syncCurrentIndex + "/" + root.syncTotalCount
-                                  + ": " + root.syncCurrentName
+                            text: root.syncTotalCount > 0
+                                  ? "syncing " + root.syncCurrentIndex + "/" + root.syncTotalCount + ": " + root.syncCurrentName
+                                  : root.syncCurrentName
                             font.pixelSize: 11
                             font.weight: Font.Light
                             color: Theme.textSecondary
@@ -1619,7 +1622,9 @@ Item {
         Repeater {
             model: DeviceService.connected
                    ? [{g: "♪", p: "deviceMusic"}, {g: "▶", p: "deviceVideos"},
-                      {g: "▣", p: "devicePictures"}, {g: "♫", p: "devicePlaylists"}]
+                      {g: "▣", p: "devicePictures"}, {g: "♫", p: "devicePlaylists"},
+                      {g: "", p: "devicePodcasts", kind: "podcast"},
+                      {g: "", p: "deviceAudiobooks", kind: "audiobook"}]
                    : []
             delegate: Item {
                 id: railGlyph
@@ -1632,6 +1637,7 @@ Item {
 
                 Text {
                     anchors.centerIn: parent
+                    visible: !railGlyph.modelData.kind
                     text: railGlyph.modelData.g
                     font.pixelSize: railGlyph.active ? 20
                                   : (railGlyph.hovering ? 19 : 16)
@@ -1641,6 +1647,13 @@ Item {
                         NumberAnimation { duration: Theme.motionBase; easing.type: Easing.InOutQuad }
                     }
                     Behavior on color { ColorAnimation { duration: Theme.motionBase } }
+                }
+                MediaKindIcon {
+                    anchors.centerIn: parent
+                    visible: !!railGlyph.modelData.kind
+                    kind: railGlyph.modelData.kind ?? "podcast"
+                    ink: railGlyph.active ? Theme.activePink
+                         : (railGlyph.hovering ? Theme.orange : Theme.textMid)
                 }
                 MouseArea {
                     anchors.fill: parent

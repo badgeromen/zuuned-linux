@@ -5,6 +5,50 @@ import QtQuick
 // Theme/ZuneStyles.swift in the macOS app. Every color and metric in the
 // app references a token here; never use raw values in views.
 QtObject {
+    // Spoken media: the approved library/card and staged-cover proportions.
+    readonly property int spokenIconSize: 22
+    readonly property int spokenTransportWidth: 190
+    readonly property int spokenFolderRowHeight: 154
+    readonly property real spokenDisabledOpacity: 0.4
+    readonly property int spokenCheckSize: 18
+    readonly property int spokenCardSize: 180
+    readonly property int spokenCardCaption: 72
+    readonly property real spokenBookRatio: 1.25
+    readonly property int spokenBody: 14
+    readonly property int spokenCaption: 11
+    readonly property int spokenTitle: 26
+    readonly property int spokenSheetWidth: 780
+    readonly property int spokenSheetHeight: 580
+    readonly property int spokenImageDecode: 640
+    readonly property int spokenThumbSize: 100
+    readonly property int spokenHeroSize: 170
+    readonly property int spokenDetailCoverSize: 210
+    readonly property int spokenDetailBreakpoint: 640
+    readonly property int spokenDetailTitleSize: 32
+    readonly property int spokenDetailRowHeight: 34
+    readonly property int spokenShelfWidth: 300
+    readonly property int spokenShelfHeight: 210
+    readonly property int spokenShelfSleeveSize: 190
+    readonly property int spokenShelfDiscSize: 180
+    readonly property int spokenShelfDiscX: 92
+    readonly property int spokenShelfDiscHoverX: 116
+    readonly property int spokenShelfLabelSize: 72
+    readonly property int spokenShelfDiscArtSize: 150
+    readonly property int spokenShelfTilt: -3
+    readonly property int spokenShadowSamples: 25
+    readonly property int spokenDetailNumberWidth: 28
+    readonly property int spokenChapterHeight: 40
+    readonly property int spokenRowHeight: 64
+    readonly property int spokenDropHeight: 150
+    readonly property int spokenDragWidth: 180
+    readonly property int spokenDragCoverSize: 64
+    readonly property int spokenSearchWidth: 150
+    readonly property int spokenEmptyWidth: 420
+    readonly property real spokenCoverFraction: 0.3
+    readonly property real spokenLineHeight: 1.6
+    readonly property color spokenTransparent: "transparent"
+    readonly property color spokenScrim: Qt.rgba(0, 0, 0, 0.7)
+
     // ── Backgrounds — the world behind the glass ──
     readonly property color bg: "#0a0a0a"
     readonly property color navBg: "#101010"

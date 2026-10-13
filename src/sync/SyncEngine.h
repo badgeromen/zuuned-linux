@@ -10,12 +10,16 @@
 #include <QVariantList>
 #include <QVariantMap>
 #include <QVector>
+#include <atomic>
+#include <memory>
+#include <functional>
 #include <QtQml/qqmlregistration.h>
 
 #include "SyncQueueModel.h"
 #include "../library/AlbumArtService.h"
 #include "../library/MusicIdentity.h"
 
+class QTemporaryFile;
 class DeviceService;
 class DeviceWorker;
 class LibraryService;
@@ -96,6 +100,7 @@ class SyncEngine : public QObject {
 
 public:
     explicit SyncEngine(QObject *parent = nullptr);
+    ~SyncEngine() override;
 
     QString interruptedSend() const { return m_interruptedSend; }
     Q_PROPERTY(QString interruptedRecoveryStatus READ interruptedRecoveryStatus NOTIFY interruptedSendChanged)
@@ -119,6 +124,9 @@ public:
     // Integration wiring (main.cpp, post engine-load).
     void attachDevice(DeviceService *device, DeviceWorker *worker);
     void attachLibrary(LibraryService *library) { m_library = library; }
+    void attachPodcastCleanup(std::function<QVariantList()> candidates) {
+        m_cleanupCandidates = std::move(candidates);
+    }
 
     // tracks: list of {filepath, title, artist, albumartist?, album,
     // genre?, trackNumber?, discNumber?, year?, durationMs?, libraryId?}
@@ -142,10 +150,15 @@ public:
     // playlist order. Result map gains {playlistQueued: bool}.
     Q_INVOKABLE QVariantMap addPlaylist(const QString &name,
                                         const QVariantList &tracks);
+    void addAudiobooks(const QVariantList &parts);
+    void addSpoken(const QVariantList &items, bool books);
+    void addPodcasts(const QVariantList &episodes);
     Q_INVOKABLE void startSync();
     Q_INVOKABLE void cancelSync();
     Q_INVOKABLE void clearQueue();
     Q_INVOKABLE void removeEntry(const QString &entryId);
+    Q_INVOKABLE void removeGroup(const QString &groupKey);
+    void refreshPodcastCleanupPreview();
     // B2: hunt the possibly-truncated object named by the in-flight
     // marker on the connected device and purge it. Returns how many
     // matching items were sent to the purge queue (0 = not found —
@@ -186,6 +199,21 @@ public:
     static qint64 estimateTrackBytes(int durationMs, qint64 sourceBytes);
 
 public slots:
+    void onPodcastCleanupInspected(quint64 generation, const QString &token, const QString &serial,
+                                    const QVariantList &rows, const QString &error);
+    void onDevicePlayedRecorded(const QString &token, const QString &serial,
+                               const QVariantList &rows, const QString &error);
+    void onPodcastCleanupProgress(quint64 generation, const QString &token, const QString &serial,
+                                  quint32 itemId, bool removed);
+    void onPlayedPodcastsPurged(quint64 generation, const QString &token, const QString &serial,
+                               const QVariantList &rows, const QString &error);
+    void onSpokenPrepared(const QString &token, const QVariantList &items, const QString &error);
+    void onAudiobooksInspected(const QString &token, const QString &serial, const QVariantList &parts, const QString &error);
+    void onSpokenInspected(const QString &token, const QString &serial, const QVariantList &parts, const QString &error, bool books);
+    void onPodcastsInspected(const QString &token, const QString &serial, const QVariantList &episodes, const QString &error);
+    void onAudiobookSendDone(const QString &entryId, bool ok, quint32 itemId, const QString &error, bool reused);
+    void onSpokenSendDone(const QString &entryId, bool ok, quint32 itemId, const QString &error, bool reused, bool books, bool recoveryRequired = true);
+    void onPodcastSendDone(const QString &entryId, bool ok, quint32 itemId, const QString &error, bool reused, bool recoveryRequired = true);
     // DeviceWorker → engine (integration connects)
     void onSendProgress(const QString &entryId, double frac);
     void onSendDone(const QString &entryId, bool ok, quint32 itemId,
@@ -205,6 +233,19 @@ public slots:
                            bool transcoded, const QString &error);
 
 signals:
+    void inspectPodcastCleanup(quint64 generation, const QString &token, const QString &serial,
+                               const QVariantList &episodes);
+    void recordDevicePlayed(const QString &token, const QString &serial, const QVariantList &rows);
+    void purgePlayedPodcasts(quint64 generation, const QString &token, const QString &serial,
+                            const QVariantList &rows);
+    void prepareSpokenTransfer(const QString &token, const QVariantMap &item);
+    void cancelSpokenTransfer(const QString &token);
+    void podcastQueueNotice(const QString &message);
+    void queueClearedByUser();
+    void workerInspectAudiobooks(const QString &token, const QString &serial, const QVariantList &parts);
+    void workerSendAudiobook(const QString &entryId, const QString &filepath, const QVariantMap &part);
+    void workerInspectPodcasts(const QString &token, const QString &serial, const QVariantList &episodes);
+    void workerSendPodcast(const QString &entryId, const QString &filepath, const QVariantMap &episode);
     void syncStateChanged();
     void progressChanged();
     void interruptedSendChanged();
@@ -214,7 +255,7 @@ signals:
     // wall-clock duration + per-type success counts for the summary
     // modal. skipped = already-on-device, failed = entries left behind.
     void syncSummary(double elapsedMs, int tracks, int videos, int photos,
-                     int skipped, int failed);
+                     int skipped, int failed, int podcasts, int audiobooks);
     // Anything actually ADDED to the queue — the device panel jumps to
     // its queue tab so you see what's happening (design contract).
     void queueItemsAdded(int count);
@@ -245,7 +286,25 @@ signals:
     void workerSyncNotify(const QString &name, int itemIndex, int totalItems);
 
 private:
+    void beginPodcastCleanup();
+    void endPodcastCleanup(const QString &error = {});
+    void settlePodcastRemovalRows();
+    bool cleanupDeviceCurrent() const;
+    std::function<QVariantList()> m_cleanupCandidates;
+    QString m_cleanupToken, m_cleanupSerial, m_cleanupStage, m_cleanupWarning;
+    quint64 m_cleanupGeneration = 0;
+    QVariantList m_cleanupRows;
+    QHash<quint32, QString> m_cleanupQueueEntries;
+    QSet<quint32> m_cleanupConfirmed;
+    QString m_cleanupPreviewSerial;
+    quint64 m_cleanupPreviewGeneration = 0;
+    QSet<QString> m_cleanupSkippedEpisodes;
+    QVariantList podcastCleanupCandidatesForSession() const;
+    quint64 m_sendDeviceGeneration = 0;
+    QString m_sendDeviceSerial;
+    int m_podcastsRemoved = 0;
     friend struct SyncIdentityTestAccess;
+    friend struct SpokenSyncTestAccess;
     friend struct RecoveryTestAccess;
     void onInterruptedObjectPurged(const QString &token, bool ok);
     void advance();                       // next entry or forge phase
@@ -305,6 +364,7 @@ private:
     void markInflightVideo(const QString &filename, const QString &title);
     void clearInflight();
 
+    QSet<QString> m_podcastChecks;
     SyncQueueModel m_queue;
     AlbumArtService m_artCache;           // read-only cache-path lookups
     DeviceService *m_device = nullptr;
@@ -353,6 +413,9 @@ private:
     double m_forgeFraction = 0;
 
     QString m_currentEntryId;
+    QHash<QString, std::shared_ptr<QTemporaryFile>> m_bookSourceCopies;
+    std::shared_ptr<std::atomic_bool> m_bookPreparationCancel = std::make_shared<std::atomic_bool>(false);
+    QString m_spokenPreparationToken, m_spokenPreparationSerial;
     QString m_currentTempPath;            // retag/transcode temp (cleanup)
     bool m_currentTranscoded = false;
 

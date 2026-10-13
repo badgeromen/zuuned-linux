@@ -1,17 +1,39 @@
 {
-  "format": 1,
+  "format": 2,
+  "visualizerExcluded": true,
+  "transformed": [
+    "CMakeLists.txt",
+    "qml/Main.qml",
+    "qml/NowPlayingIsland.qml",
+    "src/player/MpvController.cpp",
+    "tests/spoken-media/native/CMakeLists.txt"
+  ],
   "historyIncluded": false,
   "privateCredentialsIncluded": false,
   "bundledApiDefaultsIncluded": true,
-  "files": 553,
+  "files": 701,
   "excluded": [
     ".gitmodules",
+    "docs/MUSIC_VISUALIZER.md",
     "libzune",
     "libzune/src/mtpz_keys.h",
     "libzune/vendor/ffmpeg-include/libavcodec",
     "libzune/vendor/ffmpeg-include/libavformat",
     "libzune/vendor/ffmpeg-include/libavutil",
     "libzune/vendor/ffmpeg-include/libswresample",
-    "libzune/vendor/ffmpeg-include/libswscale"
+    "libzune/vendor/ffmpeg-include/libswscale",
+    "src/player/MusicStreamIdentity.h",
+    "src/player/PortalRenderer.h",
+    "src/player/PortalShapeMorph.h",
+    "src/player/PortalState.h",
+    "src/player/VisualizerPresets.h",
+    "src/player/VisualizerService.cpp",
+    "src/player/VisualizerService.h",
+    "tests/spoken-media/native/VisualizerService.qml",
+    "tests/visualizer/CMakeLists.txt",
+    "tests/visualizer/README.md",
+    "tests/visualizer/mouth.cpp",
+    "tests/visualizer/response.cpp",
+    "tests/visualizer/smoke.cpp"
   ]
 }

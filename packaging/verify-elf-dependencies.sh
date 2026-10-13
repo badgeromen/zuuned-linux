@@ -15,9 +15,20 @@ done < "$zuuned_elf_script_dir/appimage-host-libraries.txt"
 
 zuuned_elf_count=0
 zuuned_missing_count=0
+zuuned_elf_machine=""
+if [[ -f "$zuuned_elf_appdir/usr/bin/zuuned" ]]; then
+    zuuned_elf_machine=$(LC_ALL=C readelf -h "$zuuned_elf_appdir/usr/bin/zuuned" | sed -n 's/^ *Machine: *//p')
+fi
 while IFS= read -r -d '' elf; do
     if ! dynamic=$(LC_ALL=C readelf --dynamic --wide "$elf" 2>/dev/null); then continue; fi
     ((zuuned_elf_count+=1))
+    machine=$(LC_ALL=C readelf -h "$elf" | sed -n 's/^ *Machine: *//p')
+    if [[ -z $zuuned_elf_machine ]]; then zuuned_elf_machine=$machine; fi
+    if [[ $machine != "$zuuned_elf_machine" ]]; then
+        printf 'Wrong ELF architecture: %s is %s; expected %s\n' \
+            "${elf#"$zuuned_elf_appdir/"}" "$machine" "$zuuned_elf_machine" >&2
+        ((zuuned_missing_count+=1))
+    fi
     while IFS= read -r soname; do
         [[ -n $soname ]] || continue
         if [[ ! $soname =~ ^[A-Za-z0-9_.+-]+$ ]]; then

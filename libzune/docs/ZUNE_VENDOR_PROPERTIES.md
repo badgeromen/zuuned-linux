@@ -41,11 +41,11 @@ The Microsoft Zune uses standard MTP (Media Transfer Protocol) with extensive ve
 
 | Code | Name | Type | Access | Description |
 |------|------|------|--------|-------------|
-| 0xDA9A | Series Name | STRING | GET/SET | TV series name for video, used for grouping |
+| 0xDA9A | Series / book name | STRING | GET/SET | Existing TV grouping field; audiobook use confirmed by October 9 native Classic/HD write/readback tests. Podcast Keel readback can be empty; use 0xDA9E for its actual series link. |
 | 0xDA97 | Unknown | UINT128 | GET/SET | Unknown purpose |
 | 0xDA99 | Unknown | UINT128 | GET/SET | Unknown purpose |
-| 0xDA9B | Unknown | UINT8 | GET/SET | Enum: 0, 1 |
-| 0xDA9E | Unknown | UINT32 | GET/SET | Unknown purpose |
+| 0xDA9B | Flag, meaning unresolved | UINT8 | GET/SET | Enum: 0, 1; podcast sender writes 0, which does not establish the flag's general meaning |
+| 0xDA9E | Podcast series handle | UINT32 | GET/SET | Episode relationship; exact series ID readback verified on Keel |
 | 0xDA00 | Unknown | UINT32 | GET/SET | Group 0x9 |
 | 0xDA01 | Unknown | STRING | GET/SET | Group 0x9 |
 | 0xDA02 | Unknown | UINT32 | GET/SET | Group 0x9 |
@@ -69,12 +69,55 @@ The Microsoft Zune uses standard MTP (Media Transfer Protocol) with extensive ve
 
 ### MetaGenre Values
 
-| Value | Meaning | Zune UI Location |
-|-------|---------|-----------------|
-| 0x21 | Other | Videos |
-| 0x23 | Music Video | Videos → Music Videos |
-| 0x25 | Movie | Videos → Movies |
-| 0x26 | TV Show | Videos → TV Shows |
+`0xDC95` is used for audio as well as video. These are property values, not
+object-format codes or ZMDB schema IDs.
+
+| Value (hex / decimal) | Meaning | Evidence / presentation |
+| --- | --- | --- |
+| 0x01 / 1 | Music | Windows capture and current music sender |
+| 0x12 / 18 | Audiobook | Recovered AFTL writer; native Classic/HD tests create schema 0x12; MetaGenre reads back 0 |
+| 0x21 / 33 | Other | Videos |
+| 0x23 / 35 | Music Video | Videos → Music Videos |
+| 0x25 / 37 | Movie | Videos → Movies |
+| 0x26 / 38 | TV Show | Videos → TV Shows |
+| 0x40 / 64 | Audio podcast | libzune upload tested; user confirmed Classic audio and images |
+| 0x41 / 65 | Video podcast | Reference implementation only; libzune podcast sender is MP3-only |
+
+### Spoken-media metadata and evidence (2026-10-09)
+
+| Code | Type | Interpretation | Current evidence |
+| --- | --- | --- | --- |
+| 0xBA0B | Object format | Zero-byte podcast series | Keel creation, reuse and readback |
+| 0xDA9C | UINT8 | IsPodcast, set to 1 on series | Windows descriptor and Keel write/readback |
+| 0xDA9D | UINT32 | Series flag, set to 1 | Windows descriptor and Keel write/readback; broader semantics unknown |
+| 0xDD60 | AUINT16 | Feed URL on series; stable source URL on episode | Windows type evidence and Keel exact identity/reuse |
+| 0xDC48 | AUINT16 | Episode description | Windows type evidence and Keel write/readback |
+| 0xDD62 | UINT32 | Episode flag, currently 0 | Keel write/readback; full meaning unknown |
+| 0xDC44 | STR | Show / episode / part title | Established Name property; podcast use tested |
+| 0xDC46 | STR | Show author / book author | Established Artist property; audiobook meaning from reference writer |
+| 0xDC8B | UINT16 | Track / book part number | Established track property; parts 1/2 round-trip on Classic/HD |
+| 0xDC89 | UINT32 | Duration in milliseconds | Established duration property; podcast use tested |
+| 0xDC86 | AUINT8 | Representative-sample JPEG | Podcast art on series ID accepted; user confirmed visible image. Native Classic/HD tests verify exact JPEG readback on each book part. |
+
+The October 9 Classic MP3 probe confirms writable descriptors for Name, Artist,
+Track, Duration, MetaGenre, `0xDA9A` and representative-sample data. AlbumName
+(`0xDC9A`) and AlbumArtist (`0xDC9B`) are advertised read-only. This probe checks
+types/access only; it does not prove audiobook creation or valid category values.
+
+Podcast counted UTF-16 arrays must include their terminal NUL in the unit count
+on tested Keel firmware. Ordinary MTP STR encoding is different. Keel also
+normalizes episode filenames/timestamps and may return MetaGenre 0 despite a
+valid podcast schema `0x10`. Do not generalize these readback exceptions to all
+models or use title alone as identity.
+
+ZMDB `0x0F`/`0x10` identify podcast show/episode records; `0x11`/`0x12` identify
+book title/part records. Schema IDs describe database records, not write commands.
+In particular, schema `0x12` and MetaGenre value `0x12` are separate namespaces.
+Neither means MTP format `0xBA05`, which is a playlist.
+
+See [spoken-media research](SPOKEN_MEDIA_RESEARCH.md) for capture frames, dated
+hardware results and pinned external references, [the MP3 descriptor report](../tests/fixtures/spoken-media/keel-mp3-descriptors.txt)
+for the sanitized probe, and [the integration guide](SPOKEN_MEDIA.md) for usage.
 
 ### JPEG Properties
 
@@ -149,7 +192,11 @@ After syncing content to the device, these operations signal the Zune to rebuild
 
 **What actually triggers the rebuild:** Releasing the USB interface via `LIBMTP_Release_Device()` (which calls `ptp_closesession` + `close_usb`). The Zune detects the USB disconnection and automatically restarts + re-indexes. This is the same on both Linux and macOS — the vendor operations are decorative.
 
-## Patched libmtp Functions
+## Historical patched libmtp functions
+
+This section describes the earlier libmtp-based implementation. Current libzune
+uses its own native `src/mtp.c` setters and property-list encoder; it does not
+link libmtp. Do not use the functions below as the current integration API.
 
 Standard libmtp maps vendor property codes (0xDA9A, 0xDAB5, 0xDAB6, etc.) to 0 through its `map_libmtp_property_to_ptp_property()` function. libzune's vendored libmtp adds three raw property setters that bypass this mapping:
 

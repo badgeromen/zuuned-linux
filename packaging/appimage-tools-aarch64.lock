@@ -1,0 +1,6 @@
+# filename sha256 download-url
+# ARM64 assets verified against upstream GitHub release asset SHA-256 digests,
+# October 12, 2026. Preserve cached bytes; continuous URLs can change.
+linuxdeploy-aarch64.AppImage 5c1fddf96066891e829831cac0d84424690f3b22846c7f8f1bb9990a5c6c73f4 https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-aarch64.AppImage
+linuxdeploy-plugin-qt-aarch64.AppImage d5b5a9020065cefda8c7af7c9500f686b23640eac50c88201a81752c6ee2e49c https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-aarch64.AppImage
+runtime-aarch64 b4ff0030242d0c3bb12ce40541828303cf167493f4793456f0436edd6255c39d https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-aarch64

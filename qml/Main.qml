@@ -25,12 +25,36 @@ ApplicationWindow {
     // ribbon fades out (one object, never two). Narrow windows retire
     // the ribbon entirely; ◉ in the sidebar is the way back.
     property bool showNowPlaying: false
+    function playbackArt(item) {
+        if (item.spokenId) { void SpokenMediaService.revision; return SpokenMediaService.cover(item.spokenId) }
+        return LibraryService.artPaths[LibraryService.artKey(item.artist ?? "", item.album ?? "")] ?? ""
+    }
+
+    Connections {
+        target: SpokenMediaService
+        function onNotification(message) { toastHost.show(message) }
+    }
     // Drafts stay independent. Navigation and explicit additions choose which
-    // workbench is visible; changing pages never discards either draft.
+    // workbench is visible; changing pages never discards a draft.
     property string builderFocus: "photo"
-    readonly property bool photoBuilderActive: PhotoTrayState.building
-        && (!TrayState.building || builderFocus === "photo")
-    readonly property bool anyBuilderActive: TrayState.building || PhotoTrayState.building
+    readonly property string activeBuilder: {
+        if (builderFocus === "books" && BookTrayState.building) return "books"
+        if (builderFocus === "photo" && PhotoTrayState.building) return "photo"
+        if (builderFocus === "music" && TrayState.building) return "music"
+        if (BookTrayState.building) return "books"
+        if (PhotoTrayState.building) return "photo"
+        return TrayState.building ? "music" : ""
+    }
+    readonly property bool photoBuilderActive: activeBuilder === "photo"
+    readonly property bool bookBuilderActive: activeBuilder === "books"
+    readonly property bool anyBuilderActive: activeBuilder !== ""
+    Connections {
+        target: BookTrayState
+        function onSaved(id) { toastHost.show("audiobook library saved") }
+        function onDeleted(id) { toastHost.show("audiobook library deleted") }
+        function onBuildingChanged() { if (BookTrayState.building) window.builderFocus = "books" }
+        function onPulsed() { window.builderFocus = "books" }
+    }
     Connections {
         target: PhotoTrayState
         function onSaved(id) { toastHost.show("photo album saved") }
@@ -43,9 +67,9 @@ ApplicationWindow {
         function onPulsed() { window.builderFocus = "music" }
     }
 
-    // Teach the island (fresh-run feedback): on narrow windows the
+    // Teach the island (fresh-run feedback): on compact windows the
     // ribbon is retired, so a first-time user who hits play sees…
-    // nothing move. When playback STARTS from stopped on a narrow
+    // nothing move. When playback STARTS from stopped on a compact
     // window, open the island so the user sees what happened and
     // learns where now-playing lives. Track advances never re-open it
     // — closing it stays closed for the rest of the queue.
@@ -54,7 +78,7 @@ ApplicationWindow {
         target: PlayerService
         function onStateChanged() {
             if (PlayerService.playing && window._npWasStopped
-                && window.ribbonRetired)
+                && window.ribbonRetired && !window.anyBuilderActive)
                 window.showNowPlaying = true
             window._npWasStopped = PlayerService.stopped
         }
@@ -87,7 +111,15 @@ ApplicationWindow {
             AppSettings.playerVolume = PlayerService.volume
         }
     }
-    readonly property bool ribbonRetired: width < 1280
+    // The collapsed header cannot accommodate the top ribbon. Use the
+    // same height breakpoint as the chrome, including on scaled displays.
+    readonly property bool ribbonRetired: width < 1280 || spaceScarce
+    onRibbonRetiredChanged: {
+        // Migrate an existing (including paused) queue when resizing.
+        // Do not interrupt a builder or reopen on ordinary track changes.
+        if (ribbonRetired && PlayerService.queue.length > 0 && !anyBuilderActive)
+            showNowPlaying = true
+    }
     // Panel rail (narrow windows): condenses unless the user pins the
     // full panel back open; the pin resets when the window widens.
     property bool panelRailPinnedOpen: false
@@ -110,9 +142,9 @@ ApplicationWindow {
     // toggle still opens it manually any time.
     property bool showDevicePanel: false
 
-    readonly property var pageOrder: ["music", "videos", "photos", "settings",
+    readonly property var pageOrder: ["music", "videos", "photos", "podcasts", "audiobooks", "settings",
                                       "deviceMusic", "deviceVideos",
-                                      "devicePictures", "devicePlaylists"]
+                                      "devicePictures", "devicePlaylists", "devicePodcasts", "deviceAudiobooks"]
 
     // ── Headroom (ux/7): ADAPTIVE collapsing chrome ──
     // The point is that the app FEELS spacious: the giant header is
@@ -145,7 +177,7 @@ ApplicationWindow {
         onTriggered: window.chromeCollapsed = true
     }
     onCurrentPageChanged: {
-        builderFocus = currentPage === "photos" ? "photo" : "music"
+        builderFocus = currentPage === "photos" ? "photo" : currentPage === "audiobooks" ? "books" : "music"
         if (greetingTimer.running) {
             greetingTimer.stop()
             chromeCollapsed = true
@@ -188,12 +220,13 @@ ApplicationWindow {
     readonly property real islandFullHeight:
         height - 110 - (Theme.spaceHuge + Theme.spaceMd) - 60 - Theme.spaceXxl
     readonly property var pageTitles: ({
-        music: "music", videos: "videos", photos: "photos",
+        music: "music", videos: "videos", photos: "photos", podcasts: "podcasts", audiobooks: "audiobooks",
         settings: "settings",
         deviceMusic: "device music", deviceVideos: "device videos",
         // "photos" everywhere (Orson 2026-09-07): the OG Zune said
         // "pictures", but the library sidebar says photos — one word
-        devicePictures: "photos", devicePlaylists: "playlists"
+        devicePictures: "photos", devicePlaylists: "playlists",
+        devicePodcasts: "device podcasts", deviceAudiobooks: "device audiobooks"
     })
 
     EnvironmentBackground {
@@ -525,13 +558,11 @@ ApplicationWindow {
                     z: 4
                     shown: window.showNowPlaying
                     onCloseRequested: window.showNowPlaying = false
-                    artUrlFor: item => LibraryService.artPaths[
-                        LibraryService.artKey(item.artist ?? "",
-                                              item.album ?? "")] ?? ""
+                    artUrlFor: item => window.playbackArt(item)
                 }
 
                 PlaylistTray {
-                    visible: !window.photoBuilderActive && reveal > 0.01
+                    visible: window.activeBuilder === "music" && reveal > 0.01
                     anchors.fill: parent
                     // Stacked-card geometry: inset from the island's
                     // top/bottom so the layer BELOW stays visible
@@ -542,6 +573,18 @@ ApplicationWindow {
                     anchors.rightMargin: -56
                     anchors.topMargin: 18
                     anchors.bottomMargin: 18
+                }
+                Item {
+                    anchors.fill: parent
+                    visible: window.bookBuilderActive
+                    z: 5
+                    BookLibraryTray {
+                        anchors.fill: parent
+                        anchors.leftMargin: sidebarNav.railWidth + Theme.spaceSm
+                        anchors.rightMargin: -Theme.photoTrayOverhang
+                        anchors.topMargin: Theme.photoTrayInset
+                        anchors.bottomMargin: Theme.photoTrayInset
+                    }
                 }
                 Item {
                     anchors.fill: parent
@@ -603,6 +646,15 @@ ApplicationWindow {
                         anchors.fill: parent
                         visible: window.currentPage === "photos"
                     }
+                    SpokenMediaPage {
+                        anchors.fill: parent
+                        visible: window.currentPage === "podcasts"
+                    }
+                    SpokenMediaPage {
+                        anchors.fill: parent
+                        books: true
+                        visible: window.currentPage === "audiobooks"
+                    }
                     SettingsPage {
                         anchors.fill: parent
                         visible: window.currentPage === "settings"
@@ -621,6 +673,15 @@ ApplicationWindow {
                         gallery: photoGallery
                         anchors.fill: parent
                         visible: window.currentPage === "devicePictures"
+                    }
+                    DeviceSpokenPage {
+                        anchors.fill: parent
+                        visible: window.currentPage === "devicePodcasts"
+                    }
+                    DeviceSpokenPage {
+                        anchors.fill: parent
+                        books: true
+                        visible: window.currentPage === "deviceAudiobooks"
                     }
                     PlaylistsPage {
                         anchors.fill: parent
@@ -720,7 +781,7 @@ ApplicationWindow {
                         id: panelDrop
                         anchors.fill: parent
                         keys: ["zuuned-tracks", "zuuned-playlist",
-                               "zuuned-videos", "zuuned-photos"]
+                               "zuuned-videos", "zuuned-photos", "zuuned-podcasts", "zuuned-podcast-shows", "zuuned-audiobooks", "zuuned-audiobook-books"]
                         enabled: DeviceService.connected
                         // Light up the matching browse entry ("＋ zune")
                         // by the item's type — the exact mirror of the
@@ -729,7 +790,9 @@ ApplicationWindow {
                         onEntered: drag => {
                             const kind = drag.source.dragKind ?? "tracks"
                             devicePanel.dropPage =
-                                  kind === "videos"   ? "deviceVideos"
+                                  kind === "podcasts" || kind === "podcast-shows" ? "devicePodcasts"
+                                : kind === "audiobooks" || kind === "audiobook-books" ? "deviceAudiobooks"
+                                : kind === "videos"   ? "deviceVideos"
                                 : kind === "photos"   ? "devicePictures"
                                 : kind === "playlist" ? "devicePlaylists"
                                 : "deviceMusic"
@@ -744,6 +807,27 @@ ApplicationWindow {
                             const items = typeof t === "function"
                                           ? t() : (t ?? [])
                             const kind = src.dragKind ?? "tracks"
+                            if (kind === "audiobook-books") {
+                                SpokenMediaService.queueAudiobooks(items)
+                                drop.accept()
+                                return
+                            }
+                            if (kind === "podcast-shows") {
+                                if (typeof src.openTransferPicker !== "function") { drop.accepted = false; return }
+                                src.openTransferPicker()
+                                drop.accept()
+                                return
+                            }
+                            if (kind === "audiobooks") {
+                                SpokenMediaService.queueAudiobooks(items)
+                                drop.accept()
+                                return
+                            }
+                            if (kind === "podcasts") {
+                                SpokenMediaService.queuePodcasts(items)
+                                drop.accept()
+                                return
+                            }
                             let res
                             if (kind === "playlist")
                                 res = SyncEngine.addPlaylist(
@@ -877,9 +961,10 @@ ApplicationWindow {
         function onCapacityRejected(rejectedItems, addedCount, queuedGB, freeGB) {
             capacitySheet.openWith(rejectedItems, addedCount, queuedGB, freeGB)
         }
-        function onSyncSummary(elapsedMs, tracks, videos, photos, skipped, failed) {
+        function onSyncSummary(elapsedMs, tracks, videos, photos, skipped, failed, podcasts, audiobooks) {
             syncCompleteSheet.openWith(elapsedMs, tracks, videos, photos,
-                                       skipped, failed)
+                                       skipped, failed, podcasts, audiobooks,
+                                       SyncEngine.lastSync.podcastsRemoved, SyncEngine.lastSync.podcastCleanupWarning)
         }
     }
     SyncCompleteSheet { id: syncCompleteSheet }
@@ -945,8 +1030,7 @@ ApplicationWindow {
             NumberAnimation { duration: Theme.motionSlow }
         }
         player: PlayerService
-        artUrlFor: item => LibraryService.artPaths[
-                       LibraryService.artKey(item.artist ?? "", item.album ?? "")] ?? ""
+        artUrlFor: item => window.playbackArt(item)
         // Contract: while the playlist builder is open the disc click
         // pulses the tray instead of opening now-playing (ignore-and-
         // point, not mode-switch).
@@ -960,7 +1044,7 @@ ApplicationWindow {
         // whole play queue lands in the builder as a new playlist.
         onSaveQueueRequested: {
             const q = PlayerService.queue
-            if (q.length === 0)
+            if (q.length === 0 || q.some(it => !!it.spokenId))
                 return
             if (!TrayState.building)
                 TrayState.openNew()
@@ -977,7 +1061,7 @@ ApplicationWindow {
             target: PlayerService
             function onQueueChanged() {
                 for (const it of PlayerService.queue)
-                    LibraryService.requestArt(it.artist ?? "", it.album ?? "",
+                    if (!it.spokenId) LibraryService.requestArt(it.artist ?? "", it.album ?? "",
                                               it.filepath ?? "")
             }
         }
@@ -1028,8 +1112,7 @@ ApplicationWindow {
             const q = PlayerService.queue
             const i = PlayerService.queueIndex
             if (i < 0 || i >= q.length) return ""
-            return LibraryService.artPaths[
-                LibraryService.artKey(q[i].artist ?? "", q[i].album ?? "")] ?? ""
+            return window.playbackArt(q[i])
         }
     }
 

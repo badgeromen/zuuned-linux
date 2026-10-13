@@ -434,13 +434,42 @@ stop_app() {
 
 start_portals
 start_app fresh-onboarding --page settings --settings-tab Appearance
-capture 01-fresh-onboarding
 # Onboarding's 600px centered column places Skip 60px from its right edge,
 # centered 52px above the bottom. Use the actual native window geometry.
 geometry=$(xdotool getwindowgeometry --shell "$window_id")
 width=$(sed -n 's/^WIDTH=//p' <<< "$geometry")
 height=$(sed -n 's/^HEIGHT=//p' <<< "$geometry")
-[[ $width =~ ^[0-9]+$ && $height =~ ^[0-9]+$ ]] || fail 'No native window geometry.'
+window_x=$(sed -n 's/^X=//p' <<< "$geometry")
+window_y=$(sed -n 's/^Y=//p' <<< "$geometry")
+[[ $width =~ ^[0-9]+$ && $height =~ ^[0-9]+$ && $window_x =~ ^[0-9]+$ && $window_y =~ ^[0-9]+$ ]] || fail 'No native window geometry.'
+# A visible X11 window does not prove Qt has painted it. The October 12 ARM
+# emulation capture was still a black 1280x800 surface with white resize strips
+# when the fixed six-second wait expired. Do not click the unpainted strip.
+# Wait for contrast against the dark background in Skip's actual text region.
+# This is only a paint-readiness check; the real click and persisted completion
+# assertion below remain authoritative. Save every probe for failure diagnosis.
+mkdir -p "$evidence/onboarding-readiness"
+ready=0
+deadline=$((SECONDS + 120))
+for ((probe=0; SECONDS<deadline; probe++)); do
+    still_running
+    probe_file="$evidence/onboarding-readiness/$probe"
+    timeout 15s env LD_LIBRARY_PATH="$appdir/usr/lib" "$appdir/usr/bin/ffmpeg" \
+        -hide_banner -nostdin -y -v error -f x11grab -video_size 96x24 \
+        -i "$DISPLAY+$((window_x + width / 2 + 144)),$((window_y + height - 64))" \
+        -vf "signalstats,metadata=mode=print:file=$probe_file.txt" \
+        -frames:v 1 -threads 1 "$probe_file.png" >> "$evidence/captures.log" 2>&1 \
+        || fail 'Could not capture onboarding paint-readiness evidence.'
+    if awk -F= '/lavfi.signalstats.YMIN=/{lo=$2; haveLo=1}
+                /lavfi.signalstats.YMAX=/{hi=$2; haveHi=1}
+                END{exit !(haveLo && haveHi && lo < 64 && hi - lo > 20)}' "$probe_file.txt"; then
+        ready=1
+        break
+    fi
+    sleep 1
+done
+capture 01-fresh-onboarding
+[[ $ready == 1 ]] || fail 'Onboarding controls did not paint within 120 seconds; inspect onboarding-readiness and 01-fresh-onboarding.png.'
 xdotool mousemove --window "$window_id" "$((width / 2 + 220))" "$((height - 52))" click 1
 settings="$XDG_CONFIG_HOME/Zuuned/Zuuned.conf"
 for ((attempt=0; attempt<60; attempt++)); do
@@ -464,8 +493,9 @@ xdotool mousemove --window "$window_id" 450 90 click 1
 sleep 1
 capture portal-folder-library
 portal_mark folder OpenFile 'Choose a music folder' true
-# Current Library layout: browse is at y=560 in the client window.
-xdotool mousemove --window "$window_id" 1260 560 click 1
+# Library now starts with spoken-media preferences. The October 11 candidate
+# capture places the empty-watch-list browse button at client y=704.
+xdotool mousemove --window "$window_id" 1260 704 click 1
 await_portal_chooser
 select_portal_path "$media"
 for ((attempt=0; attempt<100; attempt++)); do
@@ -565,10 +595,11 @@ if [[ ${ZUUNED_PHOTO_GATE:-0} == 1 ]]; then
     start_app photo-folder-settings --page settings --settings-tab Library
     capture photo-01-library-before-import
     # This restarted Library page has one watch row and starts at the top.
-    # Its final type segment selects Photos (confirmed in photo-01 capture).
-    xdotool mousemove --window "$window_id" 1175 285 click 1
+    # Its final type segment selects Photos. October 11 photo-01 capture
+    # places this row at client y=754 below the spoken preferences and watch row.
+    xdotool mousemove --window "$window_id" 1175 754 click 1
     portal_mark photos-folder OpenFile 'Choose a photos folder' true
-    xdotool mousemove --window "$window_id" 1260 285 click 1
+    xdotool mousemove --window "$window_id" 1260 754 click 1
     await_portal_chooser
     select_portal_path "$photo_media"
     for ((attempt=0; attempt<100; attempt++)); do
@@ -632,28 +663,48 @@ sha256sum "$evidence"/*.png > "$evidence/captures.sha256"
 if [[ -n ${ZUUNED_UPGRADE_INPUT:-} ]]; then
     upgrade_input=$(realpath -e -- "$ZUUNED_UPGRADE_INPUT")
     [[ -s $upgrade_input/library.db && -f $upgrade_input/Zuuned.conf ]] || fail 'Upgrade input requires library.db and Zuuned.conf.'
-    [[ $(sqlite3 -readonly "$upgrade_input/library.db" 'PRAGMA user_version;') == 5 ]] || fail 'This upgrade rehearsal expects a v5 library.'
+    upgrade_from=$(sqlite3 -readonly "$upgrade_input/library.db" 'PRAGMA user_version;')
+    [[ $upgrade_from == 5 || $upgrade_from == 9 ]] || fail 'This upgrade rehearsal expects a v5 or v9 library.'
+    [[ $(sqlite3 -readonly "$upgrade_input/library.db" 'PRAGMA integrity_check;') == ok ]] || fail 'Copied input library integrity check failed.'
+    sha256sum "$upgrade_input/library.db" "$upgrade_input/Zuuned.conf" > "$evidence/upgrade-input.sha256"
     export XDG_CONFIG_HOME="$work/upgrade-config" XDG_DATA_HOME="$work/upgrade-data" XDG_CACHE_HOME="$work/upgrade-cache" XDG_STATE_HOME="$work/upgrade-state"
     mkdir -p "$XDG_CONFIG_HOME/Zuuned" "$XDG_DATA_HOME/Zuuned/Zuuned" "$XDG_CACHE_HOME" "$XDG_STATE_HOME"
-    cp "$upgrade_input/library.db" "$XDG_DATA_HOME/Zuuned/Zuuned/library.db"
+    sqlite3 -readonly "$upgrade_input/library.db" ".backup '$XDG_DATA_HOME/Zuuned/Zuuned/library.db'"
     cp "$upgrade_input/Zuuned.conf" "$XDG_CONFIG_HOME/Zuuned/Zuuned.conf"
+    upgrade_spoken=
+    if [[ -e $upgrade_input/spoken.db ]]; then
+        [[ -s $upgrade_input/spoken.db ]] || fail 'Supplied spoken.db is empty.'
+        # SpokenStore accepts existing schema 1 without migration. Version 0
+        # means uninitialized, not an existing spoken-media profile to certify.
+        [[ $(sqlite3 -readonly "$upgrade_input/spoken.db" 'PRAGMA user_version;') == 1 ]] || fail 'Copied spoken input requires schema 1.'
+        [[ $(sqlite3 -readonly "$upgrade_input/spoken.db" 'PRAGMA integrity_check;') == ok ]] || fail 'Copied spoken input integrity check failed.'
+        spoken_input_count=$(sqlite3 -readonly "$upgrade_input/spoken.db" 'SELECT count(*) FROM items;')
+        upgrade_spoken="$XDG_DATA_HOME/Zuuned/Zuuned/spoken/spoken.db"
+        mkdir -p "${upgrade_spoken%/*}"
+        sqlite3 -readonly "$upgrade_input/spoken.db" ".backup '$upgrade_spoken'"
+        sha256sum "$upgrade_input/spoken.db" >> "$evidence/upgrade-input.sha256"
+    fi
     start_app upgraded-profile --page settings --settings-tab Health
     sleep 4
     capture 08-upgraded-profile
     stop_app
     upgrade_db="$XDG_DATA_HOME/Zuuned/Zuuned/library.db"
-    [[ $(sqlite3 "$upgrade_db" 'PRAGMA user_version;') == 9 ]] || fail 'Copied real profile did not migrate to v9.'
+    [[ $(sqlite3 "$upgrade_db" 'PRAGMA user_version;') == 9 ]] || fail 'Copied profile did not finish at library schema v9.'
     [[ $(sqlite3 "$upgrade_db" 'PRAGMA integrity_check;') == ok ]] || fail 'Upgraded library integrity check failed.'
-    [[ -s $upgrade_db.v5-backup ]] || fail 'Actual upgrade did not create its v5 rollback backup.'
-    cmp <(sqlite3 -readonly "$upgrade_input/library.db" .dump) <(sqlite3 -readonly "$upgrade_db.v5-backup" .dump) \
-        || fail 'Rollback backup does not preserve the full copied input database.'
+    if [[ $upgrade_from == 5 ]]; then
+        [[ -s $upgrade_db.v5-backup ]] || fail 'Actual upgrade did not create its v5 rollback backup.'
+        cmp <(sqlite3 -readonly "$upgrade_input/library.db" .dump) <(sqlite3 -readonly "$upgrade_db.v5-backup" .dump) \
+            || fail 'Rollback backup does not preserve the full copied input database.'
+    fi
+    upgrade_input_sql=${upgrade_input//\'/\'\'}
     while IFS= read -r table; do
         [[ $table =~ ^[a-z_]+$ ]] || fail 'Unexpected profile table name.'
         # Offline provider retries may change bookkeeping. Compare every old
         # column containing identity, art, order, playback or library content.
         columns=$(sqlite3 -readonly "$upgrade_input/library.db" "SELECT group_concat('\"'||name||'\"',',') FROM pragma_table_info('$table') WHERE NOT ('$table'='artists' AND name IN ('fetch_attempts','last_fetch_at')) AND NOT ('$table'='videos' AND name IN ('lookup_attempts','last_lookup_at'));")
-        changes=$(sqlite3 "$upgrade_db" "ATTACH '$upgrade_input/library.db' AS previous; SELECT (SELECT count(*) FROM (SELECT $columns FROM main.\"$table\" EXCEPT SELECT $columns FROM previous.\"$table\")) + (SELECT count(*) FROM (SELECT $columns FROM previous.\"$table\" EXCEPT SELECT $columns FROM main.\"$table\"));")
+        changes=$(sqlite3 "$upgrade_db" "ATTACH '$upgrade_input_sql/library.db' AS previous; SELECT (SELECT count(*) FROM (SELECT $columns FROM main.\"$table\" EXCEPT SELECT $columns FROM previous.\"$table\")) + (SELECT count(*) FROM (SELECT $columns FROM previous.\"$table\" EXCEPT SELECT $columns FROM main.\"$table\"));")
         [[ $changes == 0 ]] || fail "Copied profile changed preserved data in $table."
+        [[ $(sqlite3 "$upgrade_db" "SELECT count(*) FROM \"$table\";") == $(sqlite3 -readonly "$upgrade_input/library.db" "SELECT count(*) FROM \"$table\";") ]] || fail "Copied profile changed the row count in $table."
         printf '%s: %s rows preserved\n' "$table" "$(sqlite3 "$upgrade_db" "SELECT count(*) FROM \"$table\";")" >> "$evidence/upgrade-preservation.txt"
     done < <(sqlite3 -readonly "$upgrade_input/library.db" "SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name;")
     settings_entries() {
@@ -663,7 +714,21 @@ if [[ -n ${ZUUNED_UPGRADE_INPUT:-} ]]; then
     while IFS= read -r setting; do
         grep -Fxq -- "$setting" "$work/upgraded-settings-entries" || fail 'An existing copied setting changed value or group during upgrade.'
     done < <(settings_entries "$upgrade_input/Zuuned.conf")
-    printf 'PASS: copied v5 profile migrated to v8; full rollback backup, old library data and settings preserved.\n' >> "$evidence/upgrade-preservation.txt"
+    if [[ -n $upgrade_spoken ]]; then
+        [[ $(sqlite3 "$upgrade_spoken" 'PRAGMA user_version;') == 1 ]] || fail 'Copied spoken profile changed schema unexpectedly.'
+        [[ $(sqlite3 "$upgrade_spoken" 'PRAGMA integrity_check;') == ok ]] || fail 'Copied spoken profile integrity check failed.'
+        cmp <(sqlite3 -readonly "$upgrade_input/spoken.db" .dump) <(sqlite3 -readonly "$upgrade_spoken" .dump) \
+            || fail 'Copied spoken profile changed schema, content or order.'
+        printf 'PASS: copied spoken schema 1 preserved its full SQL dump (%s items) and integrity.\n' "$spoken_input_count" >> "$evidence/upgrade-preservation.txt"
+    else
+        printf 'Not tested: no existing spoken.db supplied.\n' >> "$evidence/upgrade-preservation.txt"
+    fi
+    sha256sum --check "$evidence/upgrade-input.sha256" > "$evidence/upgrade-input-unchanged.txt" || fail 'Copied-profile input files changed.'
+    if [[ $upgrade_from == 5 ]]; then
+        printf 'PASS: copied v5 profile migrated to v9; full rollback backup, old library data and settings preserved.\n' >> "$evidence/upgrade-preservation.txt"
+    else
+        printf 'PASS: copied v9 profile reopened at v9; existing library data and settings preserved. No v5 migration/rollback claim.\n' >> "$evidence/upgrade-preservation.txt"
+    fi
     sha256sum "$evidence"/*.png > "$evidence/captures.sha256"
 fi
 [[ $(grep -Ec '^(folder|playlist|report): PASS; successful response' "$evidence/portal-picker-checks.txt") == 3 ]] || fail 'Not all three desktop picker paths passed.'

@@ -1,6 +1,6 @@
 # Zuuned source, build and release architecture
 
-Status: October 4, 2026. The two public source repositories are published.
+Status: October 13, 2026. The two public source repositories are published.
 The automation below remains proposed; this document does not authorize a push
 or certify a newly built release. Preserve the current working app.
 
@@ -20,9 +20,13 @@ implementation. Start with the existing Linux AppImage pipeline.
 
 The initial prepared Linux export includes libzune as ordinary source. That is
 a bootstrap snapshot, not the proposed permanent shared-library arrangement.
-The current container snapshot exporter requires a submodule and does not yet
-package this vendored public layout. Resolve that provenance mismatch before
-claiming the proposed public-commit release pipeline is implemented.
+The 0.2.0 container exporter supports this layout using committed
+`PUBLIC_LIBZUNE.json` revision/tree provenance. It verifies the included tree and
+archives the exact clean public app commit. Trusted official builds supply the
+private authentication header separately after source export; that input must
+never enter the public repository or public source archive. Record this input
+boundary alongside the public application and library revisions. Hosted
+automation is still proposed.
 Establish one canonical source history per component after migration. Recommend
 GitHub for public application/protocol development, with Gitea backups and private
 release inputs. Do not maintain independently edited public and private copies

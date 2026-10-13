@@ -59,4 +59,18 @@ if verify > "$zuuned_elf_fixture/result.log" 2>&1; then
 fi
 grep -q 'usr/plugins/platforms/libcryptoplugin.so needs libgpg-error.so.0' "$zuuned_elf_fixture/result.log"
 echo 'PASS dlopened plugin crypto dependency is required inside the bundle'
-echo '5 real ELF inventory checks passed'
+rm "$zuuned_elf_plugin/libcryptoplugin.so"
+# Corrupt only e_machine in a real ELF header. Never execute the fixture.
+cp "$zuuned_elf_lib/libfixtureleaf.so.1" "$zuuned_elf_fixture/foreign.so"
+printf '\267\000' | dd of="$zuuned_elf_fixture/foreign.so" bs=1 seek=18 conv=notrunc status=none
+# The fixture host is x86_64 in CI; use x86_64 as the foreign value on ARM.
+if [[ $(uname -m) == aarch64 ]]; then
+    printf '\076\000' | dd of="$zuuned_elf_fixture/foreign.so" bs=1 seek=18 conv=notrunc status=none
+fi
+cp "$zuuned_elf_fixture/foreign.so" "$zuuned_elf_plugin/libforeign.so"
+if verify > "$zuuned_elf_fixture/result.log" 2>&1; then
+    echo 'FAIL mixed ELF architectures passed inventory' >&2; exit 1
+fi
+grep -q 'Wrong ELF architecture:' "$zuuned_elf_fixture/result.log"
+echo 'PASS mixed executable/plugin architectures are rejected'
+echo '6 real ELF inventory checks passed'

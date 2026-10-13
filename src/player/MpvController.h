@@ -63,6 +63,8 @@ public:
     double duration() const;
     double volume() const;
     void setVolume(double v);
+    void setSpeed(double rate);
+    double speed() const;
     bool isMuted() const;
     void setMuted(bool m);
 

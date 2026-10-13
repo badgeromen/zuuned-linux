@@ -12,10 +12,10 @@ import Zuuned
 // builder this never locks you in: the sidebar's ◉ is the way back.
 //
 // Migration spec: while this is open the top ribbon fades out (one
-// object traveling, never two); closing fades it back. In narrow
+// object traveling, never two); closing fades it back. In compact
 // windows the ribbon retires entirely and this is the only
 // now-playing surface (Main.qml owns that logic).
-Item {
+FocusScope {
     id: island
     z: 5
     property var artUrlFor: function(item) { return "" }
@@ -28,7 +28,19 @@ Item {
     Behavior on reveal {
         NumberAnimation { duration: Theme.motionSlow; easing.type: Easing.OutCubic }
     }
-    onShownChanged: reveal = shown ? 1 : 0
+    onShownChanged: {
+        reveal = shown ? 1 : 0
+        if (shown)
+            forceActiveFocus()
+        else
+            focus = false
+    }
+    Keys.onEscapePressed: event => {
+        if (shown) {
+            island.closeRequested()
+            event.accepted = true
+        }
+    }
     opacity: reveal
     scale: 0.93 + 0.07 * reveal
     transformOrigin: Item.Left
@@ -39,6 +51,7 @@ Item {
     readonly property var currentItem:
         queueIndex >= 0 && queueIndex < queueItems.length
         ? queueItems[queueIndex] : null
+    readonly property bool spoken: !!(currentItem && currentItem.spokenId)
     // FULL history/future (scrollable) — reversed played so index 0
     // is the most recent, rendered nearest the disc
     readonly property var playedItems:
@@ -149,6 +162,33 @@ Item {
         }
     }
 
+    // Keep dismissal outside the clipped content, even on short displays.
+    Button {
+        id: closeButton
+        objectName: "nowPlayingCloseButton"
+        anchors.top: parent.top
+        anchors.right: parent.right
+        anchors.margins: Theme.spaceSm
+        width: Theme.spaceXxxl
+        height: width
+        z: 1
+        text: "×"
+        Accessible.name: "Close now playing"
+        contentItem: Text {
+            text: closeButton.text
+            font.pixelSize: Theme.spaceXl
+            color: closeButton.hovered || closeButton.down || closeButton.activeFocus
+                   ? Theme.error : Theme.textSecondary
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+        }
+        background: Item {}
+        ToolTip.visible: hovered
+        ToolTip.text: "Close now playing"
+        ToolTip.delay: Theme.locationTooltipDelay
+        onClicked: island.closeRequested()
+    }
+
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: Theme.spaceMd
@@ -158,6 +198,8 @@ Item {
 
         Text {
             Layout.alignment: Qt.AlignHCenter
+            Layout.minimumHeight: Theme.spaceXxl
+            verticalAlignment: Text.AlignVCenter
             text: "PLAYED"
             font.pixelSize: 9
             font.bold: true
@@ -240,8 +282,17 @@ Item {
             elide: Text.ElideRight
         }
 
+        MediaKindIcon { Layout.alignment: Qt.AlignHCenter; visible: island.spoken; kind: PlayerService.mediaKind; ink: Theme.activePink }
+        SpokenPlaybackControls {
+            objectName: "islandSpokenControls"
+            visible: island.spoken
+            Layout.alignment: Qt.AlignHCenter
+        }
+
         // Transport
         RowLayout {
+            objectName: "islandMusicControls"
+            visible: !island.spoken
             Layout.alignment: Qt.AlignHCenter
             Layout.topMargin: 2
             spacing: 16
@@ -374,24 +425,12 @@ Item {
 
         // Footer — action bottom-right (house rule)
         RowLayout {
+            visible: !island.spoken
             Layout.fillWidth: true
             spacing: Theme.spaceMd
-
-            Text {
-                text: "close"
-                font.pixelSize: 11
-                color: closeArea.containsMouse ? Theme.textPrimary : Theme.textDim
-                MouseArea {
-                    id: closeArea
-                    anchors.fill: parent
-                    anchors.margins: -5
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: island.closeRequested()
-                }
-            }
             Item { Layout.fillWidth: true }
             Text {
+                visible: !island.spoken
                 text: "save as playlist"
                 font.pixelSize: 11
                 color: saveQArea.containsMouse ? Theme.orange : Theme.textSecondary

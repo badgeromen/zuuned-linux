@@ -54,13 +54,12 @@ and hardware checks on that machine, but it is not the distributable AppImage.
 
 ## Build the tester AppImage
 
-**Maintainer workflow, not yet supported from this public snapshot:** the
-`snapshot.mjs` exporter below requires the private development checkout's
-`libzune` Git submodule. It rejects this public repository because `libzune/`
-is vendored source. These commands document the existing release pipeline, not
-a working public-clone packaging recipe. Use the native build above to compile
-this source, or download a published AppImage. Public packaging needs a
-vendored-source provenance update before this workflow can be used unchanged.
+The exporter supports both the private submodule checkout and the public
+repository's included libzune source. Public release commits contain
+`PUBLIC_LIBZUNE.json`, recording the exact library commit and Git tree. The
+exporter requires a clean public checkout and verifies its included library
+against that tree before archiving the captured application commit. If you alter
+libzune, commit it in your library repository and update the manifest to match.
 
 Do not invent a library revision or mark modified input clean to bypass that
 check. Official downloads also require the private authentication input, as
@@ -90,7 +89,7 @@ sudo docker build --platform linux/amd64 \
   -t zuuned-runtime-debian13 packaging/containers
 ```
 
-The package must come from committed, clean application and submodule states.
+The package must come from committed, clean application and library states.
 This prevents an AppImage whose filename identifies one revision while its
 contents came from another.
 

@@ -1,6 +1,7 @@
 pragma Singleton
 import QtQuick
 QtObject {
+    property bool scanning: false
     property int localTrackIdentityRevision: 0
     function hasLocalTrack(artist, album, title, disc, track, discReliable, trackReliable, sourcePeers) { return false }
     function musicIdentityPeers(track) { return [] }

@@ -17,6 +17,8 @@ Item {
     // Parent-supplied: item ({filepath,title,artist,album,...}) → art url
     property var artUrlFor: function(item) { return "" }
 
+    readonly property bool spoken: !!(currentItem && currentItem.spokenId)
+
     signal saveQueueRequested()
     signal miniPlayerRequested()
 
@@ -78,6 +80,7 @@ Item {
             Loader {
                 Layout.alignment: Qt.AlignHCenter
                 sourceComponent: Prefs.playerStyle === "vinyl" ? ribbonVinyl : ribbonDisc
+                MediaKindIcon { anchors.right: parent.right; anchors.top: parent.top; visible: root.spoken; kind: root.player.mediaKind; ink: Theme.activePink }
             }
             Component {
                 id: ribbonDisc
@@ -147,10 +150,11 @@ Item {
 
             // Controls: shuffle · repeat(.1) · mini player · save queue
             RowLayout {
+                objectName: "ribbonMusicControls"
                 Layout.alignment: Qt.AlignHCenter
                 Layout.topMargin: 2
                 spacing: 14
-                visible: root.player ? !root.player.stopped : false
+                visible: !root.spoken && (root.player ? !root.player.stopped : false)
 
                 RibbonButton {
                     glyph: "⇄"
@@ -171,6 +175,16 @@ Item {
                     glyph: "+"
                     onActivated: root.saveQueueRequested()
                 }
+            }
+
+            SpokenPlaybackControls {
+                objectName: "ribbonSpokenControls"
+                visible: root.spoken
+                Layout.alignment: Qt.AlignHCenter
+                player: root.player
+                showIslandButton: true
+                compact: true
+                onIslandRequested: root.miniPlayerRequested()
             }
 
             // Volume on its own row, under the controls

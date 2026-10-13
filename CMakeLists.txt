@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(zuuned VERSION 0.1.1 LANGUAGES C CXX)
+project(zuuned VERSION 0.2.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -59,6 +59,12 @@ qt_add_executable(zuuned
     src/TrackImportBatch.h
     src/UsbWatcher.cpp
     src/UsbWatcher.h
+    src/spoken/SpokenMediaService.cpp
+    src/spoken/SpokenMediaService.h
+    src/spoken/PodcastQueuePlanner.cpp
+    src/spoken/PodcastQueuePlanner.h
+    src/spoken/SpokenStore.cpp
+    src/spoken/SpokenStore.h
     src/LibraryService.cpp
     src/library/ArtworkHttp.cpp
     src/LibraryService.h
@@ -111,7 +117,7 @@ qt_add_resources(zuuned "zuuned_app_identity"
 # Must be set BEFORE qt_add_qml_module — the flag is read when the module
 # processes the file. After, it's silently ignored and Theme registers as
 # a plain type: every Theme.* binding falls back to defaults (white app).
-set_source_files_properties(qml/Theme.qml qml/TrayState.qml qml/PhotoTrayState.qml qml/Prefs.qml qml/Gallery.qml PROPERTIES
+set_source_files_properties(qml/Theme.qml qml/TrayState.qml qml/PhotoTrayState.qml qml/BookTrayState.qml qml/Prefs.qml qml/Gallery.qml PROPERTIES
     QT_QML_SINGLETON_TYPE TRUE
 )
 
@@ -136,6 +142,24 @@ qt_add_qml_module(zuuned
     VERSION 1.0
     NO_GENERATE_EXTRA_QMLDIRS
     QML_FILES
+        qml/MediaKindIcon.qml
+        qml/SpokenPlaybackControls.qml
+        qml/PodcastPreferences.qml
+        qml/SpokenFolderImport.qml
+        qml/PodcastStatus.qml
+        qml/PodcastCleanupControl.qml
+        qml/PodcastSyncPicker.qml
+        qml/SpokenMediaPage.qml
+        qml/SpokenDetailHeading.qml
+        qml/SpokenShelf.qml
+        qml/SpokenButton.qml
+        qml/SpokenCheckBox.qml
+        qml/BookTrayState.qml
+        qml/BookLibraryTray.qml
+        qml/RoundedArtwork.qml
+        qml/SpokenCard.qml
+        qml/SpokenCoverSheet.qml
+        qml/SpokenImportSheet.qml
         qml/Main.qml
         qml/Theme.qml
         qml/GradientText.qml
@@ -183,6 +207,7 @@ qt_add_qml_module(zuuned
         qml/VideoMovieDetail.qml
         qml/VideoSeriesDetail.qml
         qml/TmdbLookupSheet.qml
+        qml/DeviceSpokenPage.qml
         qml/DeviceVideosPage.qml
         qml/CapacityRejectSheet.qml
         qml/RenameSheet.qml
@@ -255,6 +280,7 @@ target_link_libraries(zuuned PRIVATE
     ${LIBUSB_LIBRARIES}
     ${SQLITE3_LIBRARIES}
     zuuned_transcode
+    zuuned_spoken
 )
 
 # ═══════════════════════════════════════════════════════════════════
@@ -275,6 +301,17 @@ target_link_libraries(zuuned_transcode PUBLIC ${FFMPEG_LIBRARIES} mp3lame m)
 
 add_executable(transcodetool transcode/transcodetool.c)
 target_link_libraries(transcodetool PRIVATE zuuned_transcode)
+
+# Private spoken-media foundation. Reusable worker-only parsers; the inspection
+# harness is a developer target, never an AppImage payload or runtime dependency.
+add_library(zuuned_spoken STATIC
+    src/spoken/PodcastFeed.cpp
+    src/spoken/AudiobookProbe.cpp
+)
+target_include_directories(zuuned_spoken PUBLIC src/spoken PRIVATE ${FFMPEG_INCLUDE_DIRS})
+target_link_libraries(zuuned_spoken PUBLIC Qt6::Core PRIVATE ${FFMPEG_LIBRARIES})
+add_executable(spokenmediatool src/spoken/spokenmediatool.cpp)
+target_link_libraries(spokenmediatool PRIVATE zuuned_spoken)
 
 # ═══════════════════════════════════════════════════════════════════
 # Phase 3: library core CLI gate (librarytool) — scans a folder into a

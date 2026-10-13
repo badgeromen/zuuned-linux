@@ -59,9 +59,14 @@ public:
     // the worker is mid-transfer. Everything else on this class is
     // queued-slot only.
     void requestAbort();
+    // Invalidate queued spoken reads/deletes when the facade loses its device.
+    void setSpokenGeneration(quint64 generation) { m_spokenGeneration.store(generation); }
 
 public slots:
     void doBreach();
+    void doReadSpokenMedia(quint64 generation, quint64 request, const QString &serial);
+    void doPurgeSpokenItems(quint64 generation, quint64 request, const QString &serial,
+                            const QString &kind, const QVariantList &rows);
     void doSever();
     // Fetch art for an item into cachePath (skips USB if file exists).
     void doGrabArt(quint32 itemId, const QString &cachePath);
@@ -72,6 +77,14 @@ public slots:
     // Send one audio file (already MP3/WMA — transcode happens on the
     // engine's pool BEFORE this). artist arg on the wire = albumartist
     // (mac rule). Emits sendProgress during transfer, then sendDone.
+    void doInspectAudiobooks(const QString &token, const QString &serial, const QVariantList &parts);
+    void doSendAudiobook(const QString &entryId, const QString &filepath, const QVariantMap &part);
+    void doInspectPodcastCleanup(quint64 generation, const QString &token, const QString &serial,
+                                 const QVariantList &episodes);
+    void doPurgePlayedPodcasts(quint64 generation, const QString &token, const QString &serial,
+                               const QVariantList &rows);
+    void doInspectPodcasts(const QString &token, const QString &serial, const QVariantList &episodes);
+    void doSendPodcast(const QString &entryId, const QString &filepath, const QVariantMap &episode);
     void doSendTrack(const QString &entryId, const QString &filepath,
                      const QString &title, const QString &albumartist,
                      const QString &album, const QString &genre,
@@ -127,6 +140,14 @@ public slots:
 
 signals:
     void breachDone(const DeviceWorker::BreachData &data);
+    void spokenMediaRead(quint64 generation, quint64 request, const QString &serial,
+                        const QVariantList &podcasts, const QVariantList &books,
+                        const QString &error);
+    void spokenItemsPurged(quint64 generation, quint64 request, const QString &serial,
+                           const QVariantList &purgedIds, int failCount,
+                           const QString &error);
+    void spokenPurgeProgress(quint64 generation, quint64 request, const QString &serial,
+                             int current, int total);
     void severDone();
     void artDone(quint32 itemId, const QString &path, bool ok);
     // Staged connection progress ("MTPZ authentication…", 0.4) for the
@@ -135,6 +156,17 @@ signals:
 
     // ── Sync (Phase 5) ──
     void sendProgress(const QString &entryId, double frac);
+    void audiobooksInspected(const QString &token, const QString &serial, const QVariantList &parts, const QString &error);
+    void audiobookSendDone(const QString &entryId, bool ok, quint32 itemId, const QString &error, bool reused);
+    void podcastCleanupInspected(quint64 generation, const QString &token, const QString &serial,
+                                 const QVariantList &rows, const QString &error);
+    void podcastCleanupProgress(quint64 generation, const QString &token, const QString &serial,
+                                quint32 itemId, bool removed);
+    void playedPodcastsPurged(quint64 generation, const QString &token, const QString &serial,
+                              const QVariantList &purgedRows, const QString &error);
+    void podcastsInspected(const QString &token, const QString &serial, const QVariantList &episodes, const QString &error);
+    // recoveryRequired may be false only after explicit confirmed cleanup.
+    void podcastSendDone(const QString &entryId, bool ok, quint32 itemId, const QString &error, bool reused, bool recoveryRequired = true);
     void sendDone(const QString &entryId, bool ok, quint32 itemId,
                   const QString &autopsyName);
     void sendVideoDone(const QString &entryId, bool ok, quint32 itemId,
@@ -157,7 +189,9 @@ signals:
     void interruptedObjectPurged(const QString &token, bool ok);
 
 private:
+    friend struct PodcastCleanupWorkerTestAccess;
     ZuneDevice *m_dev = nullptr;
+    std::atomic<quint64> m_spokenGeneration{1};
     // Mirror of m_dev for the cross-thread requestAbort() read.
     std::atomic<ZuneDevice *> m_devShared{nullptr};
 };

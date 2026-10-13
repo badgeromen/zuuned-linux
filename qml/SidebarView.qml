@@ -146,6 +146,8 @@ Item {
         NavItem { title: "music"; page: "music" }
         NavItem { title: "videos"; page: "videos" }
         NavItem { title: "photos"; page: "photos" }
+        NavItem { title: "podcasts"; page: "podcasts" }
+        NavItem { title: "audiobooks"; page: "audiobooks" }
         NavItem { title: "playlists"; page: "libraryPlaylists" }
         NavItem {
             title: "now playing"
@@ -195,6 +197,7 @@ Item {
         property string page
         property bool hovering: false
         property bool pulsing: false
+        property string spokenKind: ""
         property bool drawGear: false   // clean drawn gear instead of an emoji
         readonly property bool active: root.activePage === page
         readonly property color iconColor: rail.active ? Theme.activePink
@@ -205,7 +208,7 @@ Item {
         implicitHeight: 40
 
         Text {
-            visible: !rail.drawGear
+            visible: !rail.drawGear && !rail.spokenKind
             anchors.centerIn: parent
             text: rail.glyph
             // Heartbeat while its surface is live (the ◉ island)
@@ -264,6 +267,12 @@ Item {
             }
             Component.onCompleted: requestPaint()
         }
+        MediaKindIcon {
+            anchors.centerIn: parent
+            width: rail.iconSize; height: rail.iconSize
+            visible: rail.spokenKind !== ""
+            kind: rail.spokenKind; ink: rail.iconColor
+        }
         MouseArea {
             anchors.fill: parent
             hoverEnabled: true
@@ -295,9 +304,12 @@ Item {
         RailIcon { glyph: "♪"; page: "music" }
         RailIcon { glyph: "▶"; page: "videos" }
         RailIcon { glyph: "▣"; page: "photos" }
+        RailIcon { spokenKind: "podcast"; page: "podcasts" }
+        RailIcon { spokenKind: "audiobook"; page: "audiobooks" }
         RailIcon { glyph: "♫"; page: "libraryPlaylists" }
         RailIcon {
             glyph: "◉"
+            spokenKind: PlayerService.mediaKind === "music" ? "" : PlayerService.mediaKind
             page: "nowPlaying"
             visible: PlayerService.queue.length > 0
             // Pulse while music PLAYS — not while the island is open;

@@ -24,7 +24,7 @@ extern "C" {
 /* ---- Version ---- */
 
 #define LIBZUNE_VERSION_MAJOR 0
-#define LIBZUNE_VERSION_MINOR 1
+#define LIBZUNE_VERSION_MINOR 2
 #define LIBZUNE_VERSION_PATCH 0
 
 /* ---- Device ---- */
@@ -467,6 +467,164 @@ typedef struct {
 
 ZuneAlbumObject *zune_get_albums(ZuneDeviceHandle dev, int *count);
 void zune_free_albums(ZuneAlbumObject *albums, int count);
+
+/* ---- Podcasts (experimental; Keel audio/art confirmed; HD acceptance pending) ---- */
+
+/* Mutation failed, but deletion of its newly created object was confirmed.
+ * This is NOT success and does not authorize an automatic retry. Ordinary -1
+ * remains unclassified: a zero output ID alone never proves cleanup. */
+#define ZUNE_PODCAST_FAILED_CLEANED (-2)
+
+typedef struct {
+    uint32_t item_id;
+    char *name;
+    char *author;
+    char *feed_url;
+} ZunePodcastSeries;
+
+/* Complete series inventory, including exact feed identity. 0 succeeds (NULL
+ * array/count 0 is empty); -1 fails with no partial output. Caller frees with
+ * zune_free_podcast_series. Requires a completed MTPZ handshake so an
+ * unauthenticated inventory cannot be mistaken for an empty library.
+ * Synchronous; serialize with all other device calls. */
+int zune_get_podcast_series(ZuneDeviceHandle dev, ZunePodcastSeries **series, int *count);
+void zune_free_podcast_series(ZunePodcastSeries *series, int count);
+
+typedef struct {
+    uint32_t item_id, parent_id, series_id, duration_ms;
+    uint64_t filesize;
+    char *title, *author, *series_name;
+} ZunePodcastEpisode;
+
+/* Read-only native schema-0x10 inventory, using wildcard handles (not a format
+ * filter). Authenticated, active Keel/Pavo sessions only; serialize device I/O.
+ * 0 success, -1 failure. Both outputs required; failure returns NULL/count 0,
+ * never partial data. Empty success also returns NULL/count 0. Every string and
+ * the array are owned; release with the matching free function. Group by
+ * series_id, never title. series_name may be empty on the firmware; resolve it
+ * from zune_get_podcast_series using series_id. No writes or playback claims. */
+int zune_get_podcast_episodes(ZuneDeviceHandle dev, ZunePodcastEpisode **episodes, int *count);
+void zune_free_podcast_episodes(ZunePodcastEpisode *episodes, int count);
+
+typedef struct {
+    uint32_t item_id, series_id, parent_id;
+    char *feed_url, *source_url; /* Owned exact UTF-8 identities. */
+} ZunePodcastEpisodeSource;
+
+/* Complete exact source map for native podcast cleanup, read-only and serialized.
+ * Requires authenticated active Keel/Pavo. Reads series once and each distinct
+ * series folder's MP3 inventory once, independent of local subscription size.
+ * 0 succeeds (NULL/count zero is known empty); -1 means invalid/unavailable with
+ * no partial output. Duplicate feed/source identities or handles fail closed.
+ * Both outputs required; free array/strings with the matching free function.
+ * No title matching, writes, or implicit deletion authorization. */
+int zune_get_podcast_episode_sources(ZuneDeviceHandle dev, ZunePodcastEpisodeSource **sources, int *count);
+void zune_free_podcast_episode_sources(ZunePodcastEpisodeSource *sources, int count);
+
+/* Independent persisted firmware listening state. marked_played is specifically
+ * bit 0x200, not a nonzero flags word or a position/duration heuristic. A played
+ * episode may retain a nonzero bookmark. This does not prove uninterrupted
+ * natural completion; firmware/manual played actions are not distinguishable. */
+typedef struct {
+    uint32_t item_id, series_id, duration_ms, bookmark_ms, raw_flags;
+    uint8_t marked_played;
+    char *title; /* Owned validated UTF-8, for exact live-inventory correlation. */
+} ZunePodcastState;
+
+/* Fresh read-only complete ZMDB state, authenticated active Keel/Pavo only.
+ * 0 success (NULL/count 0 is a known empty snapshot), -1 unavailable/unsupported/
+ * malformed/partial with NULL/count 0. Both output pointers required. Unknown
+ * state must never be interpreted as played. Caller owns the array/title strings and frees
+ * with zune_free_podcast_states. Serialize with all other device operations.
+ * This API neither deletes nor authorizes deletion. Join exact item/series IDs
+ * to a fresh live identity inventory, including exact title and duration, before
+ * any separate caller policy acts. */
+int zune_get_podcast_states(ZuneDeviceHandle dev, ZunePodcastState **states, int *count);
+void zune_free_podcast_states(ZunePodcastState *states, int count);
+
+/* Reuse exactly one live feed URL match, otherwise create a zero-byte series
+ * in the explicit parent folder with a safe .ser filename. Never merges by
+ * title or overwrites an existing match's metadata. Required strings: filename,
+ * name, feed_url; author may be empty. 0 success, negative failure.
+ * ZUNE_PODCAST_FAILED_CLEANED proves the new object was removed; otherwise -1.
+ * out_id is required:
+ * on failure it is nonzero ONLY if a newly created orphan could not be removed.
+ * Do not blindly retry that failure. No artwork/finalize is implicit.
+ * Requires a completed MTPZ handshake; a non-NULL handle alone is insufficient. */
+int zune_forge_podcast_series(ZuneDeviceHandle dev, uint32_t parent_id,
+                             const char *filename, const char *name,
+                             const char *author, const char *feed_url,
+                             uint32_t *out_id);
+
+typedef struct {
+    const char *filename;      /* Requested safe .mp3 basename; firmware may normalize it */
+    const char *title;
+    const char *author;
+    const char *series_name;
+    const char *source_url;    /* Nonempty stable enclosure URL */
+    const char *description;   /* UTF-8; NULL means empty */
+    const char *date_authored; /* Optional YYYYMMDDTHHMMSS or that plus Z */
+    uint32_t series_id;
+    uint32_t duration_ms;
+} ZunePodcastEpisodeInput;
+
+/* Upload ONE caller-prepared MP3 audio episode (no transcoding). Reuses a live
+ * matching series-ID + source-URL object only if title and size match; ambiguous
+ * or incompatible existing matches fail without writes. The caller maintains
+ * feed/GUID identity across enclosure-URL changes. Validates series identity,
+ * descriptor types and property/size readback; no implicit finalization.
+ * 0 success, negative failure, including ZUNE_PODCAST_FAILED_CLEANED.
+ * out_id is required, with the same orphan contract as forge_podcast_series. No automatic retry after a partial transfer. This does
+ * not establish device playback/played-state/bookmark support. Requires a
+ * completed MTPZ handshake. Keel/Pavo schema 0x10 establishes podcast classification
+ * when MetaGenre reads zero; its redundant SeriesName may read empty. */
+int zune_smuggle_podcast_episode(ZuneDeviceHandle dev, uint32_t parent_id,
+                                 const char *filepath,
+                                 const ZunePodcastEpisodeInput *episode,
+                                 uint32_t *out_id);
+
+/* Read-only podcast lookup for queue admission and retry. Exact feed + source
+ * URL, never title. Outputs are zeroed on failure; absent series/episode is
+ * success with zero IDs. A matched series supplies its actual parent folder.
+ * Ambiguous, unreadable or wrongly classified objects fail closed. */
+int zune_find_podcast_episode(ZuneDeviceHandle dev, const char *feed_url,
+                              const char *source_url, uint32_t *parent_id,
+                              uint32_t *series_id, uint32_t *episode_id);
+
+/* ---- Audiobooks (experimental; Keel/Pavo multipart MP3 gates passed) ---- */
+typedef struct {
+    uint32_t item_id, parent_id, part_number, duration_ms;
+    uint64_t filesize;
+    char *title, *author, *book_title;
+} ZuneAudiobookPart;
+
+/* Read-only native schema-0x12 inventory. Same ownership, authentication,
+ * wildcard enumeration, all-or-nothing and serialization contracts as
+ * zune_get_podcast_episodes. Group by parent_id, never book title; returned
+ * order is device inventory order, so sort by part_number in the caller. */
+int zune_get_audiobook_parts(ZuneDeviceHandle dev, ZuneAudiobookPart **parts, int *count);
+void zune_free_audiobook_parts(ZuneAudiobookPart *parts, int count);
+
+typedef struct {
+    const char *book_key;   /* 64 lowercase hex SHA-256 of caller-owned book identity */
+    const char *book_title;
+    const char *author;     /* Empty permitted; NULL rejected */
+    const char *title;
+    uint16_t part_number;   /* Stable, positive reviewed order */
+    uint32_t duration_ms;
+} ZuneAudiobookPartInput;
+/* Live read-only identity lookup; no ZMDB cache needed. 0 complete, -1 failure.
+ * Outputs required and zeroed on failure. Refuses conflicting same-title books
+ * in other folders rather than allowing firmware to merge editions/authors. */
+int zune_find_audiobook_part(ZuneDeviceHandle dev, const ZuneAudiobookPartInput *part,
+                            uint32_t *folder_id, uint32_t *part_id);
+/* Caller-prepared immutable MP3, no transcoding/chapters/artwork/finalize.
+ * 0 success, -1 failure. Reuses exact live identity plus metadata/size.
+ * Nonzero out_id on failure must be retained for manual inspection; no automatic
+ * deletion/retry. Transport loss can leave uncertain state even with ID zero.
+ * Requires successful authentication and serialized ownership. Keel/Pavo only. */
+int zune_smuggle_audiobook_part(ZuneDeviceHandle dev, const char *filepath,
+                               const ZuneAudiobookPartInput *part, uint32_t *out_id);
 
 /* ---- Album Art & Thumbnails ---- */
 

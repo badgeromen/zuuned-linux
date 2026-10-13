@@ -25,6 +25,23 @@ class AppSettings : public QObject {
 
     ZUNE_SETTING(bool, onboardingComplete, setOnboardingComplete,
                  "onboardingComplete", false, toBool)
+    ZUNE_SETTING(bool, podcastAutoCleanup, setPodcastAutoCleanup,
+                 "podcastAutoCleanup", false, toBool)
+    ZUNE_SETTING(bool, podcastAutoQueue, setPodcastAutoQueue,
+                 "podcastAutoQueue", false, toBool)
+    Q_PROPERTY(int podcastAutoQueueCount READ podcastAutoQueueCount WRITE setPodcastAutoQueueCount NOTIFY changed)
+public:
+    int podcastAutoQueueCount() const {
+        bool valid = false;
+        const int count = m_store.value("podcastAutoQueueCount", 10).toInt(&valid);
+        return valid ? qBound(1, count, 5000) : 10;
+    }
+    void setPodcastAutoQueueCount(int value) {
+        const int count = qBound(1, value, 5000);
+        if (podcastAutoQueueCount() == count) return;
+        m_store.setValue("podcastAutoQueueCount", count);
+        emit changed();
+    }
     // Display font for identity moments (header, splash, empty states).
     // Preserve existing graffiti selections when replacing the retired font.
     Q_PROPERTY(QString headerFont READ headerFont WRITE setHeaderFont NOTIFY changed)

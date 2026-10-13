@@ -21,6 +21,7 @@
  */
 
 #include "zune_internal.h"  /* bounded fixture reads raw properties by known ID */
+#include "media_capabilities.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -483,11 +484,46 @@ static int cmd_extract(int argc, char **argv) {
     return 0;
 }
 
+static int cmd_media_capabilities(int argc, char **argv) {
+    uint16_t format = 0;
+    if (argc != 3 || media_probe_format(argv[2], &format) != 0) {
+        fprintf(stderr, "usage: zunetool media-capabilities <format-code, e.g. 0xBA0B>\n");
+        return 2;
+    }
+    ZuneDeviceHandle dev = connect_or_die();
+    int result = media_probe_report(dev, format, stdout);
+    zune_sever(dev);
+    return result == 0 ? 0 : 1;
+}
+
+#include "podcast_test.h"
+#include "podcast_send.h"
+#include "audiobook_test.h"
+
+static int cmd_podcasts(int argc) {
+    if (argc != 2) { fprintf(stderr, "usage: zunetool podcasts\n"); return 2; }
+    ZuneDeviceHandle dev = connect_or_die();
+    ZunePodcastSeries *series = NULL;
+    int count = 0;
+    if (zune_get_podcast_series(dev, &series, &count) != 0) die(dev, "podcast series inventory");
+    printf("%d podcast series:\n", count);
+    for (int i = 0; i < count; ++i)
+        printf("  [%u] %s | %s\n", series[i].item_id, series[i].name, series[i].author);
+    zune_free_podcast_series(series, count);
+    zune_sever(dev);
+    return 0;
+}
+
 int main(int argc, char **argv) {
     if (argc < 2) {
         fprintf(stderr,
             "zunetool — libzune test harness\n"
             "  zunetool info\n"
+            "  zunetool media-capabilities <format-code>   read-only descriptor probe\n"
+            "  zunetool podcasts     read-only experimental series inventory\n"
+            "  zunetool audiobook-test <part1.mp3> <part2.mp3> <cover.jpg> [--retain]   isolated native book gate\n"
+            "  zunetool podcast-test <short-mp3> [title]   isolated upload/readback/cleanup gate\n"
+            "  zunetool podcast-send <mp3> <feed-url> <show> <title> <author> <episode-url> <date>   retain for playback testing\n"
             "  zunetool list\n"
             "  zunetool send <file> [title] [artist] [album] [genre]\n"
             "  zunetool purge <item_id>\n"
@@ -499,6 +535,11 @@ int main(int argc, char **argv) {
     }
     const char *cmd = argv[1];
     if      (!strcmp(cmd, "info"))    return cmd_info();
+    else if (!strcmp(cmd, "media-capabilities")) return cmd_media_capabilities(argc, argv);
+    else if (!strcmp(cmd, "audiobook-test")) return cmd_audiobook_test(argc, argv);
+    else if (!strcmp(cmd, "podcasts")) return cmd_podcasts(argc);
+    else if (!strcmp(cmd, "podcast-test")) return cmd_podcast_test(argc, argv);
+    else if (!strcmp(cmd, "podcast-send")) return cmd_podcast_send(argc, argv);
     else if (!strcmp(cmd, "list"))    return cmd_list();
     else if (!strcmp(cmd, "smuggle")) return cmd_send(argc, argv);
     else if (!strcmp(cmd, "send"))    return cmd_send(argc, argv);   /* civilian alias */

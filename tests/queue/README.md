@@ -15,3 +15,8 @@ open. The 188px content fixture matches a 220px panel with its normal insets.
 A native QML list model checks the same required-role injection as the panel.
 The capture command writes `/tmp/zuuned-queue-controls.png`, comparing native
 queue controls in 220px and 300px panels.
+
+Podcast cleanup rows are separate removal actions. They stay visible when a group
+is collapsed, display pending/removing/removed or retained/uncertain outcomes,
+and never show an upload progress label. The removal-state cases are included
+in `ci/check.sh` through `queue-actions`.

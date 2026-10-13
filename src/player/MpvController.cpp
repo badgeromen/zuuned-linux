@@ -353,3 +353,12 @@ void MpvController::eventLoop() {
         }
     }
 }
+
+void MpvController::setSpeed(double rate) {
+    if (m_mpv) mpv_set_property(m_mpv, "speed", MPV_FORMAT_DOUBLE, &rate);
+}
+double MpvController::speed() const {
+    double rate=1.0;
+    if (m_mpv) mpv_get_property(m_mpv, "speed", MPV_FORMAT_DOUBLE, &rate);
+    return rate;
+}

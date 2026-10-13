@@ -437,7 +437,8 @@ typedef struct {
         uint16_t u16;
         uint32_t u32;
         uint64_t u64;
-        char    *str;     /* UTF-8, will be converted to MTP string */
+        char    *str;     /* UTF-8: STR -> MTP string; AUINT16 -> counted text,
+                          * no terminator. AUINT16 is text-only here. */
     } value;
 } mtp_prop_entry_t;
 

@@ -3,7 +3,8 @@
 **Breach. Smuggle. Forge. Liberate.**
 
 A C library for taking back your Zune. Authenticate over USB, smuggle music,
-videos and photos, forge playlists, and keep abandoned hardware loud.
+videos, photos, podcasts and audiobooks, forge playlists, and keep abandoned
+hardware loud.
 
 Native PTP/MTP/MTPZ. C99. No libmtp, Qt, GTK or GLib dependency. Applications
 include [`zune.h`](include/zune.h) and link the static or shared library.
@@ -16,17 +17,28 @@ include [`zune.h`](include/zune.h) and link the static or shared library.
 | Send media | `zune_smuggle_track`, `zune_smuggle_movie`, `zune_smuggle_episode`, `zune_smuggle_photo` |
 | Retrieve media | `zune_extract_track` and video/photo extraction functions |
 | Create objects | `zune_forge_album`, `zune_forge_artist`, `zune_forge_playlist` |
+| Podcast shows and episodes | `zune_get_podcast_series`, `zune_forge_podcast_series`, `zune_smuggle_podcast_episode`, `zune_find_podcast_episode` |
+| Audiobook parts | `zune_get_audiobook_parts`, `zune_find_audiobook_part`, `zune_smuggle_audiobook_part` |
+| Podcast listening state / source identity | `zune_get_podcast_states`, `zune_get_podcast_episode_sources` |
 | Set album artwork | `zune_brand` |
 | Update objects | `zune_rewire_album`, `zune_rewire_playlist` |
 | Delete media | `zune_purge_track`, `zune_purge_video`, `zune_purge_photo` |
 | Read the device database | `zune_infiltrate` |
 | Diagnose / recover | `zune_autopsy`, `zune_autopsy_name`, `zune_unjam` |
 
-The [API reference](docs/API_REFERENCE.md) documents all 90 public functions,
-including ownership and implementation limits. The [source index](docs/TOC.md) maps functions to their current declarations and
-implementations. The header documents ownership, return values and callbacks.
+The [API reference](docs/API_REFERENCE.md) documents all 105 public functions,
+including ownership and implementation limits. The [source index](docs/TOC.md)
+maps functions to their current declarations and implementations. The header documents ownership, return values and callbacks.
 Older research documents may describe superseded implementations; consult the
 current header and index when integrating the library.
+
+Podcast integration, artwork placement, exact identity, CLI testing and current
+audiobook limits are in the [spoken-media guide](docs/SPOKEN_MEDIA.md). Podcast
+audio and visible covers are confirmed on the tested Classic; experimental
+native multipart audiobook transfer is now available on Zune 30 and HD. Podcast firmware played-state reads are available for both families.
+Audiobook resume, long-book transitions and other models remain separate gates.
+Chaptered-file preparation belongs to the application, not libzune. See the
+[0.2.0 release notes](docs/RELEASE_0.2.0.md) for this prerelease’s scope.
 
 ## Platforms and scope
 

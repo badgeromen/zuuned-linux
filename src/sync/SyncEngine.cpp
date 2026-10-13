@@ -14,7 +14,10 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QStandardPaths>
+#include <QStorageInfo>
 #include <QFile>
+#include <QCryptographicHash>
+#include <QTemporaryFile>
 #include <QFileInfo>
 #include <QPointer>
 #include <QRegularExpression>
@@ -288,6 +291,11 @@ bool SyncEngine::sniffIsMpeg(const QString &path) {
 //  Engine
 // ════════════════════════════════════════════════════════════════════
 
+SyncEngine::~SyncEngine() {
+    m_bookPreparationCancel->store(true);
+    cleanupCurrentTemp(QString());
+}
+
 SyncEngine::SyncEngine(QObject *parent) : QObject(parent) {
     m_spacing.setSingleShot(true);
     m_spacing.setInterval(200);   // Zune firmware breathing room (mac)
@@ -340,7 +348,9 @@ SyncEngine::SyncEngine(QObject *parent) : QObject(parent) {
             m_interruptedSend = object.value(QStringLiteral("title")).toString();
             if (m_interruptedSend.isEmpty()) m_interruptedSend = m_interruptedVideoFile;
         } else if (object.value(QStringLiteral("type")).toString() == QLatin1String("music")
-                   || object.value(QStringLiteral("type")).toString() == QLatin1String("photo")) {
+                   || object.value(QStringLiteral("type")).toString() == QLatin1String("photo")
+                   || object.value(QStringLiteral("type")).toString() == QLatin1String("podcast")
+                   || object.value(QStringLiteral("type")).toString() == QLatin1String("audiobook")) {
             m_recoveryRecord = object.toVariantMap();
             m_interruptedSend = m_recoveryRecord.value("identity").toMap().value("title").toString();
             if (m_interruptedSend.isEmpty()) m_interruptedSend = QStringLiteral("interrupted media transfer");
@@ -384,10 +394,17 @@ static QString humanAutopsy(const QString &a) {
 void SyncEngine::attachDevice(DeviceService *device, DeviceWorker *worker) {
     m_device = device;
     m_worker = worker;
+    connect(device, &DeviceService::spokenMediaChanged, this,
+            &SyncEngine::refreshPodcastCleanupPreview, Qt::QueuedConnection);
+    connect(device, &DeviceService::stateChanged, this,
+            &SyncEngine::refreshPodcastCleanupPreview, Qt::QueuedConnection);
+    device->setSyncActive(m_isSyncing);
+    connect(this, &SyncEngine::syncStateChanged, device,
+            [this, device] { device->setSyncActive(m_isSyncing); });
     // B3: mismatch is relative to the LIVE device — recompute on every
     // device state change.
     connect(device, &DeviceService::stateChanged, this,
-            [this] { emit queueDeviceChanged(); });
+            [this] { if (!m_device->connected()) m_podcastChecks.clear(); emit queueDeviceChanged(); });
     connect(device, &DeviceService::interruptedVideoPurged, this,
             [this](const QString &filename, bool ok) {
         if (ok && filename == m_interruptedVideoFile) dismissInterruptedSend();
@@ -446,6 +463,7 @@ void SyncEngine::schedulePersist() { m_persistTimer.start(); }
 void SyncEngine::persistQueue() {
     QJsonArray entries;
     for (const SyncQueueEntry &e : m_queue.entries()) {
+        if (e.type == QLatin1String("podcast-removal")) continue;
         // Persist the re-arm set only — verified/skipped rows are done.
         if (e.status != QLatin1String("pending")
             && e.status != QLatin1String("failed")
@@ -456,6 +474,8 @@ void SyncEngine::persistQueue() {
         o["status"] = e.status;
         o["statusNote"] = e.statusNote;
         o["type"] = e.type;
+        o["audiobook"] = QJsonObject::fromVariantMap(e.audiobook);
+        o["podcast"] = QJsonObject::fromVariantMap(e.podcast);
         o["filepath"] = e.filepath;
         o["title"] = e.title;
         o["artist"] = e.artist;
@@ -515,9 +535,15 @@ void SyncEngine::restoreQueue() {
         SyncQueueEntry e;
         e.entryId = o["entryId"].toString();
         e.type = o["type"].toString();
+        if (e.type == QLatin1String("podcast-removal")) { ++dropped; continue; }
+        e.audiobook = o["audiobook"].toObject().toVariantMap();
+        e.podcast = o["podcast"].toObject().toVariantMap();
         e.filepath = o["filepath"].toString();
-        // Re-verify: the file must still exist (playlist rows carry none).
-        if (o["status"].toString() != QLatin1String("sent")
+        // Spoken drafts may intentionally have no local file yet. Keep their
+        // saved identities; preparation reports missing sources during sync.
+        const bool spokenDraft = (e.type=="podcast" && e.podcast.value("needsPreparation").toBool()) ||
+                                 (e.type=="audiobook" && e.audiobook.value("needsPreparation").toBool());
+        if (!spokenDraft && o["status"].toString() != QLatin1String("sent")
             && e.type != QLatin1String("playlist")
             && !QFile::exists(e.filepath)) {
             dropped++;
@@ -939,13 +965,89 @@ void SyncEngine::emitCapacityRejected(const QVariantList &rejectedItems,
 void SyncEngine::clearQueue() {
     if (m_isSyncing)
         return;
+    emit queueClearedByUser();
+    for (const auto &entry : m_queue.entries())
+        if (entry.type == "podcast-removal" && entry.status == "pending-removal")
+            m_cleanupSkippedEpisodes.insert(entry.podcast.value("spokenId").toString());
     m_queue.clearQueue();
 }
 
 void SyncEngine::removeEntry(const QString &entryId) {
     if (m_isSyncing)
         return;
+    for (const auto &entry : m_queue.entries())
+        if (entry.entryId == entryId && entry.type == "podcast-removal" && entry.status == "pending-removal")
+            m_cleanupSkippedEpisodes.insert(entry.podcast.value("spokenId").toString());
     m_queue.removeEntry(entryId);
+}
+
+void SyncEngine::removeGroup(const QString &key) {
+    if (m_isSyncing) return;
+    for (const auto &entry : m_queue.entries())
+        if (SyncQueueModel::groupKeyFor(entry) == key) removeEntry(entry.entryId);
+}
+
+QVariantList SyncEngine::podcastCleanupCandidatesForSession() const {
+    QVariantList result;
+    if (!m_cleanupCandidates) return result;
+    const bool sameSession = m_device && m_cleanupPreviewSerial == m_device->deviceSerial()
+        && m_cleanupPreviewGeneration == m_device->spokenGeneration();
+    for (const auto &value : m_cleanupCandidates())
+        if (!sameSession || !m_cleanupSkippedEpisodes.contains(value.toMap().value("spokenId").toString()))
+            result.append(value);
+    return result;
+}
+
+void SyncEngine::refreshPodcastCleanupPreview() {
+    if (m_isSyncing) return;
+    const auto serial = m_device && m_device->connected() ? m_device->deviceSerial() : QString();
+    const auto generation = m_device ? m_device->spokenGeneration() : 0;
+    if (serial != m_cleanupPreviewSerial || generation != m_cleanupPreviewGeneration) {
+        m_queue.clearPodcastRemovals();
+        m_cleanupSkippedEpisodes.clear();
+        m_cleanupPreviewSerial = serial;
+        m_cleanupPreviewGeneration = generation;
+    }
+    // Only replace previews. Finished actions remain available for review.
+    for (const auto &entry : m_queue.entries())
+        if (entry.type == "podcast-removal" && entry.status == "pending-removal")
+            m_queue.removeEntry(entry.entryId);
+    if (serial.isEmpty() || !m_cleanupCandidates || !QSettings().value("podcastAutoCleanup", false).toBool()) return;
+    m_device->ensureSpokenMedia();
+    if (m_device->spokenMediaLoading() || !m_device->spokenMediaError().isEmpty()) return;
+
+    QHash<QPair<QString, QString>, QVariantMap> sources;
+    QSet<quint32> ids;
+    for (const auto &value : m_device->podcastEpisodesList()) {
+        const auto row = value.toMap();
+        const auto id = row.value("itemId").toUInt();
+        if (!id || id == 0xffffffffu || ids.contains(id)) return;
+        ids.insert(id);
+        if (!row.value("sourceKnown").toBool()) continue;
+        const auto key = qMakePair(row.value("feedUrl").toString(), row.value("sourceUrl").toString());
+        if (key.first.isEmpty() || key.second.isEmpty() || sources.contains(key)) return;
+        sources.insert(key, row);
+    }
+    QVariantList preview;
+    QSet<quint32> matched;
+    for (const auto &value : podcastCleanupCandidatesForSession()) {
+        auto candidate = value.toMap();
+        if (candidate.value("keepOnDevice").toBool()) continue;
+        const auto key = qMakePair(candidate.value("feedUrl").toString(), candidate.value("sourceUrl").toString());
+        if (!sources.contains(key)) continue;
+        const auto live = sources.value(key);
+        if (!live.value("playedKnown").toBool() || !live.value("played").toBool()) continue;
+        const auto id = live.value("itemId").toUInt();
+        if (matched.contains(id) || candidate.value("spokenId").toString().isEmpty()) return;
+        matched.insert(id);
+        candidate["itemId"] = id;
+        candidate["deviceTitle"] = live.value("title");
+        candidate["deviceAuthor"] = live.value("author");
+        preview.append(candidate);
+    }
+    m_queue.beginBatch();
+    for (const auto &row : preview) m_queue.addPodcastRemoval(row.toMap());
+    m_queue.endBatch();
 }
 
 MusicIdentity::Index SyncEngine::deviceDedupIndex() const {
@@ -984,6 +1086,15 @@ void SyncEngine::startSync() {
         return;
     }
 
+    if (m_device->busy() || m_device->purging() || m_device->pulling()) {
+        m_lastError = QStringLiteral("Wait for the current device operation to finish before syncing.");
+        emit syncStateChanged();
+        return;
+    }
+
+    m_queue.clearPodcastRemovals();
+    m_cleanupQueueEntries.clear();
+    m_cleanupConfirmed.clear();
     // Snapshot pending track entries. Failed/cancelled entries are
     // re-armed — pressing sync again retries them (the mac left them
     // stranded until the queue was cleared).
@@ -1089,6 +1200,17 @@ void SyncEngine::startSync() {
         }
     }
 
+    QVector<QVariantMap> podcasts;
+    for (const auto &entry : m_queue.entries()) {
+        if ((entry.type != "podcast" && entry.type != "audiobook") || !eligible(entry)) continue;
+        auto row = entry.type == "audiobook" ? entry.audiobook : entry.podcast;
+        row["entryId"] = entry.entryId;
+        row["type"] = entry.type;
+        row["filepath"] = entry.filepath;
+        if (entry.status == "failed") m_queue.setStatus(entry.entryId, "pending");
+        podcasts.append(row);
+    }
+
     // Playlist-only syncs are legit: every member may already live on
     // the device — the forge itself is the whole job. (Without this a
     // queue of bare playlists made "sync now" silently do nothing.)
@@ -1100,7 +1222,8 @@ void SyncEngine::startSync() {
         }
 
     if (snapshot.isEmpty() && m_videoEntries.isEmpty()
-        && m_photoEntries.isEmpty() && !anyPlaylists)
+        && m_photoEntries.isEmpty() && podcasts.isEmpty() && !anyPlaylists
+        && !(m_cleanupCandidates && QSettings().value("podcastAutoCleanup", false).toBool()))
         return;
 
     // iTunes-style canonicalization BEFORE anything leaves the queue.
@@ -1133,9 +1256,16 @@ void SyncEngine::startSync() {
         }
     }
 
+    m_sendDeviceSerial = m_device->deviceSerial();
+    m_sendDeviceGeneration = m_device->spokenGeneration();
+    m_podcastsRemoved = 0;
+    m_cleanupWarning.clear();
+    m_entries += podcasts; // Never canonicalize/deduplicate podcasts as music.
     m_isSyncing = true;
     m_syncCompleted = false;
     m_cancelled = false;
+    m_bookSourceCopies.clear();
+    m_bookPreparationCancel = std::make_shared<std::atomic_bool>(false);
     m_syncStartMs = QDateTime::currentMSecsSinceEpoch();
     zuuned_transcode_clear_abort();   // stale cancel must not kill this run
     // GPU decode policy for this run (Settings → Device acceleration
@@ -1176,7 +1306,174 @@ void SyncEngine::startSync() {
     emit syncStateChanged();
     emit progressChanged();
 
+    beginPodcastCleanup();
+}
+
+bool SyncEngine::cleanupDeviceCurrent() const {
+    return m_device && m_device->connected() && m_device->deviceSerial() == m_cleanupSerial
+        && m_device->spokenGeneration() == m_cleanupGeneration;
+}
+
+void SyncEngine::beginPodcastCleanup() {
+    if (!m_cleanupCandidates || !QSettings().value("podcastAutoCleanup", false).toBool()) {
+        fprintf(stderr, "[sync] podcast cleanup skipped: %s\n", m_cleanupCandidates ? "disabled in settings" : "service unavailable");
+        advance();
+        return;
+    }
+    const auto candidates = podcastCleanupCandidatesForSession();
+    fprintf(stderr, "[sync] podcast cleanup enabled: %lld local candidates\n", static_cast<long long>(candidates.size()));
+    if (candidates.isEmpty()) { advance(); return; }
+    // Refresh persisted queue decisions from current local history. A previous
+    // run may have removed the device copy before the queue was saved.
+    const auto serial = m_device->deviceSerial();
+    for (auto &entry : m_entries) {
+        if (entry.value("type") != "podcast") continue;
+        for (const auto &value : candidates) {
+            const auto row = value.toMap();
+            if (entry.value("feedUrl") == row.value("feedUrl")
+                && entry.value("sourceUrl") == row.value("sourceUrl")
+                && row.value("devicePlayedSerials").toMap().value(serial).toBool()) {
+                entry["skip"] = true;
+                m_queue.setStatus(entry.value("entryId").toString(), "skipped", "played on this Zune");
+                break;
+            }
+        }
+    }
+    m_cleanupToken = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    m_cleanupSerial = m_device->deviceSerial();
+    m_cleanupGeneration = m_device->spokenGeneration();
+    m_cleanupStage = "inspect";
+    m_cleanupRows.clear();
+    m_syncPhase = "checking podcasts";
+    m_currentName = "Checking played podcasts";
+    emit progressChanged();
+    emit inspectPodcastCleanup(m_cleanupGeneration, m_cleanupToken, m_cleanupSerial, candidates);
+}
+
+void SyncEngine::settlePodcastRemovalRows() {
+    for (const auto &entry : m_queue.entries()) {
+        if (entry.type != "podcast-removal") continue;
+        if (entry.status == "removing")
+            m_queue.setStatus(entry.entryId, "removal-unconfirmed", "Removal not confirmed; refresh the Zune");
+        else if (entry.status == "pending-removal")
+            m_queue.setStatus(entry.entryId, "not-removed", m_cancelled
+                ? "Not removed (sync cancelled)" : "Not removed");
+    }
+}
+
+void SyncEngine::endPodcastCleanup(const QString &error) {
+    const bool current = cleanupDeviceCurrent();
+    settlePodcastRemovalRows();
+    m_cleanupToken.clear();
+    m_cleanupStage.clear();
+    m_cleanupRows.clear();
+    if (!error.isEmpty()) {
+        m_cleanupWarning = QStringLiteral("Podcast cleanup: %1").arg(error);
+        m_lastError = m_cleanupWarning;
+        emit podcastQueueNotice(m_cleanupWarning);
+    }
+    if (m_cancelled || !current) { finishSync(false); return; }
+    m_syncPhase.clear();
     advance();
+}
+
+void SyncEngine::onPodcastCleanupInspected(quint64 generation, const QString &token,
+        const QString &serial, const QVariantList &rows, const QString &error) {
+    if (!m_isSyncing || token.isEmpty() || token != m_cleanupToken || serial != m_cleanupSerial
+        || generation != m_cleanupGeneration || m_cleanupStage != "inspect") return;
+    if (m_cancelled || !cleanupDeviceCurrent() || !error.isEmpty() || rows.isEmpty()) {
+        endPodcastCleanup(error); return;
+    }
+    QSet<quint32> ids;
+    for (const auto &value : rows) {
+        const auto id = value.toMap().value("itemId").toUInt();
+        if (!id || id == 0xffffffffu || ids.contains(id)) {
+            endPodcastCleanup("Invalid cleanup identities. Nothing was removed.");
+            return;
+        }
+        ids.insert(id);
+    }
+    m_cleanupRows = rows;
+    fprintf(stderr, "[sync] podcast cleanup: %lld confirmed completed episodes eligible for removal\n", static_cast<long long>(rows.size()));
+    m_queue.beginBatch();
+    for (const auto &value : rows) {
+        const auto row = value.toMap();
+        m_cleanupQueueEntries.insert(row.value("itemId").toUInt(), m_queue.addPodcastRemoval(row));
+    }
+    m_queue.endBatch();
+    m_cleanupStage = "persist";
+    m_currentName = "Saving podcast listening history";
+    emit progressChanged();
+    emit recordDevicePlayed(token, serial, rows);
+}
+
+void SyncEngine::onDevicePlayedRecorded(const QString &token, const QString &serial,
+        const QVariantList &rows, const QString &error) {
+    if (!m_isSyncing || token.isEmpty() || token != m_cleanupToken || serial != m_cleanupSerial
+        || m_cleanupStage != "persist") return;
+    if (m_cancelled || !cleanupDeviceCurrent() || !error.isEmpty()) { endPodcastCleanup(error); return; }
+    if (rows != m_cleanupRows) {
+        endPodcastCleanup(QStringLiteral("Listening history acknowledgement changed. Nothing was removed."));
+        return;
+    }
+    // A played episode already in the transfer queue must not be re-created
+    // immediately after cleanup. Audiobooks and protected episodes are separate.
+    for (auto &entry : m_entries) {
+        if (entry.value("type") != "podcast") continue;
+        for (const auto &value : rows) {
+            const auto row = value.toMap();
+            if (entry.value("feedUrl") == row.value("feedUrl")
+                && entry.value("sourceUrl") == row.value("sourceUrl")) {
+                entry["skip"] = true;
+                m_queue.setStatus(entry.value("entryId").toString(), "skipped", "played on this Zune");
+                break;
+            }
+        }
+    }
+    m_cleanupStage = "purge";
+    m_syncPhase = "removing played podcasts";
+    m_currentName = "Removing played podcasts from the Zune";
+    emit progressChanged();
+    emit purgePlayedPodcasts(m_cleanupGeneration, token, serial, rows);
+}
+
+void SyncEngine::onPodcastCleanupProgress(quint64 generation, const QString &token,
+        const QString &serial, quint32 itemId, bool removed) {
+    if (!m_isSyncing || token.isEmpty() || token != m_cleanupToken || serial != m_cleanupSerial
+        || generation != m_cleanupGeneration || m_cleanupStage != "purge"
+        || !cleanupDeviceCurrent() || !m_cleanupQueueEntries.contains(itemId)) return;
+    const auto entry = m_cleanupQueueEntries.value(itemId);
+    if (removed) {
+        m_cleanupConfirmed.insert(itemId);
+        m_queue.setStatus(entry, "removed", "Removed from Zune");
+        m_queue.setProgress(entry, 1);
+    } else if (!m_cleanupConfirmed.contains(itemId)) {
+        m_queue.setStatus(entry, "removing", "Removing from Zune");
+    }
+}
+
+void SyncEngine::onPlayedPodcastsPurged(quint64 generation, const QString &token,
+        const QString &serial, const QVariantList &rows, const QString &error) {
+    if (!m_isSyncing || token.isEmpty() || token != m_cleanupToken || serial != m_cleanupSerial
+        || generation != m_cleanupGeneration || m_cleanupStage != "purge") return;
+    QSet<quint32> seen;
+    for (const auto &value : rows) {
+        const auto id = value.toMap().value("itemId").toUInt();
+        if (!id || seen.contains(id) || !m_cleanupRows.contains(value)) {
+            endPodcastCleanup(QStringLiteral("Unexpected cleanup result. Refresh the device before retrying."));
+            return;
+        }
+        seen.insert(id);
+    }
+    for (const auto &value : rows) {
+        const auto id = value.toMap().value("itemId").toUInt();
+        m_cleanupConfirmed.insert(id);
+        m_queue.setStatus(m_cleanupQueueEntries.value(id), "removed", "Removed from Zune");
+        m_queue.setProgress(m_cleanupQueueEntries.value(id), 1);
+    }
+    if (m_device) m_device->applyPodcastCleanup(generation, serial, rows);
+    m_podcastsRemoved += rows.size();
+    endPodcastCleanup(error);
 }
 
 void SyncEngine::advance() {
@@ -1211,18 +1508,71 @@ void SyncEngine::prepareEntry(int idx) {
     m_currentTranscoded = false;
     emit progressChanged();
 
+    if ((e.value("type")=="podcast" || e.value("type")=="audiobook") && e.value("needsPreparation").toBool()) {
+        m_spokenPreparationToken = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        m_spokenPreparationSerial = m_device ? m_device->deviceSerial() : QString();
+        m_syncPhase = e.value("type")=="podcast" && e.value("filepath").toString().isEmpty() ? "downloading" : "preparing";
+        m_queue.setStatus(m_currentEntryId, "preparing");
+        emit progressChanged();
+        emit prepareSpokenTransfer(m_spokenPreparationToken, e);
+        return;
+    }
     const QString filepath = e.value(QStringLiteral("filepath")).toString();
     QString aartist = e.value(QStringLiteral("albumartist")).toString();
     if (aartist.isEmpty())
         aartist = e.value(QStringLiteral("artist")).toString();
 
     const QString entryId = m_currentEntryId;
+    const bool podcast = e.value("type") == "podcast" || e.value("type") == "audiobook";
+    const bool podcastMp3 = e.value("codec") == "mp3";
+    const QString bookHash = e.value("type") == "audiobook" ? e.value("sourceHash").toString() : QString();
+    const bool chapter = e.value("type") == "audiobook" && e.contains("rangeStartMs");
+    const qint64 rangeStart = e.value("rangeStartMs").toLongLong();
+    const qint64 rangeEnd = e.value("rangeEndMs").toLongLong();
+    if (e.value("type") == "audiobook" &&
+        (!QRegularExpression("^[0-9a-f]{64}$").match(bookHash).hasMatch() ||
+         e.contains("rangeStartMs") != e.contains("rangeEndMs") ||
+         (chapter && (rangeStart < 0 || rangeEnd <= rangeStart ||
+                      rangeEnd > e.value("sourceDurationMs").toLongLong() ||
+                      rangeEnd-rangeStart != e.value("durationMs").toLongLong())))) {
+        onPrepareFinished(entryId, {}, false, "Invalid saved audiobook preparation. Remove it and add the whole book again.");
+        return;
+    }
+    auto sourceCopy = chapter ? m_bookSourceCopies.value(bookHash) : std::shared_ptr<QTemporaryFile>();
+    const auto copyCancelled = m_bookPreparationCancel;
     const int discNumber = e.value(QStringLiteral("discNumber")).toInt();
     QPointer<SyncEngine> self(this);
 
     // Sniff + retag/transcode off the UI thread (file IO can be network).
-    auto discard = QtConcurrent::run([self, entryId, filepath, aartist, discNumber] {
-        const bool mpeg = sniffIsMpeg(filepath);
+    auto discard = QtConcurrent::run([self, entryId, filepath, aartist, discNumber, podcast, podcastMp3, bookHash, chapter, rangeStart, rangeEnd, sourceCopy, copyCancelled]() mutable {
+        QString inputPath = filepath;
+        QString snapshot;
+        if (!bookHash.isEmpty()) {
+            if (!sourceCopy) {
+                sourceCopy = std::make_shared<QTemporaryFile>(QDir::tempPath() + "/zuuned-book-XXXXXX.audio");
+                QFile source(filepath);
+                QCryptographicHash hash(QCryptographicHash::Sha256);
+                const QStorageInfo temporaryStorage(QDir::tempPath());
+                bool ok = source.size() > 0 && source.open(QIODevice::ReadOnly) && sourceCopy->open();
+                if (temporaryStorage.isValid() && temporaryStorage.bytesAvailable() < source.size() + 16LL*1024*1024) ok = false;
+                while (ok && !source.atEnd()) {
+                    if (copyCancelled->load()) { ok = false; break; }
+                    const auto bytes = source.read(1024*1024);
+                    ok = source.error()==QFile::NoError && sourceCopy->write(bytes)==bytes.size();
+                    hash.addData(bytes);
+                }
+                ok = ok && !copyCancelled->load() && QString::fromLatin1(hash.result().toHex())==bookHash && sourceCopy->flush();
+                if (!ok) {
+                    if (self) QMetaObject::invokeMethod(self.data(), [self,entryId] {
+                        if(self) self->onPrepareFinished(entryId,QString(),false,"Audiobook preparation stopped: the source changed, copying was cancelled, or temporary storage is unavailable. Add the book again.");
+                    },Qt::QueuedConnection);
+                    return;
+                }
+                sourceCopy->close();
+            }
+            snapshot = sourceCopy->fileName(); inputPath = snapshot;
+        }
+        const bool mpeg = !chapter && (podcast ? podcastMp3 : sniffIsMpeg(filepath));
         // W2: MPEG retag is near-instant ("sending"); anything else
         // transcodes ("transcoding" — the slow, freeze-looking half).
         if (self)
@@ -1235,7 +1585,9 @@ void SyncEngine::prepareEntry(int idx) {
         QString error;
         bool transcoded = false;
 
-        if (mpeg) {
+        if (mpeg && podcast) {
+            prepared = inputPath; // Immutable book snapshot or original podcast download.
+        } else if (mpeg) {
             // ID3v2.3 retag; TPE1 ← albumartist. nil → send original
             // with its own tags (mac behavior).
             char *p = zuuned_retag_mp3_with_disc(filepath.toUtf8().constData(),
@@ -1285,7 +1637,9 @@ void SyncEngine::prepareEntry(int idx) {
                         }, Qt::QueuedConnection);
                 }
             };
-            char *p = zuuned_transcode_audio_with_disc(filepath.toUtf8().constData(),
+            char *p = chapter
+                ? zuuned_transcode_audio_range(inputPath.toUtf8().constData(), rangeStart, rangeEnd, cb, &ctx)
+                : zuuned_transcode_audio_with_disc(inputPath.toUtf8().constData(),
                                              aartist.isEmpty()
                                                  ? nullptr
                                                  : aartist.toUtf8().constData(),
@@ -1298,15 +1652,94 @@ void SyncEngine::prepareEntry(int idx) {
             }
         }
 
+        // Keep generated output owned even if QObject destruction discards the
+        // queued completion. Transfer ownership only when the engine accepts it.
+        auto preparedOwner = std::shared_ptr<QString>(new QString(prepared != filepath ? prepared : QString()),
+            [](QString *path) { if (!path->isEmpty()) QFile::remove(*path); delete path; });
+        // Chapter source copies are shared across ranges; an unchaptered MP3
+        // snapshot itself becomes the prepared output under the guard above.
+        if (!chapter && sourceCopy && prepared == snapshot) sourceCopy->setAutoRemove(false);
         if (self)
             QMetaObject::invokeMethod(self.data(),
-                [self, entryId, prepared, transcoded, error] {
-                    if (self)
-                        self->onPrepareFinished(entryId, prepared,
-                                                transcoded, error);
+                [self, entryId, prepared, transcoded, error, sourceCopy, chapter, bookHash, copyCancelled, preparedOwner] {
+                    if (!self || !self->m_isSyncing || self->m_currentEntryId != entryId) return;
+                    if (chapter && sourceCopy && error.isEmpty() && !copyCancelled->load())
+                        self->m_bookSourceCopies.insert(bookHash, sourceCopy);
+                    self->onPrepareFinished(entryId, prepared, transcoded, error);
+                    preparedOwner->clear(); // engine now owns output or already removed it
                 }, Qt::QueuedConnection);
     });
     Q_UNUSED(discard);
+}
+
+void SyncEngine::onSpokenPrepared(const QString &token, const QVariantList &items, const QString &failure) {
+    if (token.isEmpty() || token != m_spokenPreparationToken || !m_isSyncing || m_entryPos < 0) return;
+    m_spokenPreparationToken.clear();
+    const auto current = m_entries[m_entryPos];
+    if (m_cancelled || !m_device || !m_device->connected() || m_device->deviceSerial() != m_spokenPreparationSerial) {
+        m_cancelled = true;
+        onPrepareFinished(m_currentEntryId, {}, false, "Device disconnected during preparation.");
+        return;
+    }
+    const bool book = current.value("type") == "audiobook";
+    auto sameGroup = [&](const QVariantMap &row) {
+        return book ? row.value("type")=="audiobook" && row.value("bookId")==current.value("bookId")
+                    : row.value("entryId")==current.value("entryId");
+    };
+    QString error = failure;
+    QMap<QString,QVariantMap> byIdentity;
+    for (const auto &item : items) {
+        const auto row = item.toMap();
+        const auto identity = row.value("identity").toString();
+        if (identity.isEmpty() || byIdentity.contains(identity) || row.value("needsPreparation").toBool()) {
+            error = "Prepared spoken identities are incomplete or ambiguous."; break;
+        }
+        byIdentity.insert(identity,row);
+    }
+    QMap<int,QVariantMap> replacements;
+    qint64 required = 0, reserved = 0;
+    const auto queued = m_queue.entries();
+    for (int i=m_entryPos;error.isEmpty() && i<m_entries.size();++i) {
+        const auto before = m_entries[i];
+        if (!sameGroup(before) || !before.value("needsPreparation").toBool()) continue;
+        auto row = byIdentity.value(before.value("identity").toString());
+        bool matches = !row.isEmpty() && row.value("type")==before.value("type") &&
+                       !row.value("filepath").toString().isEmpty();
+        const QStringList keys = book
+            ? QStringList{"spokenId","bookId","identity","title","album","artist","filepath","sourceBytes","sourceMtime","partNumber","durationMs","rangeStartMs","rangeEndMs","sourceDurationMs"}
+            : QStringList{"spokenId","identity","feedUrl","sourceUrl"};
+        for (const auto &key : keys) matches = matches && row.value(key)==before.value(key);
+        if (book) matches = matches && QRegularExpression("^[0-9a-f]{64}$").match(row.value("bookKey").toString()).hasMatch() &&
+                              QRegularExpression("^[0-9a-f]{64}$").match(row.value("sourceHash").toString()).hasMatch();
+        if (!matches) { error="The queued book or episode changed. Remove it and add it again."; break; }
+        row["entryId"] = before.value("entryId");
+        // Podcast display/custom art choices remain the queued choices; download
+        // fills only media details, not a silent metadata edit.
+        if (!book) for (const auto &key : {"title","album","artist","posterPath"})
+            if (!before.value(key).toString().isEmpty()) row[key] = before.value(key);
+        required += estimateTrackBytes(row.value("durationMs").toInt(), row.value("sourceBytes").toLongLong());
+        for (const auto &entry : queued)
+            if (entry.entryId==row.value("entryId").toString() && (entry.status=="pending" || entry.status=="failed")) reserved += entry.estimatedBytes;
+        replacements.insert(i,row);
+    }
+    if (error.isEmpty() && (replacements.isEmpty() || !replacements.contains(m_entryPos)))
+        error = "No matching spoken audio was prepared.";
+    if (error.isEmpty() && required > capacityBudget() + reserved)
+        error = "The complete book or episode no longer fits on the Zune. Free space and retry.";
+    if (!error.isEmpty()) {
+        for (int i=m_entryPos;i<m_entries.size();++i) if (sameGroup(m_entries[i])) {
+            m_entries[i]["skip"] = true;
+            m_queue.setStatus(m_entries[i].value("entryId").toString(), "failed", error);
+        }
+        onPrepareFinished(m_currentEntryId, {}, false, error);
+        return;
+    }
+    for (auto it=replacements.cbegin();it!=replacements.cend();++it) {
+        m_entries[it.key()] = it.value();
+        m_queue.updateSpokenPayload(it.value().value("entryId").toString(), it.value(),
+            estimateTrackBytes(it.value().value("durationMs").toInt(), it.value().value("sourceBytes").toLongLong()));
+    }
+    prepareEntry(m_entryPos);
 }
 
 void SyncEngine::onTranscodeProgress(const QString &entryId, double frac) {
@@ -1351,6 +1784,25 @@ void SyncEngine::onPrepareFinished(const QString &entryId,
 
     m_currentTranscoded = transcoded;
     m_currentTempPath = (preparedPath != original) ? preparedPath : QString();
+
+    if (e.value("type") == "podcast" || e.value("type") == "audiobook") {
+        if (QFileInfo(preparedPath).size() <= 0 || QFileInfo(preparedPath).size() > 512LL * 1024 * 1024) {
+            cleanupCurrentTemp(original);
+            markEntryTerminal(entryId, "failed", "Prepared spoken audio exceeds the 512 MiB per-part limit.");
+            m_spacing.start(); return;
+        }
+        if (!markInflight(e.value("type").toString(), e)) {
+            cleanupCurrentTemp(original);
+            markEntryTerminal(entryId, "failed", "Cannot save spoken transfer recovery information.");
+            finishSync(false); return;
+        }
+        m_queue.setStatus(entryId, "syncing");
+        m_syncPhase = "sending";
+        emit workerSyncNotify(m_currentName, m_entryPos, m_totalCount);
+        if (e.value("type") == "audiobook") emit workerSendAudiobook(entryId, preparedPath, e);
+        else emit workerSendPodcast(entryId, preparedPath, e);
+        return;
+    }
 
     QString aartist = e.value(QStringLiteral("albumartist")).toString();
     if (aartist.isEmpty())
@@ -1916,6 +2368,8 @@ void SyncEngine::cancelSync() {
         return;
     fprintf(stderr, "[sync] cancel requested\n");
     m_cancelled = true;
+    if (!m_spokenPreparationToken.isEmpty()) emit cancelSpokenTransfer(m_spokenPreparationToken);
+    m_bookPreparationCancel->store(true);
     if (m_worker)
         m_worker->requestAbort();   // mid-transfer abort (thread-safe)
     // Kill an in-flight retag/transcode too — without this, cancel
@@ -2054,6 +2508,15 @@ void SyncEngine::onPlaylistForgeDone(const QString &name, quint32 playlistId,
 }
 
 void SyncEngine::finishSync(bool completed) {
+    settlePodcastRemovalRows();
+    m_cleanupToken.clear();
+    m_cleanupStage.clear();
+    m_cleanupRows.clear();
+    if (!m_spokenPreparationToken.isEmpty()) emit cancelSpokenTransfer(m_spokenPreparationToken);
+    m_spokenPreparationToken.clear();
+    m_spokenPreparationSerial.clear();
+    m_bookPreparationCancel->store(true);
+    m_bookSourceCopies.clear();
     m_syncPhase.clear();   // W2
     clearInflight();
     schedulePersist();   // A1: statuses settled
@@ -2075,6 +2538,8 @@ void SyncEngine::finishSync(bool completed) {
     m_videoSending = false;
     normalizeStatuses(m_cancelled ? QStringLiteral("cancelled")
                                   : QStringLiteral("sync ended"));
+    if (m_podcastsRemoved > 0)
+        emit podcastQueueNotice(QStringLiteral("Removed %1 played podcasts from the Zune.").arg(m_podcastsRemoved));
     if (completed && !m_cancelled) {
         m_syncCompleted = true;
         m_currentName =
@@ -2086,22 +2551,21 @@ void SyncEngine::finishSync(bool completed) {
         emit workerSyncNotify(QStringLiteral("Sync complete"),
                               m_totalCount, m_totalCount);
         // Summary modal counts — tallied BEFORE the queue sweep below.
-        int tracksOk = 0, videosOk = 0, photosOk = 0, skipped = 0, failed = 0;
+        int tracksOk = 0, videosOk = 0, photosOk = 0, skipped = 0, failed = 0, podcastsOk = 0, audiobooksOk = 0;
         for (const SyncQueueEntry &e : m_queue.entries()) {
             if (e.status == QLatin1String("verified")
                 || (e.status == QLatin1String("sent") && m_videoWarningsThisRun.contains(e.entryId))) {
                 if (e.type == QLatin1String("track")) tracksOk++;
                 else if (e.type == QLatin1String("video")) videosOk++;
                 else if (e.type == QLatin1String("photo")) photosOk++;
+                else if (e.type == QLatin1String("podcast")) podcastsOk++;
+                else if (e.type == QLatin1String("audiobook")) audiobooksOk++;
             } else if (e.status == QLatin1String("skipped")) {
                 skipped++;
             } else if (e.status == QLatin1String("failed")) {
                 failed++;
             }
         }
-        emit syncSummary(
-            double(QDateTime::currentMSecsSinceEpoch() - m_syncStartMs),
-            tracksOk, videosOk, photosOk, skipped, failed);
         // D1: persist the outcome — the queue tab shows "last sync"
         // after the queue sweeps itself clean.
         {
@@ -2111,6 +2575,10 @@ void SyncEngine::finishSync(bool completed) {
             last.insert(QStringLiteral("tracks"), tracksOk);
             last.insert(QStringLiteral("videos"), videosOk);
             last.insert(QStringLiteral("photos"), photosOk);
+            last.insert(QStringLiteral("podcasts"), podcastsOk);
+            last.insert(QStringLiteral("podcastsRemoved"), m_podcastsRemoved);
+            last.insert(QStringLiteral("podcastCleanupWarning"), m_cleanupWarning);
+            last.insert(QStringLiteral("audiobooks"), audiobooksOk);
             last.insert(QStringLiteral("skipped"), skipped);
             last.insert(QStringLiteral("failed"), failed);
             last.insert(QStringLiteral("device"), currentDeviceIdent());
@@ -2121,6 +2589,9 @@ void SyncEngine::finishSync(bool completed) {
                 f.write(QJsonDocument(QJsonObject::fromVariantMap(last))
                             .toJson(QJsonDocument::Compact));
         }
+        emit syncSummary(
+            double(QDateTime::currentMSecsSinceEpoch() - m_syncStartMs),
+            tracksOk, videosOk, photosOk, skipped, failed, podcastsOk, audiobooksOk);
         // Auto-clear: successful entries leave the queue; failed ones
         // stay visible for retry.
         m_queue.removeCompleted();
@@ -2148,8 +2619,159 @@ void SyncEngine::finishSync(bool completed) {
 // visibly re-queueable.
 void SyncEngine::normalizeStatuses(const QString &note) {
     for (const SyncQueueEntry &e : m_queue.entries()) {
-        if (e.status == QLatin1String("transcoding")
+        if (e.status == QLatin1String("preparing")
+            || e.status == QLatin1String("transcoding")
             || e.status == QLatin1String("syncing"))
             m_queue.setStatus(e.entryId, QStringLiteral("failed"), note);
     }
+}
+
+void SyncEngine::addPodcasts(const QVariantList &episodes) { addSpoken(episodes, false); }
+void SyncEngine::addAudiobooks(const QVariantList &parts) { addSpoken(parts, true); }
+void SyncEngine::addSpoken(const QVariantList &episodes, bool books) {
+    if (!m_device || !m_device->connected() || !m_worker || m_isSyncing) {
+        emit podcastQueueNotice("Connect a Zune and finish the current sync before adding episodes."); return;
+    }
+    if (episodes.isEmpty() || episodes.size() > 5000) {
+        emit podcastQueueNotice("Choose between 1 and 5,000 spoken items."); return;
+    }
+    const bool draft = episodes.first().toMap().value("needsPreparation").toBool();
+    for (const auto &value : episodes) {
+        const auto row = value.toMap();
+        const bool rowDraft = row.value("needsPreparation").toBool();
+        if (rowDraft != draft ||
+            (books ? (!QRegularExpression("^[0-9a-f]{64}$").match(row.value("bookKey").toString()).hasMatch() ||
+                       (!draft && !QRegularExpression("^[0-9a-f]{64}$").match(row.value("sourceHash").toString()).hasMatch()) ||
+                       (draft && row.value("bookId").toString().isEmpty()) ||
+                       row.value("partNumber").toInt() <= 0 || row.value("partNumber").toInt() > 65535 ||
+                       row.value("durationMs").toLongLong() <= 0 || row.value("durationMs").toLongLong() > INT_MAX ||
+                       row.contains("rangeStartMs") != row.contains("rangeEndMs") ||
+                       (row.contains("rangeStartMs") && (row.value("rangeStartMs").toLongLong()<0 ||
+                        row.value("rangeEndMs").toLongLong()>row.value("sourceDurationMs").toLongLong() ||
+                        row.value("rangeEndMs").toLongLong()-row.value("rangeStartMs").toLongLong()!=row.value("durationMs").toLongLong())))
+                    : (row.value("feedUrl").toString().isEmpty() || row.value("sourceUrl").toString().isEmpty())) ||
+            row.value("identity").toString().isEmpty() || row.value("title").toString().isEmpty() ||
+            (draft && row.value("spokenId").toString().isEmpty()) ||
+            (!draft && !QFileInfo(row.value("filepath").toString()).isFile())) {
+            emit podcastQueueNotice("Spoken audio or identity is missing. Import or download it again before syncing."); return;
+        }
+    }
+    const auto token = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    m_podcastChecks.insert(token);
+    if (draft) { onSpokenInspected(token, m_device->deviceSerial(), episodes, {}, books); return; }
+    if (books) emit workerInspectAudiobooks(token, m_device->deviceSerial(), episodes);
+    else emit workerInspectPodcasts(token, m_device->deviceSerial(), episodes);
+}
+
+void SyncEngine::onPodcastsInspected(const QString &token, const QString &serial,
+                                      const QVariantList &episodes, const QString &error) {
+    onSpokenInspected(token, serial, episodes, error, false);
+}
+void SyncEngine::onAudiobooksInspected(const QString &token, const QString &serial,
+                                      const QVariantList &parts, const QString &error) {
+    onSpokenInspected(token, serial, parts, error, true);
+}
+void SyncEngine::onSpokenInspected(const QString &token, const QString &serial,
+                                   const QVariantList &episodes, const QString &error, bool books) {
+    if (!m_podcastChecks.remove(token)) return;
+    if (!error.isEmpty()) { emit podcastQueueNotice(error); return; }
+    if (!m_device || !m_device->connected() || m_device->deviceSerial() != serial || m_isSyncing) {
+        emit podcastQueueNotice("Device state changed; add the episodes again."); return;
+    }
+    qint64 budget = capacityBudget();
+    int added = 0, existing = 0, queued = 0, consumed = 0;
+    QVariantList rejected;
+    // Admission is whole-book atomic. Never quietly queue just the chapters
+    // that fit and leave the ending behind when capacity runs out.
+    QSet<QString> booksWithoutSpace;
+    if (books) {
+        QMap<QString,qint64> costs;
+        QMap<QString,QString> titles;
+        for (const auto &value : episodes) {
+            const auto row = value.toMap();
+            if (row.value("onDevice").toBool()) continue;
+            const bool present = m_queue.containsAudiobook(row);
+            if (present) continue;
+            const auto key = row.value("bookKey").toString();
+            costs[key] += estimateTrackBytes(row.value("durationMs").toInt(), row.value("needsPreparation").toBool() ? row.value("sourceBytes").toLongLong() : QFileInfo(row.value("filepath").toString()).size());
+            titles[key] = row.value("album").toString();
+        }
+        qint64 remaining = budget;
+        for (auto it=costs.cbegin();it!=costs.cend();++it) {
+            if (it.value()>remaining) {
+                booksWithoutSpace.insert(it.key());
+                rejected.append(QVariantMap{{"title",titles.value(it.key())},{"estGB",double(it.value())/(1024*1024*1024)}});
+            } else remaining -= it.value();
+        }
+    }
+    m_queue.beginBatch();
+    for (const auto &value : episodes) {
+        const auto row = value.toMap();
+        if (books && booksWithoutSpace.contains(row.value("bookKey").toString())) continue;
+        if (!books && QSettings().value("podcastAutoCleanup", false).toBool()
+            && !row.value("keepOnDevice").toBool()
+            && row.value("devicePlayedSerials").toMap().value(serial).toBool()) { ++consumed; continue; }
+        if (row.value("onDevice").toBool()) { ++existing; continue; }
+        bool duplicate = books && m_queue.containsAudiobook(row);
+        for (const auto &e : m_queue.entries()) {
+            if (!books && e.type == "podcast" && e.podcast.value("feedUrl") == row.value("feedUrl") &&
+                (e.podcast.value("identity") == row.value("identity") || e.podcast.value("sourceUrl") == row.value("sourceUrl"))) duplicate = true;
+        }
+        if (duplicate) { ++queued; continue; }
+        const auto bytes = estimateTrackBytes(row.value("durationMs").toInt(), row.value("needsPreparation").toBool() ? row.value("sourceBytes").toLongLong() : QFileInfo(row.value("filepath").toString()).size());
+        if (bytes > budget) {
+            rejected.append(QVariantMap{{"title", row.value("title")}, {"estGB", double(bytes) / (1024*1024*1024)}}); continue;
+        }
+        if (!(books ? m_queue.addAudiobook(row, bytes) : m_queue.addPodcast(row, bytes)).isEmpty()) { ++added; budget -= bytes; }
+    }
+    m_queue.endBatch();
+    if (added) { stampQueueDevice(); emit queueItemsAdded(added); }
+    if (!rejected.isEmpty()) emitCapacityRejected(rejected, added);
+    if (existing) emit podcastQueueNotice(QStringLiteral("%1 already on the Zune").arg(existing));
+    if (consumed) emit podcastQueueNotice(QStringLiteral("%1 already played on this Zune. Choose Keep on Zune to add again.").arg(consumed));
+}
+
+void SyncEngine::onPodcastSendDone(const QString &entryId, bool ok, quint32 id,
+                                    const QString &error, bool reused, bool recoveryRequired) {
+    onSpokenSendDone(entryId, ok, id, error, reused, false, recoveryRequired);
+}
+void SyncEngine::onAudiobookSendDone(const QString &entryId, bool ok, quint32 id, const QString &error, bool reused) {
+    onSpokenSendDone(entryId, ok, id, error, reused, true);
+}
+void SyncEngine::onSpokenSendDone(const QString &entryId, bool ok, quint32 id,
+                                  const QString &error, bool reused, bool books, bool recoveryRequired) {
+    if (!m_isSyncing || entryId != m_currentEntryId || m_entryPos < 0 ||
+        m_entries[m_entryPos].value("type") != (books ? "audiobook" : "podcast")) return;
+    const auto row = m_entries[m_entryPos];
+    if (ok) {
+        clearInflight();
+        if (!books && m_device && m_device->connected() &&
+            m_device->deviceSerial() == m_sendDeviceSerial &&
+            m_device->spokenGeneration() == m_sendDeviceGeneration)
+            m_device->notePodcastOnDevice(m_sendDeviceGeneration, m_sendDeviceSerial, row, id);
+        if (!reused && m_device) m_device->noteBytesWritten(QFileInfo(m_currentTempPath.isEmpty()
+            ? row.value("filepath").toString() : m_currentTempPath).size());
+        m_queue.setProgress(entryId, 1);
+        markEntryTerminal(entryId, reused ? "skipped" : "verified", reused ? "already on the Zune" : error);
+        if (!error.isEmpty()) emit podcastQueueNotice(error);
+    } else {
+        // A zero item ID alone proves nothing: a lost response may conceal an
+        // uploaded object. Only the worker's explicit confirmed-cleanup result
+        // can retire this marker; unknown/residual writes still require review.
+        if (recoveryRequired) retainFailedInflight(id);
+        else clearInflight();
+        m_cancelled = true; m_lastError = error;
+        markEntryTerminal(entryId, "failed", error);
+    }
+    cleanupCurrentTemp(row.value("filepath").toString());
+    if (books) {
+        const auto hash = row.value("sourceHash").toString();
+        bool needed = false;
+        for (int next=m_entryPos+1;next<m_entries.size();++next)
+            if (m_entries[next].value("type")=="audiobook" && m_entries[next].value("sourceHash")==hash)
+                needed = true;
+        if (!needed) m_bookSourceCopies.remove(hash);
+    }
+    if (m_cancelled) finishSync(false);
+    else m_spacing.start();
 }

@@ -1,7 +1,7 @@
 # libzune API reference
 
-Current public interface: **90 functions** in [include/zune.h](../include/zune.h).
-This reference describes the implementation as reviewed on October 4, 2026.
+Current public interface: **97 functions** in [include/zune.h](../include/zune.h).
+The base review is October 4, 2026, with podcast contracts updated October 9.
 The exact declarations below are generated; [TOC.md](TOC.md) links each one to
 its implementation. Build and platform requirements are in [README](../README.md).
 
@@ -25,9 +25,10 @@ all of them. Plain allocated outputs (object names, references, series/title
 strings) use `free`. Prepared-media paths require both `unlink` and `free`.
 
 **Scan cache lifetime:** a successful `zune_infiltrate` stores a borrowed pointer
-to the returned scan in the device. Keep that scan alive for all `zune_find_*`
-calls. `zune_free_scan` does not clear the device pointer. After freeing it, do
-not call a find helper until another successful scan replaces the cache. A
+to the returned scan in the device. Keep that scan alive for the scan-based music `zune_find_*`
+calls. `zune_find_podcast_episode` and `zune_find_audiobook_part` instead query live MTP state and requires
+no ZMDB scan. `zune_free_scan` does not clear the device pointer. After freeing it, do
+not call a scan-based find helper until another successful scan replaces the cache. A
 failed scan does not replace it. The simplest lifetime is scan, search/use,
 sever, free scan. Scans are snapshots, not a live index of subsequent uploads.
 
@@ -36,7 +37,13 @@ sever, free scan. Scans are snapshots, not a live index of subsequent uploads.
 Most mutation functions return 0 for success and -1 for failure, but this is
 **not a universal rule**:
 
-- Forge functions return a nonzero object ID, or 0 on failure.
+- Most forge functions return a nonzero object ID, or 0 on failure.
+  `zune_forge_podcast_series` instead returns 0 on success, negative on failure,
+  and writes the ID through
+  an output pointer; on failure, a nonzero ID identifies an orphan requiring review.
+  Both podcast mutation APIs return `ZUNE_PODCAST_FAILED_CLEANED` (-2) only
+  after confirmed deletion of their new object; other failures return -1.
+  A zero ID on its own never proves cleanup.
 - `zune_get_folders` returns a count or -1. Other enumeration functions return
   an allocated array and count; NULL with zero count can mean empty or failure.
   Some enumeration paths skip unreadable records, so results may be partial.
@@ -151,6 +158,9 @@ when these structs change; this project does not promise a stable binary ABI.
 | `ZunePhotoFile` | ID, filename, size and parent ID. |
 | `ZunePhotoAlbum` | Folder ID, name and photo count. |
 | `ZunePlaylist` | ID, name, ordered track IDs and count. |
+| `ZuneAudiobookPartInput` | Borrowed book content key/name/author, part title/order and duration; caller preserves immutable prepared audio. |
+| `ZunePodcastSeries` | Owned show ID/name/author/feed URL, released with `zune_free_podcast_series`. |
+| `ZunePodcastEpisodeInput` | Borrowed prepared-episode metadata and live series ID; keep strings/file unchanged through the synchronous send. |
 | `ZuneAlbumObject` | ID, name, artist, track IDs and count. |
 | `ZuneDBAlbum` | ID, title, artist, year (HD; zero on Classic). |
 | `ZuneDBArtist` | ID and name, not a portrait or online provider identity. |
@@ -161,6 +171,9 @@ when these structs change; this project does not promise a stable binary ABI.
 | `ZuneFolderEntry` | ID and allocated name. |
 | `ZuneMetaGenre` | Other 0x21, music video 0x23, movie 0x25, TV 0x26. |
 | `zune_progress_fn` | `(uint64_t bytes_sent, uint64_t bytes_total, void *userdata)`. Runs in the synchronous transfer call; do not reenter device I/O. |
+
+See [Spoken-media integration](SPOKEN_MEDIA.md) for podcast call order, covers,
+identity persistence, failure recovery and the separate audiobook research gate.
 
 ## Maintaining this reference
 
@@ -173,7 +186,7 @@ validate generated signatures and one note per declared function. Then run
 
 ## Complete function reference
 
-90 declarations, in public-header order.
+105 declarations, in public-header order.
 
 ### zune_breach
 
@@ -935,6 +948,166 @@ Release album array, strings and track-ID arrays returned by get_albums.
 
 [Declaration](../include/zune.h#L469); [implementation index](TOC.md#public-api).
 
+### zune_get_podcast_series
+
+```c
+int zune_get_podcast_series(ZuneDeviceHandle dev, ZunePodcastSeries **series, int *count);
+```
+
+Experimental complete MTP series inventory with exact feed identity. Requires successful MTPZ authentication; unauthenticated sessions fail rather than reporting an empty library. 0 success, including NULL array/count 0 when empty; -1 failure with no partial result. Use free_podcast_series. Synchronous, requiring the same serializer as all other device calls. Keel roundtrip tested; other-model acceptance pending.
+
+[Declaration](../include/zune.h#L490); [implementation index](TOC.md#public-api).
+
+### zune_free_podcast_series
+
+```c
+void zune_free_podcast_series(ZunePodcastSeries *series, int count);
+```
+
+Free the owned series array and each name/author/feed string using its returned count. NULL is accepted.
+
+[Declaration](../include/zune.h#L491); [implementation index](TOC.md#public-api).
+
+### zune_get_podcast_episodes
+
+```c
+int zune_get_podcast_episodes(ZuneDeviceHandle dev, ZunePodcastEpisode **episodes, int *count);
+```
+
+Read-only native schema-0x10 episode inventory from complete wildcard handles. Authenticated active Keel/Pavo sessions only. Both output pointers required; 0 success including NULL/count zero when empty, -1 failure with no partial output. Owned array and title/author/series_name strings use free_podcast_episodes. Group by series_id, never title; firmware may return empty series_name, resolved through series inventory. Exact property widths and Unicode validated, transport failures stop immediately. No writes or playback guarantees.
+
+[Declaration](../include/zune.h#L506); [implementation index](TOC.md#public-api).
+
+### zune_free_podcast_episodes
+
+```c
+void zune_free_podcast_episodes(ZunePodcastEpisode *episodes, int count);
+```
+
+Free a get_podcast_episodes array and all its strings with the returned count. NULL accepted.
+
+[Declaration](../include/zune.h#L507); [implementation index](TOC.md#public-api).
+
+### zune_get_podcast_episode_sources
+
+```c
+int zune_get_podcast_episode_sources(ZuneDeviceHandle dev, ZunePodcastEpisodeSource **sources, int *count);
+```
+
+Read-only complete exact feed/source episode mapping for authenticated active Keel/Pavo. Reads series once, then each distinct series folder's MP3 inventory once; validates exact series relationship, live parent/format and podcast classification. Both outputs required. 0 succeeds including NULL/count 0 when known empty; -1 unavailable, malformed or ambiguous with no partial output. Duplicate feeds, exact feed/source pairs or handles fail closed. Owned array plus UTF-8 feed_url/source_url strings use free_podcast_episode_sources. Same source URL under distinct feeds remains distinct. No title heuristics, mutations or deletion authorization. Serialize all device I/O.
+
+[Declaration](../include/zune.h#L521); [implementation index](TOC.md#public-api).
+
+### zune_free_podcast_episode_sources
+
+```c
+void zune_free_podcast_episode_sources(ZunePodcastEpisodeSource *sources, int count);
+```
+
+Free owned feed_url/source_url strings and the get_podcast_episode_sources array using the returned count. NULL accepted.
+
+[Declaration](../include/zune.h#L522); [implementation index](TOC.md#public-api).
+
+### zune_get_podcast_states
+
+```c
+int zune_get_podcast_states(ZuneDeviceHandle dev, ZunePodcastState **states, int *count);
+```
+
+Read fresh persisted podcast state from a complete bounded ZMDB snapshot. Requires authenticated active Keel/Pavo and matching v2/v5 layout; serialize device I/O. Both output pointers required. 0 means complete success, including NULL/count 0 when known empty; -1 means unavailable, malformed, canceled or incomplete and returns NULL/count 0. Caller owns array, released by free_podcast_states. Exposes exact atom/series IDs, owned validated UTF-8 title, duration, bookmark, raw flags and marked_played mask 0x200. Bookmark and played are independent. This records firmware state, not proof of uninterrupted natural completion, and never authorizes deletion. Join fresh live identities including exact title and duration before a separate policy acts; unknown state must preserve media.
+
+[Declaration](../include/zune.h#L542); [implementation index](TOC.md#public-api).
+
+### zune_free_podcast_states
+
+```c
+void zune_free_podcast_states(ZunePodcastState *states, int count);
+```
+
+Release the owned get_podcast_states array and its title strings using the returned count. NULL accepted.
+
+[Declaration](../include/zune.h#L543); [implementation index](TOC.md#public-api).
+
+### zune_forge_podcast_series
+
+```c
+int zune_forge_podcast_series(ZuneDeviceHandle dev, uint32_t parent_id,
+                             const char *filename, const char *name,
+                             const char *author, const char *feed_url,
+                             uint32_t *out_id);
+```
+
+Experimental zero-byte podcast series creation under an explicit parent, or reuse of exactly one live exact feed-URL match. Requires successful MTPZ authentication. Never merges by title or overwrites existing metadata. Descriptor and property readback checks. Required out_id is zeroed first; 0 return succeeds, negative fails. ZUNE_PODCAST_FAILED_CLEANED (-2) confirms deletion of the new object; other failures return -1. A nonzero ID on failure identifies only a new orphan whose cleanup failed: inspect before retrying. No implicit artwork or finalize. Keel roundtrip tested; other-model acceptance pending.
+
+[Declaration](../include/zune.h#L554); [implementation index](TOC.md#public-api).
+
+### zune_smuggle_podcast_episode
+
+```c
+int zune_smuggle_podcast_episode(ZuneDeviceHandle dev, uint32_t parent_id,
+                                 const char *filepath,
+                                 const ZunePodcastEpisodeInput *episode,
+                                 uint32_t *out_id);
+```
+
+Experimental caller-prepared MP3 episode upload, with podcast category and series relationship. Requires successful MTPZ authentication; no transcoding or codec sniffing. Live series/source-URL identity within the supplied parent folder plus title/size checks controls reuse; ambiguous matches fail without writes. Caller retains feed/GUID identity across URL changes. Firmware may normalize filenames. Keel/Pavo schema 0x10 supports zero MetaGenre/empty redundant SeriesName readback; series link/URL/title and format/size must match. 0 success, negative failure (including ZUNE_PODCAST_FAILED_CLEANED), required out_id uses the same orphan contract as forge_podcast_series. No implicit finalize or played/bookmark guarantee. Keel upload/reuse/extraction/cleanup and new-session repeat tested; user confirmed Classic playback and show artwork. Resume and other models remain unverified.
+
+[Declaration](../include/zune.h#L581); [implementation index](TOC.md#public-api).
+
+### zune_find_podcast_episode
+
+```c
+int zune_find_podcast_episode(ZuneDeviceHandle dev, const char *feed_url,
+                              const char *source_url, uint32_t *parent_id,
+                              uint32_t *series_id, uint32_t *episode_id);
+```
+
+Read-only queue admission lookup by exact feed URL and episode source URL. Requires MTPZ authentication. Returns 0 for a complete lookup (zero IDs mean absent), -1 for failure with zeroed outputs. Returns the live series parent, series ID and episode ID; ambiguous series/episodes, unreadable inventory/links and wrong classification fail closed. Does not compare title or byte size, download audio, create or rewrite objects. Caller persists feed/GUID-to-source identity and handles changed downloads explicitly.
+
+[Declaration](../include/zune.h#L590); [implementation index](TOC.md#public-api).
+
+### zune_get_audiobook_parts
+
+```c
+int zune_get_audiobook_parts(ZuneDeviceHandle dev, ZuneAudiobookPart **parts, int *count);
+```
+
+Read-only native schema-0x12 book-part inventory from complete wildcard handles, including HD objects omitted by format-filtered queries. Same authentication, family, required-output and all-or-nothing contract as get_podcast_episodes. Group by parent_id, never book_title; sort by part_number in the caller. Owned array and title/author/book_title strings use free_audiobook_parts. No format conversion or device writes.
+
+[Declaration](../include/zune.h#L605); [implementation index](TOC.md#public-api).
+
+### zune_free_audiobook_parts
+
+```c
+void zune_free_audiobook_parts(ZuneAudiobookPart *parts, int count);
+```
+
+Free a get_audiobook_parts array and all its strings with the returned count. NULL accepted.
+
+[Declaration](../include/zune.h#L606); [implementation index](TOC.md#public-api).
+
+### zune_find_audiobook_part
+
+```c
+int zune_find_audiobook_part(ZuneDeviceHandle dev, const ZuneAudiobookPartInput *part,
+                            uint32_t *folder_id, uint32_t *part_id);
+```
+
+Experimental read-only live lookup by caller-provided book content key and positive part number. Requires authentication and tested Keel/Pavo family. Validates book/title/author/duration/category and refuses conflicting same-title books in other folders. 0 complete, -1 failure; required folder/part outputs zero on failure, zero part means absent. No ZMDB cache or writes.
+
+[Declaration](../include/zune.h#L619); [implementation index](TOC.md#public-api).
+
+### zune_smuggle_audiobook_part
+
+```c
+int zune_smuggle_audiobook_part(ZuneDeviceHandle dev, const char *filepath,
+                               const ZuneAudiobookPartInput *part, uint32_t *out_id);
+```
+
+Experimental prepared immutable MP3 upload under an identity-named folder inside OverDrive. No music artist/album/reference creation. Reuses live book/part identity plus metadata and size; descriptors checked before creation. 0 success, -1 failure. Required output retains a created part ID on subsequent failure; no automatic deletion or retry, and lost responses can leave uncertain state even with ID zero. No codec sniffing, conversion, chapter splitting, artwork or finalization. Serialized authenticated Keel/Pavo only; long files and resume remain separate gates.
+
+[Declaration](../include/zune.h#L626); [implementation index](TOC.md#public-api).
+
 ### zune_brand
 
 ```c
@@ -944,7 +1117,7 @@ int zune_brand(ZuneDeviceHandle dev, uint32_t item_id,
 
 Write JPEG representative-sample artwork to an object. 0 success, -1 failure; image is not automatically resized by this API.
 
-[Declaration](../include/zune.h#L475); [implementation index](TOC.md#public-api).
+[Declaration](../include/zune.h#L633); [implementation index](TOC.md#public-api).
 
 ### zune_grab_thumb
 
@@ -955,7 +1128,7 @@ int zune_grab_thumb(ZuneDeviceHandle dev, uint32_t item_id,
 
 Try representative sample then MTP thumbnail, writing cache_path. 0 success, -1 failure. Does not download the complete media file.
 
-[Declaration](../include/zune.h#L481); [implementation index](TOC.md#public-api).
+[Declaration](../include/zune.h#L639); [implementation index](TOC.md#public-api).
 
 ### zune_grab_photo_thumb
 
@@ -966,7 +1139,7 @@ int zune_grab_photo_thumb(ZuneDeviceHandle dev, uint32_t item_id,
 
 Photo-only fallback: representative sample, MTP thumbnail, then complete photo download/resize. 0 success, -1 failure. Do not use as a video thumbnail API.
 
-[Declaration](../include/zune.h#L487); [implementation index](TOC.md#public-api).
+[Declaration](../include/zune.h#L645); [implementation index](TOC.md#public-api).
 
 ### zune_arm_audio
 
@@ -976,7 +1149,7 @@ char *zune_arm_audio(const char *input_path);
 
 Legacy MP3 320kbps/ID3v2.3 preparation, with source metadata stripped for separate MTP tagging. Hard-coded Homebrew ffmpeg path. Owned temporary path or NULL; unlink and free.
 
-[Declaration](../include/zune.h#L496); [implementation index](TOC.md#public-api).
+[Declaration](../include/zune.h#L654); [implementation index](TOC.md#public-api).
 
 ### zune_retag
 
@@ -986,7 +1159,7 @@ char *zune_retag(const char *mp3_path);
 
 Legacy MP3 stream-copy retag to ID3v2.3. Hard-coded Homebrew ffmpeg path. Owned temporary path or NULL; unlink and free.
 
-[Declaration](../include/zune.h#L501); [implementation index](TOC.md#public-api).
+[Declaration](../include/zune.h#L659); [implementation index](TOC.md#public-api).
 
 ### zune_arm_video
 
@@ -996,7 +1169,7 @@ char *zune_arm_video(const char *input_path, ZuneModel model);
 
 Legacy transcode by ZuneModel profile (WMV for 30, H.264 for other supported profiles). Hard-coded Homebrew ffmpeg path. Owned temporary path or NULL; unlink and free.
 
-[Declaration](../include/zune.h#L506); [implementation index](TOC.md#public-api).
+[Declaration](../include/zune.h#L664); [implementation index](TOC.md#public-api).
 
 ### zune_arm_episode
 
@@ -1007,7 +1180,7 @@ char *zune_arm_episode(const char *input_path, ZuneModel model,
 
 Legacy video preparation with series/season/episode container metadata. Same portability/temp ownership limits as arm_video.
 
-[Declaration](../include/zune.h#L510); [implementation index](TOC.md#public-api).
+[Declaration](../include/zune.h#L668); [implementation index](TOC.md#public-api).
 
 ### zune_infiltrate_legacy
 
@@ -1017,7 +1190,7 @@ int zune_infiltrate_legacy(ZuneDeviceHandle dev, ZuneLibrary **out);
 
 Deprecated tracks/videos/photos-only ZMDB result. 0 success, -1 failure. Release with free_library; prefer infiltrate.
 
-[Declaration](../include/zune.h#L526); [implementation index](TOC.md#public-api).
+[Declaration](../include/zune.h#L684); [implementation index](TOC.md#public-api).
 
 ### zune_free_library
 
@@ -1027,7 +1200,7 @@ void zune_free_library(ZuneLibrary *lib);
 
 Release a deprecated ZuneLibrary and its owned arrays/strings.
 
-[Declaration](../include/zune.h#L527); [implementation index](TOC.md#public-api).
+[Declaration](../include/zune.h#L685); [implementation index](TOC.md#public-api).
 
 ### zune_finalize
 
@@ -1037,7 +1210,7 @@ int zune_finalize(ZuneDeviceHandle dev);
 
 Issue 0x9201, 0x9108 and 0x9202 re-index-related requests. Returns -1 for NULL, otherwise 0 regardless of individual operation results. Verify persistence after device re-index.
 
-[Declaration](../include/zune.h#L534); [implementation index](TOC.md#public-api).
+[Declaration](../include/zune.h#L692); [implementation index](TOC.md#public-api).
 
 ### zune_decode_filename
 
@@ -1049,7 +1222,7 @@ int zune_decode_filename(const char *filepath,
 
 Heuristically parse series/season/episode from a path. 1 pattern found, 0 absent/invalid. Caller frees allocated series. Not an online identity resolver.
 
-[Declaration](../include/zune.h#L541); [implementation index](TOC.md#public-api).
+[Declaration](../include/zune.h#L699); [implementation index](TOC.md#public-api).
 
 ### zune_snap_thumb
 
@@ -1059,7 +1232,7 @@ int zune_snap_thumb(const char *video_path, const char *output_path);
 
 Use ffmpeg from PATH to grab a frame at 10 seconds and scale to 200px width. 0 success, -1 failure; short media may have no frame there.
 
-[Declaration](../include/zune.h#L547); [implementation index](TOC.md#public-api).
+[Declaration](../include/zune.h#L705); [implementation index](TOC.md#public-api).
 
 ### zune_probe
 
@@ -1069,7 +1242,7 @@ int zune_probe(const char *filepath, ZuneMetadata *out);
 
 Inspect tags using native libavformat (USE_LIBAV) or ffprobe fallback. 0 inspected, -1 failure with zeroed output. Missing tags are not failure. Container nonblank tags precede selected-stream tags. Free an old result before reusing the struct.
 
-[Declaration](../include/zune.h#L571); [implementation index](TOC.md#public-api).
+[Declaration](../include/zune.h#L729); [implementation index](TOC.md#public-api).
 
 ### zune_free_metadata
 
@@ -1079,7 +1252,7 @@ void zune_free_metadata(ZuneMetadata *meta);
 
 Free allocated fields within the caller's metadata struct, not the struct itself.
 
-[Declaration](../include/zune.h#L572); [implementation index](TOC.md#public-api).
+[Declaration](../include/zune.h#L730); [implementation index](TOC.md#public-api).
 
 ### zune_smuggle_track_ex
 
@@ -1094,7 +1267,7 @@ int zune_smuggle_track_ex(ZuneDeviceHandle dev, const char *filepath,
 
 Explicit-metadata audio upload with synchronous byte-progress callback and userdata. 0 success, -1 failure. Do not reenter device I/O in the callback; caller controls worker dispatch.
 
-[Declaration](../include/zune.h#L581); [implementation index](TOC.md#public-api).
+[Declaration](../include/zune.h#L739); [implementation index](TOC.md#public-api).
 
 ### zune_infiltrate
 
@@ -1104,7 +1277,7 @@ int zune_infiltrate(ZuneDeviceHandle dev, ZuneDBLibrary **out);
 
 Read/parse ZMDB and fall back internally to MTP playlists if none decoded. 0 success, -1 failure. Owns returned scan; device borrows it for find helpers. Does not prove all object sizes or fields are known.
 
-[Declaration](../include/zune.h#L628); [implementation index](TOC.md#public-api).
+[Declaration](../include/zune.h#L786); [implementation index](TOC.md#public-api).
 
 ### zune_free_scan
 
@@ -1114,7 +1287,7 @@ void zune_free_scan(ZuneDBLibrary *lib);
 
 Release the scan and every nested array/string. Does not invalidate the borrowed device cache; never use find helpers afterward until another successful scan.
 
-[Declaration](../include/zune.h#L631); [implementation index](TOC.md#public-api).
+[Declaration](../include/zune.h#L789); [implementation index](TOC.md#public-api).
 
 ### zune_dump_raw
 
@@ -1124,7 +1297,7 @@ int zune_dump_raw(ZuneDeviceHandle dev, const char *output_path);
 
 Write the raw ZMDB response to output_path for research. 0 success, -1 failure. Output can contain personal library metadata.
 
-[Declaration](../include/zune.h#L637); [implementation index](TOC.md#public-api).
+[Declaration](../include/zune.h#L795); [implementation index](TOC.md#public-api).
 
 ### zune_infiltrate_deep
 
@@ -1134,7 +1307,7 @@ int zune_infiltrate_deep(ZuneDeviceHandle dev);
 
 Research-only descriptor scan/logging, including sample record dumps. 0 success, -1 failure; logs can contain personal library metadata.
 
-[Declaration](../include/zune.h#L642); [implementation index](TOC.md#public-api).
+[Declaration](../include/zune.h#L800); [implementation index](TOC.md#public-api).
 
 ### zune_get_error
 
@@ -1144,4 +1317,4 @@ const char *zune_get_error(void);
 
 Borrowed thread-local diagnostic string. Read on the failing call's thread; not all error paths update it and successful operations need not clear it.
 
-[Declaration](../include/zune.h#L648); [implementation index](TOC.md#public-api).
+[Declaration](../include/zune.h#L806); [implementation index](TOC.md#public-api).

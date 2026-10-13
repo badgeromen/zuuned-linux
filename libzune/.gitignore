@@ -8,3 +8,8 @@ obj/
 *.a
 *.so
 *.dylib
+
+/src/mtpz_keys.h
+.mtpz-data
+*.pem
+*.key

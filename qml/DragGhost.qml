@@ -21,10 +21,12 @@ Item {
 
     property Item area: null
     // Track/playlist drags can land on the builder or device panel.
-    // Local photo organizers opt in explicitly; all device keys require a connection.
+    // Local photo/book organizers opt in explicitly; all device keys require a connection.
     property string dragKind: "tracks"
     property bool localPhotoDrag: false
     readonly property bool localPhotoAllowed: localPhotoDrag && dragKind === "photos"
+    property bool localBookDrag: false
+    readonly property bool localBookAllowed: localBookDrag && dragKind === "audiobook-books"
     property string dragName: ""
     // () => [items] resolver (lazy — costs nothing until the drop) or
     // a plain array. Track-shaped for tracks/playlist, addVideos/
@@ -41,8 +43,9 @@ Item {
     width: slot.childrenRect.width
     height: slot.childrenRect.height
     visible: Drag.active
-    Drag.active: (DeviceService.connected || localPhotoAllowed) && area ? area.drag.active : false
-    Drag.keys: localPhotoAllowed ? (DeviceService.connected ? ["zuuned-local-photos", "zuuned-photos"] : ["zuuned-local-photos"])
+    Drag.active: (DeviceService.connected || localPhotoAllowed || localBookAllowed) && area ? area.drag.active : false
+    Drag.keys: localBookAllowed ? (DeviceService.connected ? ["zuuned-local-books", "zuuned-audiobook-books"] : ["zuuned-local-books"])
+               : localPhotoAllowed ? (DeviceService.connected ? ["zuuned-local-photos", "zuuned-photos"] : ["zuuned-local-photos"])
                : dragKind === "tracks"
                ? ["zuuned-tracks"] : ["zuuned-" + dragKind]
     Drag.hotSpot.x: 10
@@ -56,7 +59,7 @@ Item {
         ghost.y = p.y + 8
     }
     function drop() {
-        if ((DeviceService.connected || localPhotoAllowed) && ghost.Drag.active)
+        if ((DeviceService.connected || localPhotoAllowed || localBookAllowed) && ghost.Drag.active)
             ghost.Drag.drop()
     }
 

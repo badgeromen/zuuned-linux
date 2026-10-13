@@ -1,0 +1,18 @@
+2026-10-08: private feature/podcasts-audiobooks working tree
+Device family: Keel, USB 045e:0710
+Generated two-second MP3.
+No authentication payloads, serial numbers or personal media names retained.
+
+[libzune] MTPZ authentication successful
+[podcast-test] created isolated folder=83887860
+[podcast-test] series result=0 id=251660021
+[podcast-test] PASS repeated series reuses id=251660021
+[podcast-test] episode result=0 id=268437238
+[podcast-test] PASS repeated episode reuses id=268437238
+[podcast-test] PASS extracted episode bytes match generated source
+[podcast-test] wildcard inventory before=1383 after=1385 (not a podcast-specific inventory)
+[podcast-test] PASS remove created id=268437238
+[podcast-test] PASS remove created id=251660021
+[podcast-test] PASS remove created id=83887860
+[podcast-test] PASS original handle inventory restored
+[podcast-test] PASS; playback/category after eject remains a separate gate

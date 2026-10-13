@@ -610,6 +610,31 @@ Item {
                     }
 
                     Sblk {
+                        title: "Podcasts"
+                        PodcastPreferences {
+                            Layout.fillWidth: true
+                            enabled: !SyncEngine.isSyncing
+                            autoQueue: AppSettings.podcastAutoQueue
+                            episodeCount: AppSettings.podcastAutoQueueCount
+                            autoCleanup: AppSettings.podcastAutoCleanup
+                            onQueuePicked: value => AppSettings.podcastAutoQueue = value
+                            onCountPicked: value => AppSettings.podcastAutoQueueCount = value
+                            onCleanupPicked: value => AppSettings.podcastAutoCleanup = value
+                        }
+                    }
+
+                    Sblk {
+                        title: "Audiobook folders"
+                        desc: "Import a book folder or a collection of book folders. Review titles and part order before adding them. Run this import again when you add book folders; this is not a watched folder."
+                        SpokenButton {
+                            objectName: "settingsImportAudiobooks"
+                            text: "import audiobook folder…"
+                            enabled: !SpokenMediaService.busy
+                            onClicked: audiobookFolderImport.begin()
+                        }
+                    }
+
+                    Sblk {
                         title: "Watch folders"
                         desc: "where zuuned scans — music · movies · tv · anime · other · photos"
 
@@ -1521,6 +1546,8 @@ Item {
             }
         }
     }
+
+    SpokenFolderImport { id: audiobookFolderImport }
 
     FolderDialog {
         id: mediaFolderDialog

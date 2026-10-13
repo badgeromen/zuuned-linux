@@ -5,7 +5,9 @@ cd "$(dirname "$0")/.."
 zuuned_results=$(mktemp -d "${TMPDIR:-/tmp}/zuuned-checks.XXXXXXXX")
 printf 'Results: %s\n' "$zuuned_results"
 git rev-parse HEAD > "$zuuned_results/source.txt"
-git -C libzune rev-parse HEAD > "$zuuned_results/libzune.txt"
+node ci/source-layout.mjs > "$zuuned_results/source-layout.json"
+node -e 'const f=require("fs"); console.log(JSON.parse(f.readFileSync(process.argv[1])).revision)' "$zuuned_results/source-layout.json" > "$zuuned_results/libzune.txt"
+zuuned_source_mode=$(node -e 'const f=require("fs"); console.log(JSON.parse(f.readFileSync(process.argv[1])).mode)' "$zuuned_results/source-layout.json")
 git status --porcelain > "$zuuned_results/worktree.txt"
 printf 'App: %s\nlibzune: %s\n' "$(cat "$zuuned_results/source.txt")" "$(cat "$zuuned_results/libzune.txt")"
 if [[ -s $zuuned_results/worktree.txt ]]; then printf 'Working changes are present; this is a development verification.\n'; fi
@@ -23,8 +25,32 @@ run() {
     fi
 }
 run configure cmake -B build -G Ninja
-run public-source node tests/public-source/run.mjs
+run source-layout-fixtures node tests/public-source/run-layout.mjs
+if [[ $zuuned_source_mode == public-vendored ]]; then
+    run public-source node tests/public-source/check-public.mjs
+    run public-auth bash tests/public-source/run-auth.sh "$PWD" --public-only
+    printf 'NOT APPLICABLE private exporter comparison (already-sanitized public checkout).\n' | tee -a "$zuuned_results/results.txt"
+else
+    run public-source node tests/public-source/run.mjs
+fi
 run build cmake --build build --parallel "${ZUUNED_BUILD_JOBS:-4}"
+run audio-ranges bash tests/audio-ranges/run.sh
+run spoken-media bash tests/spoken-media/run.sh
+run spoken-native bash tests/spoken-media/native/run.sh
+run spoken-organization bash tests/spoken-organization/run-qml.sh
+run spoken-settings bash tests/spoken-organization/run-settings.sh
+run queue-actions env PHOTO_TEST_INPUT=tests/queue bash tests/actions/photo-run.sh
+run spoken-sync node tests/spoken-sync/run-backend.mjs
+run device-spoken-qml bash tests/device-spoken/run-qml.sh
+run device-spoken-backend node tests/device-spoken/run-backend.mjs
+run spoken-inventory bash libzune/tests/run-spoken-inventory.sh
+run podcast-protocol bash libzune/tests/run-podcasts.sh
+run podcast-state bash libzune/tests/run-podcast-state.sh
+run podcast-state-inspector node libzune/tests/podcast-state-inspector.mjs
+run podcast-cleanup-worker node tests/podcast-cleanup-worker/run.mjs
+run audiobook-protocol bash libzune/tests/run-audiobook-gate.sh
+run media-capabilities bash libzune/tests/run-media-capabilities.sh
+run video-protocol bash libzune/tests/run-video-named.sh
 run identity bash tests/music-dedup/run-identity.sh
 run migration bash tests/music-dedup/run-migration.sh
 run sync node tests/music-sync/run-backend.mjs

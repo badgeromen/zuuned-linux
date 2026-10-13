@@ -3,6 +3,7 @@
 
 #include <QRandomGenerator>
 #include <QVariantMap>
+#include <cmath>
 
 PlayerService::PlayerService(QObject *parent) : QObject(parent) {
     m_mpv = new MpvController(this);
@@ -41,6 +42,17 @@ PlayerService::PlayerService(QObject *parent) : QObject(parent) {
         m_loadingQueue = false;
         m_positionSec = m_mpv->position();
         m_durationSec = m_mpv->duration();
+        // Spoken queues carry an explicit resume point. Music entries have no
+        // such key, so their existing start behavior is unchanged.
+        if (m_queueIndex >= 0 && m_queueIndex < m_queue.size()) {
+            const auto entry = m_queue[m_queueIndex].toMap();
+            if (!entry.value(QStringLiteral("spokenId")).toString().isEmpty()) {
+                const double position = qBound(0.0, entry.value(QStringLiteral("startPositionMs")).toDouble() / 1000.0,
+                                                qMax(0.0, m_durationSec - 0.01));
+                m_mpv->seekTo(position, true);
+                m_positionSec = position;
+            }
+        }
         emit positionChanged();
         emit durationChanged();
         if (m_state == Playing) m_mpv->play();
@@ -70,6 +82,14 @@ PlayerService::PlayerService(QObject *parent) : QObject(parent) {
         emit metadataChanged();
     });
 
+    m_sleepTimer.setParent(this);
+    m_sleepTimer.setObjectName("spokenSleepTimer");
+    m_sleepTimer.setSingleShot(true);
+    connect(&m_sleepTimer, &QTimer::timeout, this, [this] {
+        m_sleepMinutes = 0;
+        if (isSpoken() && playing()) playPause();
+        emit spokenControlsChanged();
+    });
     m_saveTimer.setInterval(5000);
     connect(&m_saveTimer, &QTimer::timeout, this,
             &PlayerService::savePlaybackPosition);
@@ -100,6 +120,7 @@ qint64 PlayerService::currentLibraryId() const {
 // ── Playback controls ──
 
 void PlayerService::playFile(const QString &path) {
+    if (isSpoken()) clearQueue();
     m_playNextCount = 0;
     m_loadingQueue = false;
     m_mpv->setActive(true);
@@ -141,6 +162,7 @@ void PlayerService::playPause() {
 }
 
 void PlayerService::stop() {
+    setSleepMinutes(0);
     m_playNextCount = 0;
     m_loadingQueue = false;
     savePlaybackPosition();
@@ -178,11 +200,13 @@ void PlayerService::toggleMute() {
 }
 
 void PlayerService::toggleShuffle() {
+    if (isSpoken()) return;
     m_shuffled = !m_shuffled;
     emit modeChanged();
 }
 
 void PlayerService::cycleRepeat() {
+    if (isSpoken()) return;
     m_repeatMode = (m_repeatMode + 1) % 3;
     emit modeChanged();
 }
@@ -267,6 +291,8 @@ void PlayerService::clearQueue() {
     m_mpv->clearPlaylist();
     m_queue.clear();
     m_queueIndex = -1;
+    m_mpv->setSpeed(1.0);
+    emit spokenControlsChanged();
     emit queueChanged();
 }
 
@@ -279,7 +305,7 @@ void PlayerService::next() {
         startQueueIndex(m_queueIndex + 1);
         return;
     }
-    if (m_shuffled) {
+    if (m_shuffled && !isSpoken()) {
         if (m_queue.size() < 2)
             return;
         int pick = m_queueIndex;
@@ -291,7 +317,7 @@ void PlayerService::next() {
 
     const int nextIndex = m_queueIndex + 1;
     if (nextIndex >= m_queue.size()) {
-        if (m_repeatMode == 1) { // all
+        if (m_repeatMode == 1 && !isSpoken()) { // all
             const int hold = 0;
             m_queueIndex = -2;   // force jumpTo past the same-index guard
             jumpTo(hold);
@@ -358,7 +384,8 @@ void PlayerService::handleTrackEnded() {
     if (m_queue.isEmpty())
         return;
 
-    if (m_repeatMode == 2) { // one
+    const bool spoken = isSpoken();
+    if (m_repeatMode == 2 && !spoken) { // one
         // mpv has ALREADY advanced to the next entry — a bare seek
         // would "repeat" the WRONG track. Pull the playlist back.
         beginJumpGuard();
@@ -379,7 +406,7 @@ void PlayerService::handleTrackEnded() {
         emit queueChanged();
         return;
     }
-    if (m_shuffled) {
+    if (m_shuffled && !spoken) {
         if (m_queue.size() >= 2) {
             int pick = m_queueIndex;
             while (pick == m_queueIndex)
@@ -391,7 +418,7 @@ void PlayerService::handleTrackEnded() {
 
     m_queueIndex += 1;
     if (m_queueIndex >= m_queue.size()) {
-        if (m_repeatMode == 1) { // all
+        if (m_repeatMode == 1 && !spoken) { // all
             m_queueIndex = -2;   // force jumpTo past the same-index guard
             jumpTo(0);
             return;
@@ -418,7 +445,7 @@ void PlayerService::handleEndReached() {
     if (m_queue.isEmpty())
         return;
 
-    if (m_repeatMode == 2) { // one — replay the same (still-loaded) track
+    if (m_repeatMode == 2 && !isSpoken()) { // one — replay the same (still-loaded) track
         seekMs(0);
         m_mpv->play();
         setState(Playing);
@@ -430,7 +457,7 @@ void PlayerService::handleEndReached() {
         startQueueIndex(m_queueIndex + 1);
         return;
     }
-    if (m_shuffled) { // shuffle never stops (same rule as mid-queue)
+    if (m_shuffled && !isSpoken()) { // shuffle never stops (same rule as mid-queue)
         if (m_queue.size() >= 2) {
             int pick = m_queueIndex;
             while (pick == m_queueIndex)
@@ -444,7 +471,7 @@ void PlayerService::handleEndReached() {
         return;
     }
 
-    if (m_repeatMode == 1) { // all — wrap to the top
+    if (m_repeatMode == 1 && !isSpoken()) { // all — wrap to the top
         m_queueIndex = -2;   // force jumpTo past the same-index guard
         jumpTo(0);
         return;
@@ -465,6 +492,10 @@ void PlayerService::updateMetadataFromQueue(int index) {
     m_title = item.value(QStringLiteral("title")).toString();
     m_artist = item.value(QStringLiteral("artist")).toString();
     m_album = item.value(QStringLiteral("album")).toString();
+    m_mpv->setSpeed(isSpoken() ? m_spokenRate : 1.0);
+    if (!isSpoken()) setSleepMinutes(0);
+    emit spokenControlsChanged();
+    emit modeChanged();
     emit metadataChanged();
 }
 
@@ -489,4 +520,22 @@ void PlayerService::savePlaybackPosition() {
     if (m_positionSec <= 0)
         return;
     m_saveHook(id, int(m_positionSec * 1000.0));
+}
+
+QString PlayerService::mediaKind() const {
+    if(m_queueIndex<0 || m_queueIndex>=m_queue.size())return QStringLiteral("music");
+    const auto entry=m_queue[m_queueIndex].toMap();
+    if(entry.value("spokenId").toString().isEmpty())return QStringLiteral("music");
+    return entry.value("spokenKind").toString()=="audiobook"?QStringLiteral("audiobook"):QStringLiteral("podcast");
+}
+double PlayerService::playbackRate() const { return m_mpv->speed(); }
+void PlayerService::setSpokenRate(double rate) {
+    if(!isSpoken() || !std::isfinite(rate) || rate<0.5 || rate>2.5)return;
+    m_spokenRate=rate;m_mpv->setSpeed(rate);emit spokenControlsChanged();
+}
+void PlayerService::setSleepMinutes(int minutes) {
+    if(minutes<0 || minutes>120 || (minutes>0 && (!isSpoken() || stopped())))return;
+    m_sleepTimer.stop();m_sleepMinutes=minutes;
+    if(minutes>0)m_sleepTimer.start(minutes*60*1000);
+    emit spokenControlsChanged();
 }

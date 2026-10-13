@@ -140,6 +140,14 @@ Upper byte of each atom_id identifies the schema:
 | 0x11 | AudiobookTitle | Audiobook title |
 | 0x12 | AudiobookTrack | Audiobook track |
 
+The spoken schema names above were already cataloged; they do not establish
+creation commands or a working audiobook transfer API. The later Classic podcast
+gate confirms schema `0x10`. Later October 9 native Classic/HD audiobook gates
+confirm schema `0x12` after MetaGenre 18 upload, with exact audio/art readback.
+Those small tests do not establish resume or chaptered-file transfer. See
+[spoken-media research](SPOKEN_MEDIA_RESEARCH.md) for the current evidence and
+[the usage guide](SPOKEN_MEDIA.md) for implemented interfaces.
+
 ## Record Format
 
 ### Record Header

@@ -13,8 +13,11 @@
 #include "ZuunedBuildInfo.h"
 
 #include "ApplicationIdentity.h"
+#include "AppSettings.h"
 #include "GrungeMaskProvider.h"
 #include "LibraryService.h"
+#include "spoken/SpokenMediaService.h"
+#include "spoken/PodcastQueuePlanner.h"
 #include "library/ArtworkHttp.h"
 #include "player/MprisService.h"
 #include "player/PlayerService.h"
@@ -131,6 +134,32 @@ int main(int argc, char *argv[]) {
     if (device && sync) {
         DeviceWorker *worker = device->worker();
         sync->attachDevice(device, worker);
+        QObject::connect(sync, &SyncEngine::workerInspectPodcasts,
+                         worker, &DeviceWorker::doInspectPodcasts, Qt::QueuedConnection);
+        QObject::connect(worker, &DeviceWorker::podcastsInspected,
+                         sync, &SyncEngine::onPodcastsInspected);
+        QObject::connect(sync, &SyncEngine::workerSendPodcast,
+                         worker, &DeviceWorker::doSendPodcast, Qt::QueuedConnection);
+        QObject::connect(worker, &DeviceWorker::podcastSendDone,
+                         sync, &SyncEngine::onPodcastSendDone);
+        QObject::connect(sync, &SyncEngine::workerInspectAudiobooks,
+                         worker, &DeviceWorker::doInspectAudiobooks, Qt::QueuedConnection);
+        QObject::connect(worker, &DeviceWorker::audiobooksInspected,
+                         sync, &SyncEngine::onAudiobooksInspected);
+        QObject::connect(sync, &SyncEngine::workerSendAudiobook,
+                         worker, &DeviceWorker::doSendAudiobook, Qt::QueuedConnection);
+        QObject::connect(worker, &DeviceWorker::audiobookSendDone,
+                         sync, &SyncEngine::onAudiobookSendDone);
+        QObject::connect(sync, &SyncEngine::inspectPodcastCleanup,
+                         worker, &DeviceWorker::doInspectPodcastCleanup, Qt::QueuedConnection);
+        QObject::connect(worker, &DeviceWorker::podcastCleanupInspected,
+                         sync, &SyncEngine::onPodcastCleanupInspected);
+        QObject::connect(sync, &SyncEngine::purgePlayedPodcasts,
+                         worker, &DeviceWorker::doPurgePlayedPodcasts, Qt::QueuedConnection);
+        QObject::connect(worker, &DeviceWorker::podcastCleanupProgress,
+                         sync, &SyncEngine::onPodcastCleanupProgress);
+        QObject::connect(worker, &DeviceWorker::playedPodcastsPurged,
+                         sync, &SyncEngine::onPlayedPodcastsPurged);
         QObject::connect(sync, &SyncEngine::workerSendTrack,
                          worker, &DeviceWorker::doSendTrack, Qt::QueuedConnection);
         QObject::connect(sync, &SyncEngine::workerForgeAlbums,
@@ -172,6 +201,48 @@ int main(int argc, char *argv[]) {
     auto *player = engine.singletonInstance<PlayerService *>("Zuuned", "PlayerService");
     auto *library = engine.singletonInstance<LibraryService *>("Zuuned", "LibraryService");
     if (sync) sync->attachLibrary(library);
+    auto *spoken = engine.singletonInstance<SpokenMediaService *>("Zuuned", "SpokenMediaService");
+    if (spoken) spoken->attachPlayer(player);
+    if (spoken && device && sync) {
+        sync->attachPodcastCleanup([spoken] { return spoken->podcastCleanupCandidates(); });
+        QObject::connect(spoken, &SpokenMediaService::changed, sync, &SyncEngine::refreshPodcastCleanupPreview, Qt::QueuedConnection);
+        auto *settings = engine.singletonInstance<AppSettings *>("Zuuned", "AppSettings");
+        if (settings) QObject::connect(settings, &AppSettings::changed, sync, &SyncEngine::refreshPodcastCleanupPreview, Qt::QueuedConnection);
+        QTimer::singleShot(0, sync, &SyncEngine::refreshPodcastCleanupPreview);
+        QObject::connect(sync, &SyncEngine::recordDevicePlayed, spoken, &SpokenMediaService::recordDevicePlayed);
+        QObject::connect(spoken, &SpokenMediaService::devicePlayedRecorded, sync, &SyncEngine::onDevicePlayedRecorded);
+        spoken->attachDeviceQueue([device, sync] { return device->connected() && !sync->isSyncing(); });
+        QObject::connect(spoken, &SpokenMediaService::podcastTransferReady, sync, &SyncEngine::addPodcasts);
+        QObject::connect(spoken, &SpokenMediaService::audiobookTransferReady, sync, &SyncEngine::addAudiobooks);
+        QObject::connect(sync, &SyncEngine::prepareSpokenTransfer, spoken, &SpokenMediaService::prepareTransfer);
+        QObject::connect(sync, &SyncEngine::cancelSpokenTransfer, spoken, &SpokenMediaService::cancelTransfer);
+        QObject::connect(spoken, &SpokenMediaService::transferPrepared, sync, &SyncEngine::onSpokenPrepared);
+        QObject::connect(sync, &SyncEngine::podcastQueueNotice, spoken, &SpokenMediaService::notification);
+        if (settings) {
+            auto *planner = new PodcastQueuePlanner(spoken, {
+                [device, sync, settings] {
+                    PodcastQueuePlanner::Context c;
+                    c.connected = device->connected(); c.serial = device->deviceSerial();
+                    c.generation = device->spokenGeneration(); c.syncing = sync->isSyncing();
+                    c.queueMismatch = sync->queueDeviceMismatch();
+                    c.inventoryReady = device->podcastInventoryReady();
+                    c.inventoryLoading = device->spokenMediaLoading();
+                    c.inventoryError = device->spokenMediaError().isEmpty()
+                        ? device->podcastStatusWarning() : device->spokenMediaError();
+                    c.enabled = settings->podcastAutoQueue(); c.count = settings->podcastAutoQueueCount();
+                    return c;
+                },
+                [device](const QString &feed, const QString &source) { return device->podcastDeviceStatus(feed, source); },
+                [device] { device->ensureSpokenMedia(); }
+            }, spoken);
+            QObject::connect(device, &DeviceService::stateChanged, planner, &PodcastQueuePlanner::update);
+            QObject::connect(device, &DeviceService::spokenMediaChanged, planner, &PodcastQueuePlanner::update);
+            QObject::connect(sync, &SyncEngine::syncStateChanged, planner, &PodcastQueuePlanner::update);
+            QObject::connect(sync, &SyncEngine::queueDeviceChanged, planner, &PodcastQueuePlanner::update);
+            QObject::connect(sync, &SyncEngine::queueClearedByUser, planner, &PodcastQueuePlanner::dismissPending);
+            QObject::connect(settings, &AppSettings::changed, planner, &PodcastQueuePlanner::update);
+        }
+    }
 
     // Device music extracts are invisible to the local library until its
     // import root is registered and scanned. Prime portrait matching from the

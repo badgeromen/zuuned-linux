@@ -56,6 +56,7 @@ struct ZuneDevice {
     ZuneDBLibrary *cached_library;
 
     /* Connection state */
+    int mtpz_authenticated;        /* Only set after a completed handshake */
     volatile int disconnecting;
     volatile int cancel_requested;  /* Set by zune_abort() */
 };
@@ -103,6 +104,12 @@ static inline int zune_wound_is_mortal(uint16_t rc)
  * Call during connect or first photo operation.
  * After this, zune_get_photo_albums() works without USB calls. */
 void zune_cache_folder_names(ZuneDevice *dev);
+
+/* Complete raw ZMDB payload (without the 12-byte transport header). Caller
+ * frees output. Internal parser is separately fixture-testable without USB. */
+int zune_zmdb_read_payload(zune_usb_handle_t *usb, uint8_t **payload, uint32_t *length);
+int zune_parse_podcast_states(const uint8_t *data, size_t length,
+                             ZunePodcastState **states, int *count);
 
 /* ---- Thread-local error string ---- */
 

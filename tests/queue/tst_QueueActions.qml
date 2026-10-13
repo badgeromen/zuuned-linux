@@ -200,5 +200,45 @@ Item {
             compare(entry.title, "Song")
             verify(findChild(entry, "queueRemoveEntry"))
         }
+        function test_pendingRemovalShowsEpisodeAndActionWithoutExpandingGroup() {
+            const entry = create({type:"podcast-removal", entryId:"episode-2", status:"pending-removal",
+                statusNote:"Remove from Zune after validation", syncLocked:true,
+                groupInfo:({kind:"podcast-removals",title:"A podcast",subtitle:"remove from Zune",
+                    count:2,doneCount:0,failedCount:0,firstEntryId:"episode-1"})})
+            compare(entry.rowShown, true)
+            verify(findChild(entry,"queueEntryTitle").visible)
+            const note = findChild(entry,"queueEntryStatusNote")
+            verify(findChild(entry,"queueEntryDetail").text.indexOf("Completed episode") === 0)
+            verify(note.visible)
+            compare(note.text,"Remove from Zune after validation")
+            compare(findChild(entry,"queueRemoveEntry").enabled,false)
+            entry.status = "removing"
+            entry.statusNote = "Removing from Zune"
+            compare(entry.entryInFlight,true)
+            compare(note.text,"Removing from Zune")
+        }
+        function test_removalOutcomesRemainExplicitAndVisible() {
+            const entry = create({type:"podcast-removal",groupInfo:null,status:"removed",
+                statusNote:"Removed from Zune"})
+            const note = findChild(entry,"queueEntryStatusNote")
+            verify(note.visible)
+            compare(note.text,"Removed from Zune")
+            compare(entry.entryInFlight,false)
+            entry.status = "not-removed"
+            entry.statusNote = "Not removed (sync cancelled)"
+            verify(note.visible)
+            compare(note.text,"Not removed (sync cancelled)")
+            entry.status = "removal-unconfirmed"
+            entry.statusNote = "Removal not confirmed; refresh the Zune"
+            verify(note.visible)
+            compare(note.text,"Removal not confirmed; refresh the Zune")
+        }
+        function test_removalGroupReportsRemovedInsteadOfUploadCompletion() {
+            const entry = create({type:"podcast-removal",status:"removed",statusNote:"Removed from Zune",
+                groupInfo:({kind:"podcast-removals",title:"A podcast",subtitle:"remove from Zune",
+                    count:2,doneCount:1,failedCount:0,firstEntryId:"episode-1"})})
+            compare(findChild(entry,"queueGroupDetail").text,"1/2 removed from Zune")
+            verify(findChild(entry,"queueEntryStatusNote").visible)
+        }
     }
 }

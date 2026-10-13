@@ -1,5 +1,78 @@
 # ZuunedLinux Port Plan
 
+**2026-10-13 compact playback UI:** windows below the existing 1100-logical-pixel
+headroom breakpoint use Now Playing instead of the top ribbon, as do narrow
+windows. Resizing an existing queue opens the island unless a builder is active;
+closing it persists through track advances. The island has a fixed top-right X
+that turns red on hover/press/focus, with no background, and focus-scoped Escape dismissal. Verification and desktop
+limits are tracked in `docs/PLAYER_LAYOUT_AUDIT_2026-10-12.md` and
+`tests/player-layout/README.md`.
+
+**2026-10-11 audiobook Libraries:** replaces the modal Sublibraries editor with
+a floating island, offline book drags, staged ordering and guarded saves. Spoken
+covers now mask their rounded corners. See the [spoken plan](SPOKEN_MEDIA_AND_DEVICE_ART.md)
+for behavior and validation; desktop user acceptance is pending.
+
+**2026-10-10 spoken setup:** optional podcast preferences and reviewed audiobook
+folder import now appear in onboarding. Setup and Settings share podcast controls;
+setup preferences stay staged until completion. See the [spoken plan](SPOKEN_MEDIA_AND_DEVICE_ART.md)
+for behavior and software validation. User walkthrough acceptance remains pending.
+
+**2026-10-10 podcast queue follow-up:** opt-in starred-show automatic queue
+planning, default/per-show episode counts, and feed-aware + selection are in the
+private spoken branch. See the [spoken plan](SPOKEN_MEDIA_AND_DEVICE_ART.md) for
+connection, membership, cleanup and queue-clear contracts and validation.
+
+**2026-10-08 private workstream:** podcasts, audiobooks and Zune HD artist
+backgrounds are planned in [SPOKEN_MEDIA_AND_DEVICE_ART.md](SPOKEN_MEDIA_AND_DEVICE_ART.md).
+Both repositories use `feature/podcasts-audiobooks` from the saved visualizer
+checkpoint. Experimental podcast series/MP3 APIs, RSS parsing and local audiobook
+chapter inspection now pass their focused software gates. After physical
+reconnect, Keel passes an isolated podcast upload/reuse/extraction/cleanup gate.
+A real Moonbound trailer also passed retained upload, repeat reuse and exact
+byte readback; the user confirmed category presentation on the Classic.
+The first native app increment adds RSS subscriptions/downloads, ordered local
+book imports, custom covers through right-click Customize, chapters/bookmarks and
+mpv playback/resume in independent spoken storage. Podcast transfers/media drags
+now use typed queue admission and serialized device sends. The user confirmed
+podcast audio and visible artwork on the Classic on October 9. Device resume,
+other models and audiobook firmware resume remain separate gates. Small native
+two-part MP3 audiobook gates now pass on Classic and HD, with exact audio/art
+readback; the user accepted the Classic test. Typed audiobook GUI sync is wired,
+with whole-book actions and native chapter-preserving preparation for M4B. HD backgrounds remain deferred.
+The October 9 follow-up moves spoken controls into the existing ribbon/island,
+adds mic/book icons, speed/sleep controls and reviewed folder import in Settings.
+Keep this development on private Gitea until the user approves wider distribution.
+
+October 9 retention candidate: optional played-podcast cleanup runs before sync
+with durable device-scoped history and whole-plan readback validation. Per-episode
+Keep protection and newest/oldest/count/manual picker choices preserve local files
+and explicit queue review. Software gates and remaining Classic/HD GUI cleanup
+acceptance are documented in the private spoken plan.
+
+October 9 podcast correction: the HD's native podcast metadata normalization
+now follows the observed Keel/Pavo schema-0x10 behavior. Confirmed new-object
+cleanup no longer leaves a false interrupted-transfer warning. The private spoken
+plan records evidence and the remaining HD/Classic hardware acceptance gates.
+
+October 9 device browsing: Podcasts and Audiobooks now have Zune-island pages
+backed by native inventory, exact series/folder groups and confirmed per-item or
+whole-group removal. The private spoken plan and `tests/device-spoken/` document
+software and hardware gates.
+
+October 9 local organization: spoken pages now reuse the established gallery,
+underlined pivots and breadcrumbs. Favorites cover shows, episodes and books;
+audiobook sublibraries retain ordered many-to-many membership. Staged edits,
+revision guards and metadata-only deletion preserve original media and sync
+identities. Native persistence and organization QML gates accompany this private
+candidate; user visual acceptance remains separate.
+
+October 9 podcast retention investigation: a read-only HD ZMDB baseline matches
+the previously inspected reference's candidate podcast record layout. Bookmark
+and marked-played semantics still need controlled partial/complete playback
+comparisons on HD and Classic. Episode limits can proceed independently; no
+automatic cleanup is enabled. See the spoken plan and libzune research record.
+
 > Implementation history and remaining verification backlog. The dated phases
 > below include original plans and later corrections; they are not a promise
 > that every item ships in the current AppImage. For the current public layout
@@ -502,3 +575,74 @@ artist/full-title matches or explicit provider identities use Cover Art Archive
 and Fanart; custom/cache protection and conservative edition matching remain.
 See `MUSIC_ARTWORK_DISCOVERY.md` for gates and limits. Native test candidate only;
 interactive acceptance and a new packaged release remain separate.
+
+## 2026-10-05: MilkDrop visualizer prototype
+
+The requested fullscreen Winamp-style visualizer is being developed on
+`feature/milkdrop-visualizer`. The opt-in native projectM proof has a separate
+fullscreen OpenGL window, per-instance music PCM capture and keyboard playback
+controls. It is not part of the published 0.1.2 artifact. Integration, acceptance
+and packaging phases are tracked in [MUSIC_VISUALIZER.md](MUSIC_VISUALIZER.md).
+
+The user subsequently identified WMP **Alchemy** as the reference. The current
+Portal candidate builds its tunnel from expanding, morphing image history with
+independent warp/shape/palette transitions, retaining the original Feedback
+theme. Native build, 13 integration checks and two clock checks pass; visual
+acceptance and packaging remain open. Reference provenance and motion evidence
+are recorded in the visualizer document above.
+
+**Live mouth correction:** Zuuned Viz now has a native PCM-derived mouth and
+immutable contour-history renderer, with explicit masking to keep stale trails
+out of the live opening. Winamp/projectM remains separate and unchanged. Native
+state, rendered-mouth and host integration gates are in `tests/visualizer`;
+user acceptance and packaging remain open.
+
+**2026-10-06 visualizer refinement:** stronger continuous bass/transient-driven
+mouth folds, a broader slowly changing audio-steered palette, and soft smoke
+around approaching saved contours. The live opening remains clear; Winamp is
+unchanged. 35 focused state/render/host checks pass; user acceptance remains.
+
+**2026-10-06 sustained bands/shape families:** the user approved spectral-sustain
+line widths and occasional smooth morphs between five underlying mouth shapes.
+Fast audio deformation continues through each morph; snapshots retain radius
+and width. Minimum holds, eased transitions and pause/silence freeze are covered
+by 45 state/render/host checks. User visual acceptance and packaging remain open.
+
+**2026-10-06 tiny mouth/travel:** the mouth projects at one tenth its previous
+radius, with deeper outward expansion and a smooth bounded path across both
+screen axes. Historical centers produce bends, without scaling screen travel
+with depth. 69 state/render/host checks pass, including clear-mouth readback at
+square, ultrawide and portrait sizes. Native build passes; visual acceptance and
+packaging remain separate. See `MUSIC_VISUALIZER.md`.
+
+
+**2026-10-09 podcast transfer candidate:** typed app queue admission, downloaded
+and selected episode routing, show/row DragGhost gestures, persistent feed/GUID
+identity and serialized worker transfer now implemented. Actual app-object Keel
+harness uploaded Moonbound episode 13, accepted show artwork and finalized;
+new-session repeat excluded it before queue insertion. The user confirmed Classic
+podcast audio and artwork; resume and other models remain separate gates.
+Audiobook GUI integration now follows the successful Classic/HD native MP3
+protocol gates. See `docs/SPOKEN_MEDIA_AND_DEVICE_ART.md` and `tests/spoken-sync/`.
+
+
+**2026-10-09 audiobook transfer candidate:** dedicated book/part identities,
+SHA-256 source verification, typed queue persistence/admission/recovery, serial
+worker sends and per-part artwork are implemented. UI uses existing split cover
+controls and device drags. The subsequent user correction removes book part
+selection and adds complete chaptered-book preparation; podcasts keep selection. HD wildcard inventory is
+required for book dedup; MP3-filtered enumeration omits native book tracks.
+Native GUI/service and queue gates cover these boundaries without USB. Small
+Classic/HD protocol transfers verify exact audio/art bytes; Classic user
+acceptance is recorded. Chaptered M4B splitting/mapping is now software-implemented; whole-book device
+presentation, transitions, firmware resume and HD user acceptance remain open. No public release
+or push is implied by these gates. See the spoken-media plan for exact evidence.
+
+
+**2026-10-09 queue responsiveness correction:** books and podcasts now enter the
+regular queue immediately from cached library metadata. File validation/hashing,
+podcast downloads and encoding happen during sync, with queue progress. Pending
+manifests survive restart even without downloaded audio; correlated preparation
+checks device serial, exact identity and whole-book capacity before sending.
+Routine admission is quiet and the spoken page has no sync-preparation banner.
+See the latest spoken-media plan section for focused verification.

@@ -28,6 +28,9 @@ struct SyncQueueEntry {
     double progress = 0.0;
     QString statusNote;
 
+    QVariantMap audiobook;
+    QVariantMap podcast;    // feed/GUID/source identity, kept separate from music
+
     // Video-only (SyncQueueEntry.swift video fields)
     QString videoSeries;
     int videoSeason = 0;
@@ -114,6 +117,13 @@ public:
     // Playlist forge entry (UX-2 ride-along sync) — the member list
     // lives in the ENGINE keyed by the returned entryId; this row is
     // the queue's visible representation. Dedup: playlist name.
+    bool containsAudiobook(const QVariantMap &part) const;
+    QString addAudiobook(const QVariantMap &part, qint64 estimatedBytes);
+    QString addPodcast(const QVariantMap &episode, qint64 estimatedBytes);
+    // Transient display-only actions. Never persisted, re-armed or uploaded.
+    QString addPodcastRemoval(const QVariantMap &episode);
+    void clearPodcastRemovals();
+
     QString addPlaylistEntry(const QString &name, int trackCount);
 
     // A1 queue persistence: re-insert a saved entry verbatim (keeps its
@@ -129,6 +139,7 @@ public:
 
     void setStatus(const QString &entryId, const QString &status,
                    const QString &note = QString());
+    void updateSpokenPayload(const QString &entryId, const QVariantMap &payload, qint64 estimatedBytes);
     void setProgress(const QString &entryId, double frac);
 
     // Collapsible groups for the queue panel: one summary per group in

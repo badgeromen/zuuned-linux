@@ -153,6 +153,7 @@ ZuneDevice *zune_breach(void) {
             /* Don't abort — some operations may still work, and the user
              * should see the error in the UI rather than a silent failure */
         } else {
+            dev->mtpz_authenticated = 1;
             fprintf(stderr, "[libzune] MTPZ authentication successful\n");
         }
     }

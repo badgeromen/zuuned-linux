@@ -1,0 +1,55 @@
+2026-10-09 Classic / Keel (045e:0710), authenticated read-only format probe
+Command: zunetool media-capabilities 0x3009
+No media writes. Only descriptor headers, no authentication diagnostics or serial.
+
+media-capabilities-v1
+format	0x3009
+scope	advertised descriptor headers; writes unverified
+properties	45
+property	type	get-set	descriptor-bytes
+0xDE99	0x0006	read-only-advertised	20
+0xDA99	0x000A	read-write-advertised	26
+0xDC84	0x0006	read-only-advertised	26
+0xDC44	0xFFFF	read-write-advertised	11
+0xDC04	0x0008	read-only-advertised	18
+0xDAB0	0x0002	read-write-advertised	11
+0xDA97	0x000A	read-write-advertised	26
+0xDC4F	0x0002	read-write-advertised	15
+0xDC47	0xFFFF	read-write-advertised	11
+0xDC07	0xFFFF	read-write-advertised	11
+0xDA02	0x0006	read-write-advertised	14
+0xDA82	0x0002	read-write-advertised	11
+0xDD62	0x0006	read-write-advertised	14
+0xDC02	0x0004	read-only-advertised	12
+0xDC8B	0x0004	read-write-advertised	12
+0xDC0B	0x0006	read-only-advertised	14
+0xDA01	0xFFFF	read-write-advertised	11
+0xDC81	0x0004	read-write-advertised	16
+0xD901	0x0002	read-write-advertised	15
+0xDC01	0x0006	read-only-advertised	14
+0xDC41	0x000A	read-only-advertised	26
+0xDA9B	0x0002	read-write-advertised	15
+0xDC9B	0xFFFF	read-only-advertised	11
+0xDE9A	0x0006	read-only-advertised	26
+0xDA9A	0xFFFF	read-write-advertised	11
+0xDC9A	0xFFFF	read-only-advertised	11
+0xDC86	0x4002	read-write-advertised	18
+0xDC46	0xFFFF	read-write-advertised	11
+0xDAB2	0x0002	read-write-advertised	11
+0xDC48	0x4004	read-write-advertised	18
+0xDC9D	0x0004	read-write-advertised	18
+0xDC89	0x0006	read-write-advertised	14
+0xDC8C	0xFFFF	read-write-advertised	11
+0xDC95	0x0004	read-write-advertised	12
+0xDC91	0x0006	read-write-advertised	14
+0xDE94	0x0004	read-only-advertised	18
+0xDAB4	0x0002	read-write-advertised	15
+0xDA9E	0x0006	read-write-advertised	14
+0xDA00	0x0006	read-write-advertised	14
+0xDD60	0x4004	read-write-advertised	18
+0xDC8A	0x0004	read-write-advertised	18
+0xDA03	0x0004	read-write-advertised	18
+0xDC83	0x0006	read-only-advertised	26
+0xDA05	0xFFFF	read-write-advertised	11
+0xDE93	0x0006	read-only-advertised	26
+status	complete

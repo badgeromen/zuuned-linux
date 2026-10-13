@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
-# Build a traceable x86_64 tester AppImage. The build host defines the ABI
+# Build a traceable x86_64 or aarch64 tester AppImage. The build host defines the ABI
 # floor; packaging alone does not make an Arch binary compatible with an LTS.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export PATH="$PATH:/usr/sbin:/sbin" # ldconfig's read-only cache query on Debian.
 
-[[ $(uname -m) == x86_64 ]] || { echo "This recipe targets x86_64." >&2; exit 1; }
+zuuned_arch=$(uname -m)
+case "$zuuned_arch" in
+    x86_64) zuuned_cache_arch='x86-64'; zuuned_tools_lock=packaging/appimage-tools.lock ;;
+    aarch64) zuuned_cache_arch='AArch64'; zuuned_tools_lock=packaging/appimage-tools-aarch64.lock ;;
+    *) echo "Unsupported AppImage architecture: $zuuned_arch" >&2; exit 1 ;;
+esac
+export ARCH="$zuuned_arch"
 for tool in cmake ninja curl sha256sum readelf ffmpeg ffprobe pkg-config ldconfig; do
     command -v "$tool" >/dev/null || { echo "Missing build tool: $tool" >&2; exit 1; }
 done
@@ -50,7 +56,7 @@ while read -r filename digest url; do
     printf '%s  %s\n' "$digest" "$zuuned_tools/$filename" | sha256sum --check --status \
         || { echo "Cached tool checksum mismatch: $filename" >&2; exit 1; }
     chmod +x "$zuuned_tools/$filename"
-done < packaging/appimage-tools.lock
+done < "$zuuned_tools_lock"
 
 cmake -B "$zuuned_build" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr \
     "-DZUUNED_SOURCE_REVISION=${ZUUNED_SOURCE_REVISION:-}" \
@@ -82,11 +88,11 @@ zuuned_linker_cache=$(ldconfig -p)
 for soname in libusb-1.0.so.0 libasound.so.2 libcom_err.so.2 libgcc_s.so.1 \
     libgmp.so.10 libgpg-error.so.0 libjack.so.0 libpipewire-0.3.so.0 \
     libstdc++.so.6 libz.so.1 libfribidi.so.0 libharfbuzz.so.0; do
-    library=$(awk -v name="$soname" '$1 == name && /x86-64/ { print $NF; exit }' <<< "$zuuned_linker_cache")
+    library=$(awk -v name="$soname" -v arch="$zuuned_cache_arch" '$1 == name && index($0, arch) { print $NF; exit }' <<< "$zuuned_linker_cache")
     [[ -f $library ]] || { echo "Cannot locate required bundle library: $soname" >&2; exit 1; }
     zuuned_extra_libraries+=(--library "$library")
 done
-"$zuuned_tools/linuxdeploy-x86_64.AppImage" \
+"$zuuned_tools/linuxdeploy-$zuuned_arch.AppImage" \
     --appdir "$zuuned_appdir" \
     "${zuuned_extra_libraries[@]}" \
     --executable "$(command -v ffmpeg)" --executable "$(command -v ffprobe)" \
@@ -97,7 +103,7 @@ done
 # Keep the host's file chooser via the portal, using our matching Qt plugin.
 install -Dm755 "$zuuned_portal_plugin" \
     "$zuuned_appdir/usr/plugins/platformthemes/libqxdgdesktopportal.so"
-"$zuuned_tools/linuxdeploy-x86_64.AppImage" --appdir "$zuuned_appdir" \
+"$zuuned_tools/linuxdeploy-$zuuned_arch.AppImage" --appdir "$zuuned_appdir" \
     --deploy-deps-only "$zuuned_appdir/usr/plugins/platformthemes/libqxdgdesktopportal.so"
 
 # linuxdeploy's default AppRun may be a symlink to zuuned. Replace the link,
@@ -113,17 +119,17 @@ zuuned_dirty=""
 if grep -Eq '"(applicationDirty|libzuneDirty)": true' "$zuuned_appdir/usr/share/zuuned/zuuned-build.json"; then zuuned_dirty="-dirty"; fi
 if grep -Eq '"(applicationDirty|libzuneDirty)": null' "$zuuned_appdir/usr/share/zuuned/zuuned-build.json"; then zuuned_dirty="-state-unknown"; fi
 zuuned_stamp=$(date -u -d "@$SOURCE_DATE_EPOCH" +%Y%m%dT%H%M%SZ)
-zuuned_name="Zuuned-${zuuned_version}-g${zuuned_commit}${zuuned_dirty}-${zuuned_stamp}-x86_64.AppImage"
+zuuned_name="Zuuned-${zuuned_version}-g${zuuned_commit}${zuuned_dirty}-${zuuned_stamp}-${zuuned_arch}.AppImage"
 zuuned_dist="$zuuned_build/dist"
 mkdir -p "$zuuned_dist"
 export LDAI_OUTPUT="$zuuned_dist/$zuuned_name"
-export LDAI_RUNTIME_FILE="$zuuned_tools/runtime-x86_64"
-"$zuuned_tools/linuxdeploy-x86_64.AppImage" --appdir "$zuuned_appdir" --output appimage
+export LDAI_RUNTIME_FILE="$zuuned_tools/runtime-$zuuned_arch"
+"$zuuned_tools/linuxdeploy-$zuuned_arch.AppImage" --appdir "$zuuned_appdir" --output appimage
 bash packaging/verify-appdir.sh "$zuuned_appdir"
 [[ -s "$LDAI_OUTPUT" ]] || { echo "AppImage output was not created: $LDAI_OUTPUT" >&2; exit 1; }
 
 cp "$zuuned_appdir/usr/share/zuuned/zuuned-build.json" "$LDAI_OUTPUT.build.json"
-cp packaging/appimage-tools.lock "$LDAI_OUTPUT.tools.lock"
+cp "$zuuned_tools_lock" "$LDAI_OUTPUT.tools.lock"
 (
     cd "$zuuned_dist"
     sha256sum "$zuuned_name" > "$zuuned_name.sha256"
