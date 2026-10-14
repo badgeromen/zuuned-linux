@@ -19,6 +19,7 @@ TestCase {
     function init() {
         AppSettings.podcastAutoCleanup = false
         DeviceService.connected = false
+        DeviceService.audiobookBrowseSupported = true
         DeviceService.busy = false
         DeviceService.purging = false
         DeviceService.pulling = false
@@ -34,6 +35,45 @@ TestCase {
         verify(page !== null)
     }
     function cleanup() { if (page) page.visible = false; page = null }
+    function test_unsupportedBooksDoNotClaimEmptyDevice() {
+        DeviceService.connected = true
+        DeviceService.audiobookBrowseSupported = false
+        page.books = true
+        const message = findChild(page, "deviceSpokenEmptyMessage")
+        verify(message.visible)
+        verify(message.text.indexOf("not supported") >= 0)
+        verify(!page.canManage)
+        page.books = false
+        verify(page.canManage)
+        compare(message.text, "No podcasts on this Zune yet.")
+    }
+    function test_refreshDeferredOutsideIdentityNotification() {
+        page.visible = false
+        DeviceService.connected = true
+        wait(0)
+        DeviceService.refreshes = 0
+        page.visible = true
+        DeviceService.deviceSerial = "new-device"
+        compare(DeviceService.refreshes, 0)
+        tryCompare(DeviceService, "refreshes", 1)
+        DeviceService.deviceSerial = "disconnected-before-refresh"
+        DeviceService.connected = false
+        wait(0)
+        compare(DeviceService.refreshes, 1)
+    }
+    function test_supportedBookManagement() {
+        DeviceService.connected = true
+        DeviceService.audiobookBrowseSupported = true
+        DeviceService.audiobookPartsList = [part(21, 20, 1)]
+        page.books = true
+        verify(page.canManage)
+        verify(!findChild(page, "deviceSpokenEmptyMessage").visible)
+        page.requestRemoval([21], "Book")
+        page.confirmRemoval()
+        compare(DeviceService.removals.length, 1)
+        compare(DeviceService.removals[0].kind, "audiobook")
+        compare(DeviceService.removals[0].ids, [21])
+    }
     function test_cleanupIsVisibleAndUsesSharedPreference() {
         const toggle = findChild(page, "podcastPageCleanupToggle")
         verify(toggle.visible)

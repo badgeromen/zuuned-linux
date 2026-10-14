@@ -66,8 +66,12 @@ DeviceService::DeviceService(QObject *parent, bool watchDevice) : QObject(parent
             m_podcastEpisodesList = podcasts;
             m_audiobookPartsList = books;
             rebuildPodcastDeviceStatus();
-            fprintf(stderr, "[device] spoken inventory: %lld podcast episodes, %lld audiobook parts\n",
-                    static_cast<long long>(podcasts.size()), static_cast<long long>(books.size()));
+            if (audiobookBrowseSupported())
+                fprintf(stderr, "[device] spoken inventory: %lld podcast episodes, %lld audiobook parts\n",
+                        static_cast<long long>(podcasts.size()), static_cast<long long>(books.size()));
+            else
+                fprintf(stderr, "[device] spoken inventory: %lld podcast episodes; audiobook inventory unsupported on family 0x%02x\n",
+                        static_cast<long long>(podcasts.size()), m_family);
             m_spokenArtIds.clear();
             for (const auto &list : {podcasts, books})
                 for (const QVariant &value : list)
@@ -1014,6 +1018,11 @@ void DeviceService::purgeSpokenItems(const QString &kind, const QVariantList &it
     }
     if ((kind != QStringLiteral("podcast") && kind != QStringLiteral("audiobook")) || itemIds.isEmpty())
         return;
+    if (kind == QStringLiteral("audiobook") && !audiobookBrowseSupported()) {
+        m_spokenMediaError = QStringLiteral("Audiobook browsing is not supported on this Zune model yet. Nothing was deleted.");
+        emit spokenMediaChanged();
+        return;
+    }
     const QVariantList &inventory = kind == QStringLiteral("podcast")
         ? m_podcastEpisodesList : m_audiobookPartsList;
     QHash<quint32, QVariantMap> known;

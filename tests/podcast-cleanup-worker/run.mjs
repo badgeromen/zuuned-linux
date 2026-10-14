@@ -61,7 +61,7 @@ try {
         else linkArgs.push(arg);
     }
     if (!replacedMain) throw new Error('Could not identify the app main object');
-    for (const name of ['zune_get_serial', 'zune_is_aborted', 'zune_clear_abort', 'zune_get_podcast_states', 'zune_free_podcast_states', 'zune_get_podcast_episodes', 'zune_free_podcast_episodes', 'zune_get_podcast_episode_sources', 'zune_free_podcast_episode_sources', 'zune_get_podcast_series', 'zune_free_podcast_series', 'zune_get_audiobook_parts', 'zune_free_audiobook_parts', 'zune_purge_track']) linkArgs.push('-Wl,--wrap=' + name);
+    for (const name of ['zune_get_family', 'zune_get_serial', 'zune_is_aborted', 'zune_clear_abort', 'zune_get_podcast_states', 'zune_free_podcast_states', 'zune_get_podcast_episodes', 'zune_free_podcast_episodes', 'zune_get_podcast_episode_sources', 'zune_free_podcast_episode_sources', 'zune_get_podcast_series', 'zune_free_podcast_series', 'zune_get_audiobook_parts', 'zune_free_audiobook_parts', 'zune_purge_track']) linkArgs.push('-Wl,--wrap=' + name);
     command(link[0], linkArgs);
     const env = { ...process.env, DEVICE_SPOKEN_TEST_ROOT: root,
         XDG_CONFIG_HOME: join(root, 'config'), XDG_DATA_HOME: join(root, 'data'),

@@ -16,6 +16,7 @@ complete public signatures and their contracts.
 ## Start here
 
 - [README](../README.md): build, integration and the Rebellion API.
+- [Buildable examples](../examples/README.md): standalone public-API clients and software-only checks.
 - [API reference](API_REFERENCE.md): every public signature, ownership, status codes and implementation limits.
 - [Public authentication setup](PUBLIC_CREDENTIALS.md): embedded-header and external-file behavior.
 - [Wire capture findings](WIRE_CAPTURE_FINDINGS.md): observed Windows-client protocol behavior.
@@ -112,19 +113,19 @@ ownership, return values and threading requirements before calling an operation.
 | `zune_free_albums()` | [include/zune.h:469](../include/zune.h#L469) | [src/album.c:450](../src/album.c#L450) |
 | `zune_get_podcast_series()` | [include/zune.h:490](../include/zune.h#L490) | [src/podcast.c:94](../src/podcast.c#L94) |
 | `zune_free_podcast_series()` | [include/zune.h:491](../include/zune.h#L491) | [src/podcast.c:85](../src/podcast.c#L85) |
-| `zune_get_podcast_episodes()` | [include/zune.h:506](../include/zune.h#L506) | [src/spoken_inventory.c:96](../src/spoken_inventory.c#L96) |
-| `zune_free_podcast_episodes()` | [include/zune.h:507](../include/zune.h#L507) | [src/spoken_inventory.c:87](../src/spoken_inventory.c#L87) |
-| `zune_get_podcast_episode_sources()` | [include/zune.h:521](../include/zune.h#L521) | [src/podcast.c:529](../src/podcast.c#L529) |
-| `zune_free_podcast_episode_sources()` | [include/zune.h:522](../include/zune.h#L522) | [src/podcast.c:522](../src/podcast.c#L522) |
+| `zune_get_podcast_episodes()` | [include/zune.h:506](../include/zune.h#L506) | [src/spoken_inventory.c:98](../src/spoken_inventory.c#L98) |
+| `zune_free_podcast_episodes()` | [include/zune.h:507](../include/zune.h#L507) | [src/spoken_inventory.c:89](../src/spoken_inventory.c#L89) |
+| `zune_get_podcast_episode_sources()` | [include/zune.h:521](../include/zune.h#L521) | [src/podcast.c:530](../src/podcast.c#L530) |
+| `zune_free_podcast_episode_sources()` | [include/zune.h:522](../include/zune.h#L522) | [src/podcast.c:523](../src/podcast.c#L523) |
 | `zune_get_podcast_states()` | [include/zune.h:542](../include/zune.h#L542) | [src/podcast_state.c:155](../src/podcast_state.c#L155) |
 | `zune_free_podcast_states()` | [include/zune.h:543](../include/zune.h#L543) | [src/podcast_state.c:148](../src/podcast_state.c#L148) |
-| `zune_forge_podcast_series()` | [include/zune.h:554](../include/zune.h#L554) | [src/podcast.c:277](../src/podcast.c#L277) |
-| `zune_smuggle_podcast_episode()` | [include/zune.h:581](../include/zune.h#L581) | [src/podcast.c:348](../src/podcast.c#L348) |
-| `zune_find_podcast_episode()` | [include/zune.h:590](../include/zune.h#L590) | [src/podcast.c:437](../src/podcast.c#L437) |
-| `zune_get_audiobook_parts()` | [include/zune.h:605](../include/zune.h#L605) | [src/spoken_inventory.c:137](../src/spoken_inventory.c#L137) |
-| `zune_free_audiobook_parts()` | [include/zune.h:606](../include/zune.h#L606) | [src/spoken_inventory.c:128](../src/spoken_inventory.c#L128) |
-| `zune_find_audiobook_part()` | [include/zune.h:619](../include/zune.h#L619) | [src/audiobook.c:132](../src/audiobook.c#L132) |
-| `zune_smuggle_audiobook_part()` | [include/zune.h:626](../include/zune.h#L626) | [src/audiobook.c:214](../src/audiobook.c#L214) |
+| `zune_forge_podcast_series()` | [include/zune.h:554](../include/zune.h#L554) | [src/podcast.c:278](../src/podcast.c#L278) |
+| `zune_smuggle_podcast_episode()` | [include/zune.h:581](../include/zune.h#L581) | [src/podcast.c:349](../src/podcast.c#L349) |
+| `zune_find_podcast_episode()` | [include/zune.h:590](../include/zune.h#L590) | [src/podcast.c:438](../src/podcast.c#L438) |
+| `zune_get_audiobook_parts()` | [include/zune.h:605](../include/zune.h#L605) | [src/spoken_inventory.c:139](../src/spoken_inventory.c#L139) |
+| `zune_free_audiobook_parts()` | [include/zune.h:606](../include/zune.h#L606) | [src/spoken_inventory.c:130](../src/spoken_inventory.c#L130) |
+| `zune_find_audiobook_part()` | [include/zune.h:619](../include/zune.h#L619) | [src/audiobook.c:133](../src/audiobook.c#L133) |
+| `zune_smuggle_audiobook_part()` | [include/zune.h:626](../include/zune.h#L626) | [src/audiobook.c:215](../src/audiobook.c#L215) |
 | `zune_brand()` | [include/zune.h:633](../include/zune.h#L633) | [src/thumbnail.c:16](../src/thumbnail.c#L16) |
 | `zune_grab_thumb()` | [include/zune.h:639](../include/zune.h#L639) | [src/thumbnail.c:35](../src/thumbnail.c#L35) |
 | `zune_grab_photo_thumb()` | [include/zune.h:645](../include/zune.h#L645) | [src/thumbnail.c:68](../src/thumbnail.c#L68) |
@@ -171,14 +172,14 @@ symbol outside that API; `static` means file-local or header-inline.
 | Function | Scope | Definition |
 |---|---|---|
 | `book_ready()` | static | [src/audiobook.c:7](../src/audiobook.c#L7) |
-| `book_text()` | static | [src/audiobook.c:21](../src/audiobook.c#L21) |
-| `book_input()` | static | [src/audiobook.c:34](../src/audiobook.c#L34) |
-| `book_read_text()` | static | [src/audiobook.c:48](../src/audiobook.c#L48) |
-| `book_number()` | static | [src/audiobook.c:64](../src/audiobook.c#L64) |
-| `book_inventory()` | static | [src/audiobook.c:79](../src/audiobook.c#L79) |
-| `book_folders()` | static | [src/audiobook.c:92](../src/audiobook.c#L92) |
-| `zune_find_audiobook_part()` | public | [src/audiobook.c:132](../src/audiobook.c#L132) |
-| `zune_smuggle_audiobook_part()` | public | [src/audiobook.c:214](../src/audiobook.c#L214) |
+| `book_text()` | static | [src/audiobook.c:22](../src/audiobook.c#L22) |
+| `book_input()` | static | [src/audiobook.c:35](../src/audiobook.c#L35) |
+| `book_read_text()` | static | [src/audiobook.c:49](../src/audiobook.c#L49) |
+| `book_number()` | static | [src/audiobook.c:65](../src/audiobook.c#L65) |
+| `book_inventory()` | static | [src/audiobook.c:80](../src/audiobook.c#L80) |
+| `book_folders()` | static | [src/audiobook.c:93](../src/audiobook.c#L93) |
+| `zune_find_audiobook_part()` | public | [src/audiobook.c:133](../src/audiobook.c#L133) |
+| `zune_smuggle_audiobook_part()` | public | [src/audiobook.c:215](../src/audiobook.c#L215) |
 
 ### src/device.c
 
@@ -367,19 +368,19 @@ symbol outside that API; `static` means file-local or header-inline.
 | `podcast_title_filename()` | static | [src/podcast.c:167](../src/podcast.c#L167) |
 | `podcast_log_filename()` | static | [src/podcast.c:178](../src/podcast.c#L178) |
 | `podcast_verify_properties()` | static | [src/podcast.c:193](../src/podcast.c#L193) |
-| `podcast_cleanup()` | static | [src/podcast.c:264](../src/podcast.c#L264) |
-| `zune_forge_podcast_series()` | public | [src/podcast.c:277](../src/podcast.c#L277) |
-| `podcast_date_valid()` | static | [src/podcast.c:313](../src/podcast.c#L313) |
-| `podcast_send_file()` | static | [src/podcast.c:332](../src/podcast.c#L332) |
-| `zune_smuggle_podcast_episode()` | public | [src/podcast.c:348](../src/podcast.c#L348) |
-| `zune_find_podcast_episode()` | public | [src/podcast.c:437](../src/podcast.c#L437) |
-| `podcast_series_by_id()` | static | [src/podcast.c:494](../src/podcast.c#L494) |
-| `podcast_series_by_feed()` | static | [src/podcast.c:500](../src/podcast.c#L500) |
-| `podcast_source_by_identity()` | static | [src/podcast.c:505](../src/podcast.c#L505) |
-| `podcast_source_by_id()` | static | [src/podcast.c:511](../src/podcast.c#L511) |
-| `podcast_u32_order()` | static | [src/podcast.c:517](../src/podcast.c#L517) |
-| `zune_free_podcast_episode_sources()` | public | [src/podcast.c:522](../src/podcast.c#L522) |
-| `zune_get_podcast_episode_sources()` | public | [src/podcast.c:529](../src/podcast.c#L529) |
+| `podcast_cleanup()` | static | [src/podcast.c:265](../src/podcast.c#L265) |
+| `zune_forge_podcast_series()` | public | [src/podcast.c:278](../src/podcast.c#L278) |
+| `podcast_date_valid()` | static | [src/podcast.c:314](../src/podcast.c#L314) |
+| `podcast_send_file()` | static | [src/podcast.c:333](../src/podcast.c#L333) |
+| `zune_smuggle_podcast_episode()` | public | [src/podcast.c:349](../src/podcast.c#L349) |
+| `zune_find_podcast_episode()` | public | [src/podcast.c:438](../src/podcast.c#L438) |
+| `podcast_series_by_id()` | static | [src/podcast.c:495](../src/podcast.c#L495) |
+| `podcast_series_by_feed()` | static | [src/podcast.c:501](../src/podcast.c#L501) |
+| `podcast_source_by_identity()` | static | [src/podcast.c:506](../src/podcast.c#L506) |
+| `podcast_source_by_id()` | static | [src/podcast.c:512](../src/podcast.c#L512) |
+| `podcast_u32_order()` | static | [src/podcast.c:518](../src/podcast.c#L518) |
+| `zune_free_podcast_episode_sources()` | public | [src/podcast.c:523](../src/podcast.c#L523) |
+| `zune_get_podcast_episode_sources()` | public | [src/podcast.c:530](../src/podcast.c#L530) |
 
 ### src/podcast_state.c
 
@@ -430,16 +431,16 @@ symbol outside that API; `static` means file-local or header-inline.
 
 | Function | Scope | Definition |
 |---|---|---|
-| `spoken_ready()` | static | [src/spoken_inventory.c:7](../src/spoken_inventory.c#L7) |
-| `spoken_compare_id()` | static | [src/spoken_inventory.c:20](../src/spoken_inventory.c#L20) |
-| `spoken_handles()` | static | [src/spoken_inventory.c:26](../src/spoken_inventory.c#L26) |
-| `spoken_text()` | static | [src/spoken_inventory.c:42](../src/spoken_inventory.c#L42) |
-| `spoken_number()` | static | [src/spoken_inventory.c:62](../src/spoken_inventory.c#L62) |
-| `spoken_info()` | static | [src/spoken_inventory.c:73](../src/spoken_inventory.c#L73) |
-| `zune_free_podcast_episodes()` | public | [src/spoken_inventory.c:87](../src/spoken_inventory.c#L87) |
-| `zune_get_podcast_episodes()` | public | [src/spoken_inventory.c:96](../src/spoken_inventory.c#L96) |
-| `zune_free_audiobook_parts()` | public | [src/spoken_inventory.c:128](../src/spoken_inventory.c#L128) |
-| `zune_get_audiobook_parts()` | public | [src/spoken_inventory.c:137](../src/spoken_inventory.c#L137) |
+| `spoken_ready()` | static | [src/spoken_inventory.c:8](../src/spoken_inventory.c#L8) |
+| `spoken_compare_id()` | static | [src/spoken_inventory.c:22](../src/spoken_inventory.c#L22) |
+| `spoken_handles()` | static | [src/spoken_inventory.c:28](../src/spoken_inventory.c#L28) |
+| `spoken_text()` | static | [src/spoken_inventory.c:44](../src/spoken_inventory.c#L44) |
+| `spoken_number()` | static | [src/spoken_inventory.c:64](../src/spoken_inventory.c#L64) |
+| `spoken_info()` | static | [src/spoken_inventory.c:75](../src/spoken_inventory.c#L75) |
+| `zune_free_podcast_episodes()` | public | [src/spoken_inventory.c:89](../src/spoken_inventory.c#L89) |
+| `zune_get_podcast_episodes()` | public | [src/spoken_inventory.c:98](../src/spoken_inventory.c#L98) |
+| `zune_free_audiobook_parts()` | public | [src/spoken_inventory.c:130](../src/spoken_inventory.c#L130) |
+| `zune_get_audiobook_parts()` | public | [src/spoken_inventory.c:139](../src/spoken_inventory.c#L139) |
 
 ### src/thumbnail.c
 
@@ -624,7 +625,7 @@ See [PUBLIC_CREDENTIALS.md](PUBLIC_CREDENTIALS.md) for the runtime override.
 |---|---|
 | [include/zune.h](../include/zune.h) | 812 |
 | [src/album.c](../src/album.c) | 458 |
-| [src/audiobook.c](../src/audiobook.c) | 345 |
+| [src/audiobook.c](../src/audiobook.c) | 346 |
 | [src/device.c](../src/device.c) | 585 |
 | [src/driverkit_usb.c](../src/driverkit_usb.c) | 434 |
 | [src/finalize.c](../src/finalize.c) | 183 |
@@ -635,12 +636,12 @@ See [PUBLIC_CREDENTIALS.md](PUBLIC_CREDENTIALS.md) for the runtime override.
 | [src/mtpz.h](../src/mtpz.h) | 39 |
 | [src/photo.c](../src/photo.c) | 497 |
 | [src/playlist.c](../src/playlist.c) | 252 |
-| [src/podcast.c](../src/podcast.c) | 637 |
-| [src/podcast_state.c](../src/podcast_state.c) | 178 |
+| [src/podcast.c](../src/podcast.c) | 639 |
+| [src/podcast_state.c](../src/podcast_state.c) | 180 |
 | [src/ptp.c](../src/ptp.c) | 940 |
 | [src/ptp.h](../src/ptp.h) | 317 |
 | [src/search.c](../src/search.c) | 67 |
-| [src/spoken_inventory.c](../src/spoken_inventory.c) | 166 |
+| [src/spoken_inventory.c](../src/spoken_inventory.c) | 168 |
 | [src/thumbnail.c](../src/thumbnail.c) | 128 |
 | [src/track.c](../src/track.c) | 654 |
 | [src/transcode.c](../src/transcode.c) | 317 |
@@ -652,6 +653,15 @@ See [PUBLIC_CREDENTIALS.md](PUBLIC_CREDENTIALS.md) for the runtime override.
 | [src/zmdb.c](../src/zmdb.c) | 1213 |
 | [src/zmdb_io.c](../src/zmdb_io.c) | 127 |
 | [src/zune_internal.h](../src/zune_internal.h) | 122 |
+
+## Integration examples
+
+- [examples/README.md](../examples/README.md)
+- [examples/audiobook_send.c](../examples/audiobook_send.c)
+- [examples/common.h](../examples/common.h)
+- [examples/device_info.c](../examples/device_info.c)
+- [examples/podcast_send.c](../examples/podcast_send.c)
+- [examples/spoken_inventory.c](../examples/spoken_inventory.c)
 
 ## Tools and regression tests
 
@@ -711,12 +721,63 @@ replace device authentication, transfer and readback tests on real hardware.
   - `mtp_delete_object()`: [tests/artist_reuse.c:41](../tests/artist_reuse.c#L41)
   - `check()`: [tests/artist_reuse.c:43](../tests/artist_reuse.c#L43)
   - `main()`: [tests/artist_reuse.c:47](../tests/artist_reuse.c#L47)
+- [tests/audiobook-protocol.c](../tests/audiobook-protocol.c)
+  - `read32()`: [tests/audiobook-protocol.c:19](../tests/audiobook-protocol.c#L19)
+  - `read16()`: [tests/audiobook-protocol.c:22](../tests/audiobook-protocol.c#L22)
+  - `put32()`: [tests/audiobook-protocol.c:23](../tests/audiobook-protocol.c#L23)
+  - `zune_set_error()`: [tests/audiobook-protocol.c:24](../tests/audiobook-protocol.c#L24)
+  - `zune_get_error()`: [tests/audiobook-protocol.c:27](../tests/audiobook-protocol.c#L27)
+  - `check()`: [tests/audiobook-protocol.c:28](../tests/audiobook-protocol.c#L28)
+  - `object()`: [tests/audiobook-protocol.c:32](../tests/audiobook-protocol.c#L32)
+  - `duplicate()`: [tests/audiobook-protocol.c:36](../tests/audiobook-protocol.c#L36)
+  - `property()`: [tests/audiobook-protocol.c:45](../tests/audiobook-protocol.c#L45)
+  - `reply()`: [tests/audiobook-protocol.c:49](../tests/audiobook-protocol.c#L49)
+  - `reset()`: [tests/audiobook-protocol.c:54](../tests/audiobook-protocol.c#L54)
+  - `zune_forge_folder()`: [tests/audiobook-protocol.c:65](../tests/audiobook-protocol.c#L65)
+  - `type_for()`: [tests/audiobook-protocol.c:73](../tests/audiobook-protocol.c#L73)
+  - `ptp_transaction()`: [tests/audiobook-protocol.c:78](../tests/audiobook-protocol.c#L78)
+  - `main()`: [tests/audiobook-protocol.c:153](../tests/audiobook-protocol.c#L153)
 - [tests/audiobook_gate.c](../tests/audiobook_gate.c)
   - `__wrap_zune_breach()`: [tests/audiobook_gate.c:13](../tests/audiobook_gate.c#L13)
   - `__wrap_mtp_get_object_prop_value()`: [tests/audiobook_gate.c:17](../tests/audiobook_gate.c#L17)
   - `__wrap_mtp_get_object_handles()`: [tests/audiobook_gate.c:28](../tests/audiobook_gate.c#L28)
   - `check()`: [tests/audiobook_gate.c:40](../tests/audiobook_gate.c#L40)
   - `main()`: [tests/audiobook_gate.c:47](../tests/audiobook_gate.c#L47)
+- [tests/examples.c](../tests/examples.c)
+  - `check()`: [tests/examples.c:28](../tests/examples.c#L28)
+  - `reset()`: [tests/examples.c:34](../tests/examples.c#L34)
+  - `run()`: [tests/examples.c:35](../tests/examples.c#L35)
+  - `writes()`: [tests/examples.c:52](../tests/examples.c#L52)
+  - `owned()`: [tests/examples.c:53](../tests/examples.c#L53)
+  - `read_failed()`: [tests/examples.c:57](../tests/examples.c#L57)
+  - `write_file()`: [tests/examples.c:58](../tests/examples.c#L58)
+  - `zune_breach()`: [tests/examples.c:63](../tests/examples.c#L63)
+  - `zune_sever()`: [tests/examples.c:64](../tests/examples.c#L64)
+  - `zune_get_name()`: [tests/examples.c:65](../tests/examples.c#L65)
+  - `zune_get_model()`: [tests/examples.c:66](../tests/examples.c#L66)
+  - `zune_get_serial()`: [tests/examples.c:67](../tests/examples.c#L67)
+  - `zune_get_battery()`: [tests/examples.c:68](../tests/examples.c#L68)
+  - `zune_get_error()`: [tests/examples.c:69](../tests/examples.c#L69)
+  - `zune_autopsy()`: [tests/examples.c:70](../tests/examples.c#L70)
+  - `zune_get_podcast_series()`: [tests/examples.c:71](../tests/examples.c#L71)
+  - `zune_free_podcast_series()`: [tests/examples.c:80](../tests/examples.c#L80)
+  - `zune_get_podcast_episodes()`: [tests/examples.c:86](../tests/examples.c#L86)
+  - `zune_free_podcast_episodes()`: [tests/examples.c:95](../tests/examples.c#L95)
+  - `zune_get_audiobook_parts()`: [tests/examples.c:101](../tests/examples.c#L101)
+  - `zune_free_audiobook_parts()`: [tests/examples.c:112](../tests/examples.c#L112)
+  - `zune_get_podcast_states()`: [tests/examples.c:118](../tests/examples.c#L118)
+  - `zune_free_podcast_states()`: [tests/examples.c:129](../tests/examples.c#L129)
+  - `zune_get_podcast_episode_sources()`: [tests/examples.c:135](../tests/examples.c#L135)
+  - `zune_free_podcast_episode_sources()`: [tests/examples.c:144](../tests/examples.c#L144)
+  - `zune_find_podcast_episode()`: [tests/examples.c:150](../tests/examples.c#L150)
+  - `zune_forge_folder()`: [tests/examples.c:159](../tests/examples.c#L159)
+  - `zune_forge_podcast_series()`: [tests/examples.c:163](../tests/examples.c#L163)
+  - `zune_smuggle_podcast_episode()`: [tests/examples.c:169](../tests/examples.c#L169)
+  - `zune_find_audiobook_part()`: [tests/examples.c:176](../tests/examples.c#L176)
+  - `zune_smuggle_audiobook_part()`: [tests/examples.c:183](../tests/examples.c#L183)
+  - `zune_brand()`: [tests/examples.c:191](../tests/examples.c#L191)
+  - `zune_finalize()`: [tests/examples.c:196](../tests/examples.c#L196)
+  - `main()`: [tests/examples.c:198](../tests/examples.c#L198)
 - [tests/media_capabilities.c](../tests/media_capabilities.c)
   - `ptp_transaction()`: [tests/media_capabilities.c:12](../tests/media_capabilities.c#L12)
   - `check()`: [tests/media_capabilities.c:55](../tests/media_capabilities.c#L55)
@@ -759,6 +820,8 @@ replace device authentication, transfer and readback tests on real hardware.
   - `main()`: [tests/podcasts.c:121](../tests/podcasts.c#L121)
 - [tests/run-artist-reuse.sh](../tests/run-artist-reuse.sh)
 - [tests/run-audiobook-gate.sh](../tests/run-audiobook-gate.sh)
+- [tests/run-audiobook-protocol.sh](../tests/run-audiobook-protocol.sh)
+- [tests/run-examples.sh](../tests/run-examples.sh)
 - [tests/run-media-capabilities.sh](../tests/run-media-capabilities.sh)
 - [tests/run-metadata-probe.sh](../tests/run-metadata-probe.sh)
 - [tests/run-podcast-state.sh](../tests/run-podcast-state.sh)

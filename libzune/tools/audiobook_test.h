@@ -64,10 +64,10 @@ static int book_test_verify(ZuneDevice *dev, uint32_t id, mtp_prop_entry_t *p) {
       v |= ((uint32_t)raw[2] << 16) | ((uint32_t)raw[3] << 24);
     same = (p->data_type == PTP_DTC_UINT16 && n == 2 && v == p->value.u16) ||
            (p->data_type == PTP_DTC_UINT32 && n == 4 && v == p->value.u32);
-    /* Keel and Pavo may normalize classification, as with podcasts. Record the
+    /* Native book firmware may normalize classification. Record the
      * value; only its native book-track schema can substitute for 18. */
     if (p->prop_code == MTP_OPC_MetaGenre && n == 2 && v == 0 &&
-        (dev->device_family == ZUNE_FAMILY_KEEL || dev->device_family == ZUNE_FAMILY_PAVO) && (id >> 24) == 0x12)
+        (dev->device_family == ZUNE_FAMILY_KEEL || dev->device_family == ZUNE_FAMILY_PAVO || dev->device_family == ZUNE_FAMILY_DRACO) && (id >> 24) == 0x12)
       same = 1;
     fprintf(stderr, "[audiobook-test] property=0x%04X value=%u match=%d\n",
             p->prop_code, v, same);
@@ -208,7 +208,7 @@ static int cmd_audiobook_test(int argc, char **argv) {
       if (!book_test_verify(dev, id, &props[j]))
         metadata_ok = 0;
     }
-    if ((dev->device_family == ZUNE_FAMILY_KEEL || dev->device_family == ZUNE_FAMILY_PAVO) && (id >> 24) != 0x12)
+    if ((dev->device_family == ZUNE_FAMILY_KEEL || dev->device_family == ZUNE_FAMILY_PAVO || dev->device_family == ZUNE_FAMILY_DRACO) && (id >> 24) != 0x12)
       metadata_ok = 0;
     mtp_object_info_t info = {0};
     int read = mtp_get_object_info(&dev->ptp, id, &info);

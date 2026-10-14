@@ -59,6 +59,9 @@ int main(void) {
   check(!book_test_verify(&dev, 0x10000001, &p), "podcast is not audiobook");
   dev.device_family = ZUNE_FAMILY_PAVO;
   check(book_test_verify(&dev, 0x12000001, &p), "HD native book normalization");
+  dev.device_family = ZUNE_FAMILY_DRACO;
+  check(book_test_verify(&dev, 0x12000001, &p), "Draco schema-qualified zero genre");
+  check(!book_test_verify(&dev, 0x10000001, &p), "Draco podcast schema cannot count as a book");
   dev.device_family = ZUNE_FAMILY_SCORPIUS;
   check(!book_test_verify(&dev, 0x12000001, &p),
         "normalization not generalized across models");

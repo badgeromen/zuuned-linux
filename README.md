@@ -83,6 +83,14 @@ artwork discovery, customization and USB media management. Its protocol library
 is [libzune](https://github.com/badgeromen/libzune), a native C PTP/MTP/MTPZ stack.
 No Windows virtual machine or custom Linux kernel driver is required.
 
+The [0.2.0 release notes](docs/releases/RELEASE_0.2.0.md) cover the new spoken
+media features and Zune 80/120 corrections. Second-generation podcast readback
+and audiobook inventory now use the observed device metadata. Empty podcast
+inventories no longer trigger a listening-state warning during cleanup.
+Small audiobook transfer/readback tests cover Classic, HD and Zune 80/120;
+firmware resume, long-book playback and completed-podcast automatic deletion
+still need separate device acceptance. See the release notes for model limits.
+
 This is an early testing project. Software regression coverage and historical
 hardware results do not certify every new package or device combination. See
 [release verification gates](docs/TESTER_RELEASE.md) for the remaining checks

@@ -497,7 +497,7 @@ typedef struct {
 } ZunePodcastEpisode;
 
 /* Read-only native schema-0x10 inventory, using wildcard handles (not a format
- * filter). Authenticated, active Keel/Pavo sessions only; serialize device I/O.
+ * filter). Authenticated, active Keel/Pavo/Draco sessions only; serialize device I/O.
  * 0 success, -1 failure. Both outputs required; failure returns NULL/count 0,
  * never partial data. Empty success also returns NULL/count 0. Every string and
  * the array are owned; release with the matching free function. Group by
@@ -512,7 +512,7 @@ typedef struct {
 } ZunePodcastEpisodeSource;
 
 /* Complete exact source map for native podcast cleanup, read-only and serialized.
- * Requires authenticated active Keel/Pavo. Reads series once and each distinct
+ * Requires authenticated active Keel/Pavo/Draco. Reads series once and each distinct
  * series folder's MP3 inventory once, independent of local subscription size.
  * 0 succeeds (NULL/count zero is known empty); -1 means invalid/unavailable with
  * no partial output. Duplicate feed/source identities or handles fail closed.
@@ -531,7 +531,7 @@ typedef struct {
     char *title; /* Owned validated UTF-8, for exact live-inventory correlation. */
 } ZunePodcastState;
 
-/* Fresh read-only complete ZMDB state, authenticated active Keel/Pavo only.
+/* Fresh read-only complete ZMDB state, authenticated active Keel/Draco (v2) or Pavo (v5).
  * 0 success (NULL/count 0 is a known empty snapshot), -1 unavailable/unsupported/
  * malformed/partial with NULL/count 0. Both output pointers required. Unknown
  * state must never be interpreted as played. Caller owns the array/title strings and frees
@@ -576,7 +576,7 @@ typedef struct {
  * 0 success, negative failure, including ZUNE_PODCAST_FAILED_CLEANED.
  * out_id is required, with the same orphan contract as forge_podcast_series. No automatic retry after a partial transfer. This does
  * not establish device playback/played-state/bookmark support. Requires a
- * completed MTPZ handshake. Keel/Pavo schema 0x10 establishes podcast classification
+ * completed MTPZ handshake. Keel/Pavo/Draco schema 0x10 establishes podcast classification
  * when MetaGenre reads zero; its redundant SeriesName may read empty. */
 int zune_smuggle_podcast_episode(ZuneDeviceHandle dev, uint32_t parent_id,
                                  const char *filepath,
@@ -591,7 +591,7 @@ int zune_find_podcast_episode(ZuneDeviceHandle dev, const char *feed_url,
                               const char *source_url, uint32_t *parent_id,
                               uint32_t *series_id, uint32_t *episode_id);
 
-/* ---- Audiobooks (experimental; Keel/Pavo multipart MP3 gates passed) ---- */
+/* ---- Audiobooks (experimental; Keel/Pavo/Draco multipart MP3 gates passed) ---- */
 typedef struct {
     uint32_t item_id, parent_id, part_number, duration_ms;
     uint64_t filesize;
@@ -622,7 +622,7 @@ int zune_find_audiobook_part(ZuneDeviceHandle dev, const ZuneAudiobookPartInput 
  * 0 success, -1 failure. Reuses exact live identity plus metadata/size.
  * Nonzero out_id on failure must be retained for manual inspection; no automatic
  * deletion/retry. Transport loss can leave uncertain state even with ID zero.
- * Requires successful authentication and serialized ownership. Keel/Pavo only. */
+ * Requires successful authentication and serialized ownership. Keel/Pavo/Draco only. */
 int zune_smuggle_audiobook_part(ZuneDeviceHandle dev, const char *filepath,
                                const ZuneAudiobookPartInput *part, uint32_t *out_id);
 

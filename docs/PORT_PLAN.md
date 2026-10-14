@@ -1,5 +1,14 @@
 # ZuunedLinux Port Plan
 
+**2026-10-13 Draco podcast correction:** second-generation readback, inventory
+and exact source matching now cover the observed native podcast schema. Draco
+audiobook inventory/lookup/send also pass an isolated two-part audio/art roundtrip.
+Draco podcast state now reads Classic v2 with exact live identity correlation;
+Keel v2/Pavo v5 regressions pass. Completed-podcast cleanup hardware acceptance,
+full-book playback and resume remain separate gates. See the [spoken plan](SPOKEN_MEDIA_AND_DEVICE_ART.md)
+and libzune research record; corrected Draco podcast transfer/playback/artwork
+still needs hardware retesting.
+
 **2026-10-13 compact playback UI:** windows below the existing 1100-logical-pixel
 headroom breakpoint use Now Playing instead of the top ribbon, as do narrow
 windows. Resizing an existing queue opens the island unless a builder is active;

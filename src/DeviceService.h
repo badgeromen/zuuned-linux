@@ -79,6 +79,7 @@ class DeviceService : public QObject {
     Q_PROPERTY(QVariantList playlistsList READ playlistsList NOTIFY stateChanged)
     Q_PROPERTY(QVariantList podcastEpisodesList READ podcastEpisodesList NOTIFY spokenMediaChanged)
     Q_PROPERTY(QVariantList audiobookPartsList READ audiobookPartsList NOTIFY spokenMediaChanged)
+    Q_PROPERTY(bool audiobookBrowseSupported READ audiobookBrowseSupported NOTIFY stateChanged)
     Q_PROPERTY(bool spokenMediaLoading READ spokenMediaLoading NOTIFY spokenMediaChanged)
     Q_PROPERTY(QString spokenMediaError READ spokenMediaError NOTIFY spokenMediaChanged)
     Q_PROPERTY(QString podcastStatusWarning READ podcastStatusWarning NOTIFY spokenMediaChanged)
@@ -200,6 +201,7 @@ public:
     QVariantList playlistsList() const { return m_playlistsList; }
     QVariantList podcastEpisodesList() const { return m_podcastEpisodesList; }
     QVariantList audiobookPartsList() const { return m_audiobookPartsList; }
+    bool audiobookBrowseSupported() const { return m_connected && (m_family == 0x00 || m_family == 0x03 || m_family == 0x06); }
     bool spokenMediaLoading() const { return m_spokenMediaLoading; }
     bool podcastInventoryReady() const { return m_connected && !m_spokenMediaLoading &&
         m_spokenMediaError.isEmpty() && m_podcastMembershipKnown; }

@@ -165,11 +165,33 @@ int main(int argc, char **argv)
     transport_fixture(); fail_write = 1; check(get() == -1, "request write failure");
     transport_fixture(); device.mtpz_authenticated = 0; check(get() == -1 && !writes, "authentication before I/O");
     transport_fixture(); device.device_family = ZUNE_FAMILY_UNKNOWN; check(get() == -1 && !writes, "unsupported family before I/O");
+    transport_fixture(); device.device_family = ZUNE_FAMILY_SCORPIUS; check(get() == -1 && !writes, "unvalidated flash family still fails before I/O");
     transport_fixture(); device.cancel_requested = 1; check(get() == -1 && !writes, "cancellation before I/O");
     transport_fixture(); device.disconnecting = 1; check(get() == -1 && !writes, "disconnect before I/O");
     transport_fixture(); cancel_after_read = 1; check(get() == -1, "cancellation during read");
     transport_fixture(); device.device_family = ZUNE_FAMILY_KEEL; check(get() == -1, "family version mismatch");
     transport_fixture(); device.usb.backend = NULL; check(get() == -1 && !writes, "missing backend");
+    const ZuneDeviceFamily families[] = {ZUNE_FAMILY_KEEL, ZUNE_FAMILY_DRACO, ZUNE_FAMILY_PAVO};
+    for (unsigned family = 0; family < sizeof(families)/sizeof(families[0]); ++family) {
+        for (int version = 2; version <= 5; version += 3) {
+            transport_fixture(); fixture(version, 0x200);
+            blob_size = sizeof(blob); put32(blob, blob_size); cutoff = blob_size;
+            device.device_family = families[family];
+            int expected = families[family] == ZUNE_FAMILY_PAVO ? 5 : 2;
+            check((get() == 0) == (version == expected),
+                  "Keel/Draco require v2 and Pavo requires v5 through authenticated state API");
+        }
+        for (int failure = 0; failure < 4; ++failure) {
+            transport_fixture(); fixture(families[family] == ZUNE_FAMILY_PAVO ? 5 : 2, 0x200);
+            blob_size = sizeof(blob); put32(blob, blob_size); cutoff = blob_size;
+            device.device_family = families[family];
+            if (failure == 0) cutoff = 30000;
+            if (failure == 1) device.mtpz_authenticated = 0;
+            if (failure == 2) cancel_after_read = 1;
+            if (failure == 3) put32(blob+12+record_at+4, 0x01000001);
+            check(get() == -1, "all supported families reject partial, unauthenticated, canceled or malformed state");
+        }
+    }
     printf("%d native podcast state checks passed\n", checks);
     return 0;
 }

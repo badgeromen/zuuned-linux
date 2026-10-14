@@ -1,7 +1,7 @@
 # libzune API reference
 
-Current public interface: **97 functions** in [include/zune.h](../include/zune.h).
-The base review is October 4, 2026, with podcast contracts updated October 9.
+Current public interface: **105 functions** in [include/zune.h](../include/zune.h).
+The base review is October 4, 2026, with spoken-media contracts reviewed October 14.
 The exact declarations below are generated; [TOC.md](TOC.md) links each one to
 its implementation. Build and platform requirements are in [README](../README.md).
 
@@ -26,7 +26,7 @@ strings) use `free`. Prepared-media paths require both `unlink` and `free`.
 
 **Scan cache lifetime:** a successful `zune_infiltrate` stores a borrowed pointer
 to the returned scan in the device. Keep that scan alive for the scan-based music `zune_find_*`
-calls. `zune_find_podcast_episode` and `zune_find_audiobook_part` instead query live MTP state and requires
+calls. `zune_find_podcast_episode` and `zune_find_audiobook_part` instead query live MTP state and require
 no ZMDB scan. `zune_free_scan` does not clear the device pointer. After freeing it, do
 not call a scan-based find helper until another successful scan replaces the cache. A
 failed scan does not replace it. The simplest lifetime is scan, search/use,
@@ -44,9 +44,11 @@ Most mutation functions return 0 for success and -1 for failure, but this is
   Both podcast mutation APIs return `ZUNE_PODCAST_FAILED_CLEANED` (-2) only
   after confirmed deletion of their new object; other failures return -1.
   A zero ID on its own never proves cleanup.
-- `zune_get_folders` returns a count or -1. Other enumeration functions return
-  an allocated array and count; NULL with zero count can mean empty or failure.
-  Some enumeration paths skip unreadable records, so results may be partial.
+- `zune_get_folders` returns a count or -1. Legacy music/video/photo/playlist
+  enumeration can return NULL for empty or failure and may skip unreadable rows.
+  Spoken inventories, source maps and listening-state APIs instead return 0 for
+  complete success (including known empty) or -1 with NULL/count zero on failure.
+  They do not return a partial result. Use each function’s documented contract.
 - Boolean helpers and `zune_decode_filename` return 1/0.
 - `zune_smuggle_video_named` returns 1 (`ZUNE_VIDEO_METADATA_INCOMPLETE`) when
   media is uploaded but requested metadata/art was not fully saved. Its returned
@@ -974,7 +976,7 @@ Free the owned series array and each name/author/feed string using its returned 
 int zune_get_podcast_episodes(ZuneDeviceHandle dev, ZunePodcastEpisode **episodes, int *count);
 ```
 
-Read-only native schema-0x10 episode inventory from complete wildcard handles. Authenticated active Keel/Pavo sessions only. Both output pointers required; 0 success including NULL/count zero when empty, -1 failure with no partial output. Owned array and title/author/series_name strings use free_podcast_episodes. Group by series_id, never title; firmware may return empty series_name, resolved through series inventory. Exact property widths and Unicode validated, transport failures stop immediately. No writes or playback guarantees.
+Read-only native schema-0x10 episode inventory from complete wildcard handles. Authenticated active Keel/Pavo/Draco sessions only. Both output pointers required; 0 success including NULL/count zero when empty, -1 failure with no partial output. Owned array and title/author/series_name strings use free_podcast_episodes. Group by series_id, never title; firmware may return empty series_name, resolved through series inventory. Exact property widths and Unicode validated, transport failures stop immediately. No writes or playback guarantees.
 
 [Declaration](../include/zune.h#L506); [implementation index](TOC.md#public-api).
 
@@ -994,7 +996,7 @@ Free a get_podcast_episodes array and all its strings with the returned count. N
 int zune_get_podcast_episode_sources(ZuneDeviceHandle dev, ZunePodcastEpisodeSource **sources, int *count);
 ```
 
-Read-only complete exact feed/source episode mapping for authenticated active Keel/Pavo. Reads series once, then each distinct series folder's MP3 inventory once; validates exact series relationship, live parent/format and podcast classification. Both outputs required. 0 succeeds including NULL/count 0 when known empty; -1 unavailable, malformed or ambiguous with no partial output. Duplicate feeds, exact feed/source pairs or handles fail closed. Owned array plus UTF-8 feed_url/source_url strings use free_podcast_episode_sources. Same source URL under distinct feeds remains distinct. No title heuristics, mutations or deletion authorization. Serialize all device I/O.
+Read-only complete exact feed/source episode mapping for authenticated active Keel/Pavo/Draco. Reads series once, then each distinct series folder's MP3 inventory once; validates exact series relationship, live parent/format and podcast classification. Both outputs required. 0 succeeds including NULL/count 0 when known empty; -1 unavailable, malformed or ambiguous with no partial output. Duplicate feeds, exact feed/source pairs or handles fail closed. Owned array plus UTF-8 feed_url/source_url strings use free_podcast_episode_sources. Same source URL under distinct feeds remains distinct. No title heuristics, mutations or deletion authorization. Serialize all device I/O.
 
 [Declaration](../include/zune.h#L521); [implementation index](TOC.md#public-api).
 
@@ -1014,7 +1016,7 @@ Free owned feed_url/source_url strings and the get_podcast_episode_sources array
 int zune_get_podcast_states(ZuneDeviceHandle dev, ZunePodcastState **states, int *count);
 ```
 
-Read fresh persisted podcast state from a complete bounded ZMDB snapshot. Requires authenticated active Keel/Pavo and matching v2/v5 layout; serialize device I/O. Both output pointers required. 0 means complete success, including NULL/count 0 when known empty; -1 means unavailable, malformed, canceled or incomplete and returns NULL/count 0. Caller owns array, released by free_podcast_states. Exposes exact atom/series IDs, owned validated UTF-8 title, duration, bookmark, raw flags and marked_played mask 0x200. Bookmark and played are independent. This records firmware state, not proof of uninterrupted natural completion, and never authorizes deletion. Join fresh live identities including exact title and duration before a separate policy acts; unknown state must preserve media.
+Read fresh persisted podcast state from a complete bounded ZMDB snapshot. Requires authenticated active Keel/Draco with v2 or Pavo with v5; serialize device I/O. Both output pointers required. 0 means complete success, including NULL/count 0 when known empty; -1 means unavailable, malformed, canceled or incomplete and returns NULL/count 0. Caller owns array, released by free_podcast_states. Exposes exact atom/series IDs, owned validated UTF-8 title, duration, bookmark, raw flags and marked_played mask 0x200. Bookmark and played are independent. This records firmware state, not proof of uninterrupted natural completion, and never authorizes deletion. Join fresh live identities including exact title and duration before a separate policy acts; unknown state must preserve media.
 
 [Declaration](../include/zune.h#L542); [implementation index](TOC.md#public-api).
 
@@ -1050,7 +1052,7 @@ int zune_smuggle_podcast_episode(ZuneDeviceHandle dev, uint32_t parent_id,
                                  uint32_t *out_id);
 ```
 
-Experimental caller-prepared MP3 episode upload, with podcast category and series relationship. Requires successful MTPZ authentication; no transcoding or codec sniffing. Live series/source-URL identity within the supplied parent folder plus title/size checks controls reuse; ambiguous matches fail without writes. Caller retains feed/GUID identity across URL changes. Firmware may normalize filenames. Keel/Pavo schema 0x10 supports zero MetaGenre/empty redundant SeriesName readback; series link/URL/title and format/size must match. 0 success, negative failure (including ZUNE_PODCAST_FAILED_CLEANED), required out_id uses the same orphan contract as forge_podcast_series. No implicit finalize or played/bookmark guarantee. Keel upload/reuse/extraction/cleanup and new-session repeat tested; user confirmed Classic playback and show artwork. Resume and other models remain unverified.
+Experimental caller-prepared MP3 episode upload, with podcast category and series relationship. Requires successful MTPZ authentication; no transcoding or codec sniffing. Live series/source-URL identity within the supplied parent folder plus title/size checks controls reuse; ambiguous matches fail without writes. Caller retains feed/GUID identity across URL changes. Firmware may normalize filenames. Keel/Pavo/Draco schema 0x10 supports zero MetaGenre/empty redundant SeriesName readback; series link/URL/title and format/size must match. 0 success, negative failure (including ZUNE_PODCAST_FAILED_CLEANED), required out_id uses the same orphan contract as forge_podcast_series. No implicit finalize or played/bookmark guarantee. Keel upload/reuse/extraction/cleanup and new-session repeat tested; user confirmed Classic playback and show artwork. Resume and other models remain unverified.
 
 [Declaration](../include/zune.h#L581); [implementation index](TOC.md#public-api).
 
@@ -1093,7 +1095,7 @@ int zune_find_audiobook_part(ZuneDeviceHandle dev, const ZuneAudiobookPartInput 
                             uint32_t *folder_id, uint32_t *part_id);
 ```
 
-Experimental read-only live lookup by caller-provided book content key and positive part number. Requires authentication and tested Keel/Pavo family. Validates book/title/author/duration/category and refuses conflicting same-title books in other folders. 0 complete, -1 failure; required folder/part outputs zero on failure, zero part means absent. No ZMDB cache or writes.
+Experimental read-only live lookup by caller-provided book content key and positive part number. Requires authentication and tested Keel/Pavo/Draco family. Validates book/title/author/duration/category and refuses conflicting same-title books in other folders. 0 complete, -1 failure; required folder/part outputs zero on failure, zero part means absent. No ZMDB cache or writes.
 
 [Declaration](../include/zune.h#L619); [implementation index](TOC.md#public-api).
 
@@ -1104,7 +1106,7 @@ int zune_smuggle_audiobook_part(ZuneDeviceHandle dev, const char *filepath,
                                const ZuneAudiobookPartInput *part, uint32_t *out_id);
 ```
 
-Experimental prepared immutable MP3 upload under an identity-named folder inside OverDrive. No music artist/album/reference creation. Reuses live book/part identity plus metadata and size; descriptors checked before creation. 0 success, -1 failure. Required output retains a created part ID on subsequent failure; no automatic deletion or retry, and lost responses can leave uncertain state even with ID zero. No codec sniffing, conversion, chapter splitting, artwork or finalization. Serialized authenticated Keel/Pavo only; long files and resume remain separate gates.
+Experimental prepared immutable MP3 upload under an identity-named folder inside OverDrive. No music artist/album/reference creation. Reuses live book/part identity plus metadata and size; descriptors checked before creation. 0 success, -1 failure. Required output retains a created part ID on subsequent failure; no automatic deletion or retry, and lost responses can leave uncertain state even with ID zero. No codec sniffing, conversion, chapter splitting, artwork or finalization. Serialized authenticated Keel/Pavo/Draco only; long files and resume remain separate gates.
 
 [Declaration](../include/zune.h#L626); [implementation index](TOC.md#public-api).
 

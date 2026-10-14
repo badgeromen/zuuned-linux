@@ -204,8 +204,9 @@ int main(void)
   "What the HECK is happening with the PS5 right now? | Nontendo Podcast #190",
   "Episode: \"Quotes\" / Slash \\ Backslash? | caf\xC3\xA9 #190"
  };
- for (int family = 0; family < 2; ++family) {
-  dev.device_family = family ? ZUNE_FAMILY_PAVO : ZUNE_FAMILY_KEEL;
+ const ZuneDeviceFamily families[] = {ZUNE_FAMILY_KEEL, ZUNE_FAMILY_PAVO, ZUNE_FAMILY_DRACO};
+ for (int family = 0; family < 3; ++family) {
+  dev.device_family = families[family];
   for (int t = 0; t < 2; ++t) {
    reset(); show=forge(&dev,"https://example.test/feed"); ep.series_id=show;
    classic_metadata=1; normalize_filename=3; ep.title=punctuated[t];
@@ -327,5 +328,28 @@ int main(void)
  object(episode)->id=(object(episode)->id&0xffffff)|0x01000000;
  check(zune_get_podcast_episode_sources(&dev,&sources,&source_count)<0&&!sources&&!source_count,
        "music schema cannot use zero MetaGenre podcast normalization in bulk");
+ /* Draco reproduces the second-generation GUI readback, independently of state parsing. */
+ dev.device_family=ZUNE_FAMILY_DRACO;
+ reset();show=forge(&dev,"https://example.test/feed");ep.series_id=show;
+ classic_metadata=1;normalize_filename=3;ep.title=punctuated[0];
+ check(!zune_smuggle_podcast_episode(&dev,11,path,&ep,&episode),
+       "Draco accepts observed schema 0x10, zero genre, empty series and title filename");
+ uint32_t draco_folder=0,draco_show=0,draco_episode=0;
+ check(!zune_find_podcast_episode(&dev,"https://example.test/feed",ep.source_url,&draco_folder,&draco_show,&draco_episode)&&
+       draco_folder==11&&draco_show==show&&draco_episode==episode,
+       "Draco exact lookup recognizes uploaded episode without a duplicate");
+ check(!zune_get_podcast_episode_sources(&dev,&sources,&source_count)&&source_count==1&&
+       sources[0].item_id==episode&&!strcmp(sources[0].source_url,ep.source_url),
+       "Draco source map retains exact identity despite normalized metadata");
+ zune_free_podcast_episode_sources(sources,source_count);sources=NULL;
+ fail_prop=0xda9e;
+ check(zune_find_podcast_episode(&dev,"https://example.test/feed",ep.source_url,&draco_folder,&draco_show,&draco_episode)<0&&!draco_episode,
+       "Draco unreadable series link never means absent");fail_prop=0;
+ for (int mode=0;mode<4;++mode) {
+  reset();show=forge(&dev,"https://example.test/feed");ep.series_id=show;
+  classic_metadata=mode==0?2:1;normalize_filename=mode==2?4:mode==3?5:3;corrupt_readback=mode==1?2:0;
+  check(zune_smuggle_podcast_episode(&dev,11,path,&ep,&again)==ZUNE_PODCAST_FAILED_CLEANED&&!again&&deletes==1&&object(show),
+        "Draco wrong schema, title, filename or suffix still rejects and cleans only its new episode");
+ }
  unlink(path);free(long_feed);reset();printf("Podcasts: %d checks passed; no USB\n",checks);
 }

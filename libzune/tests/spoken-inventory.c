@@ -73,13 +73,14 @@ static void reset(ZuneDevice *d) {
 int main(void) {
     ZuneDevice d = {0}; reset(&d);
     ZunePodcastEpisode *episodes = NULL; ZuneAudiobookPart *parts = NULL; int n = 0;
-    for (int family = 0; family < 2; ++family) {
-        reset(&d); d.device_family = family ? ZUNE_FAMILY_PAVO : ZUNE_FAMILY_KEEL;
-        check(!zune_get_podcast_episodes(&d, &episodes, &n) && n == 2, "native episodes exclude music and books on Keel/Pavo");
+    const ZuneDeviceFamily families[] = {ZUNE_FAMILY_KEEL, ZUNE_FAMILY_PAVO, ZUNE_FAMILY_DRACO};
+    for (int family = 0; family < 3; ++family) {
+        reset(&d); d.device_family = families[family];
+        check(!zune_get_podcast_episodes(&d, &episodes, &n) && n == 2, "native episodes exclude music and books on Keel/Pavo/Draco");
         check(episodes[0].series_id != episodes[1].series_id && !strcmp(episodes[0].title, episodes[1].title), "same-title episodes preserve independent series IDs");
         check(!*episodes[0].series_name && episodes[0].duration_ms == 65000 && episodes[0].filesize == 123457, "normalized empty series name and exact duration/size survive");
         zune_free_podcast_episodes(episodes, n); episodes = NULL;
-        check(!zune_get_audiobook_parts(&d, &parts, &n) && n == 2, "wildcard native books include WMA and MP3 on Keel/Pavo");
+        check(!zune_get_audiobook_parts(&d, &parts, &n) && n == 2, "wildcard native books include WMA and MP3 on Keel/Pavo/Draco");
         check(parts[0].parent_id != parts[1].parent_id && !strcmp(parts[0].book_title, parts[1].book_title) && parts[1].part_number == 2, "same-title books preserve folder identity and part numbers");
         zune_free_audiobook_parts(parts, n); parts = NULL;
     }
@@ -116,6 +117,29 @@ int main(void) {
         int r = kind ? zune_get_audiobook_parts(&d, &parts, &n) : zune_get_podcast_episodes(&d, &episodes, &n);
         check(!r && !n && !parts && !episodes, "empty inventory is successful and owned outputs remain NULL");
     }
+    reset(&d); d.device_family = ZUNE_FAMILY_DRACO;
+    check(!zune_get_podcast_episodes(&d, &episodes, &n) && n == 2 &&
+          !*episodes[0].series_name && episodes[0].series_id != episodes[1].series_id,
+          "Draco schema 0x10 inventory preserves exact IDs with normalized metadata");
+    zune_free_podcast_episodes(episodes, n); episodes = NULL;
+    for (int mode = 0; mode < 5; ++mode) {
+        reset(&d); d.device_family = ZUNE_FAMILY_DRACO;
+        if (mode == 0) bad_category = 1;
+        if (mode == 1) fail_at = 3;
+        if (mode == 2) duplicates = 1;
+        if (mode == 3) d.mtpz_authenticated = 0;
+        if (mode == 4) cancel_at = 2;
+        check(zune_get_podcast_episodes(&d, &episodes, &n) == -1 && !episodes && !n,
+              "Draco invalid category, failed read, duplicate IDs, auth or cancellation fails closed");
+    }
+    reset(&d); d.device_family = ZUNE_FAMILY_DRACO; handle_count = 0;
+    check(!zune_get_podcast_episodes(&d, &episodes, &n) && !episodes && !n,
+          "Draco empty podcast inventory is known empty");
+    check(!zune_get_audiobook_parts(&d, &parts, &n) && !parts && !n,
+          "Draco empty book inventory is established by a live read");
+    reset(&d); d.device_family = ZUNE_FAMILY_DRACO; bad_category = 1;
+    check(zune_get_audiobook_parts(&d, &parts, &n) == -1 && !parts && !n,
+          "Draco book schema does not excuse invalid category");
     check(zune_get_podcast_episodes(&d, NULL, &n) == -1 && !n, "podcast output required");
     check(zune_get_audiobook_parts(&d, &parts, NULL) == -1 && !parts, "book count required");
     zune_free_podcast_episodes(NULL, 0); zune_free_audiobook_parts(NULL, 0);

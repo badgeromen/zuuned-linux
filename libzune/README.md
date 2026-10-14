@@ -35,7 +35,11 @@ current header and index when integrating the library.
 Podcast integration, artwork placement, exact identity, CLI testing and current
 audiobook limits are in the [spoken-media guide](docs/SPOKEN_MEDIA.md). Podcast
 audio and visible covers are confirmed on the tested Classic; experimental
-native multipart audiobook transfer is now available on Zune 30 and HD. Podcast firmware played-state reads are available for both families.
+native multipart audiobook transfer is now available on Zune 30, 80/120 and HD.
+Podcast firmware played-state reads are available for those families too. Draco
+(Zune 80/120) passed a small audiobook audio/art roundtrip and a read-only,
+identity-matched podcast-state baseline. Completed-playback cleanup and corrected
+Draco podcast playback/artwork acceptance remain hardware gates.
 Audiobook resume, long-book transitions and other models remain separate gates.
 Chaptered-file preparation belongs to the application, not libzune. See the
 [0.2.0 release notes](docs/RELEASE_0.2.0.md) for this prerelease’s scope.
@@ -85,6 +89,11 @@ make zunetool
 Build outputs: `libzune.a` and `libzune.so` on Linux, or `libzune.a` and
 `libzune.dylib` on macOS. Optional installation: `make install PREFIX=/your/prefix`.
 The shared-library target currently has no versioned SONAME or pkg-config file.
+
+For standalone integrations, see the [buildable C examples](examples/README.md):
+read-only spoken-media inventory, a prepared podcast episode send, and an
+individual prepared audiobook part send. They use the public C API directly,
+without Zuuned or Qt. Start with inventory before running a write example.
 
 FFmpeg executables are used for thumbnail/photo preparation and legacy transcode
 helpers. **The audio/video `zune_arm_*` helpers and `zune_retag` currently hard-code
@@ -170,6 +179,10 @@ The harness also provides `extract`, `playlists`, `refs`, `forge`, `purge`,
 `audit`, `zmdbdump`, `torture` and `video-title-test`. Read
 [`tools/zunetool.c`](tools/zunetool.c) before running mutation/stress commands.
 `purge` deletes device content; stress tests perform repeated transfers.
+For podcast/audiobook integration examples and their usage, prefer
+[examples/README.md](examples/README.md). The separate
+[spoken-media guide](docs/SPOKEN_MEDIA.md#command-line-testing) explains the
+bounded `podcast-test`, `podcast-send` and `audiobook-test` hardware tools.
 
 Logs go to stderr with `[libzune]`, `[ptp]`, `[mtpz]` and backend tags. After a
 failed device operation, inspect `zune_autopsy`: `0x200C` indicates full storage,

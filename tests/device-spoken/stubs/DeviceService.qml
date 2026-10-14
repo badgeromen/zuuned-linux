@@ -2,6 +2,7 @@ pragma Singleton
 import QtQuick
 QtObject {
     property bool connected: false
+    property bool audiobookBrowseSupported: true
     property bool busy: false
     property bool purging: false
     property bool pulling: false

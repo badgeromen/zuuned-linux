@@ -9,6 +9,10 @@ obj/
 *.so
 *.dylib
 
+# Compiled integration examples
+/examples/bin/
+
+# Private authentication inputs supplied only to trusted builds.
 /src/mtpz_keys.h
 .mtpz-data
 *.pem

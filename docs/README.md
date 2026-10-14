@@ -1,6 +1,6 @@
 # Documentation guide
 
-Updated for the 0.2.0 release candidate on October 13, 2026. Application source
+Updated for the 0.2.0 release candidate on October 14, 2026. Application source
 and downloads live at [badgeromen/zuuned-linux](https://github.com/badgeromen/zuuned-linux);
 shared protocol development lives at [badgeromen/libzune](https://github.com/badgeromen/libzune).
 This application snapshot includes libzune as ordinary source files.
@@ -21,7 +21,9 @@ This application snapshot includes libzune as ordinary source files.
 ## Source versus downloadable versions
 
 The [0.2.0 candidate notes](releases/RELEASE_0.2.0.md) cover podcasts, audiobooks,
-ARM64 packaging and the compact playback UI. Package verification is recorded
+ARM64 packaging, the compact playback UI and Zune 80/120 spoken-media fixes.
+Draco readback evidence does not certify firmware resume or automatic deletion
+after completed playback. Package verification is recorded
 separately from source-level test results.
 
 Migrating an existing release copies its original executable; it does not rebuild

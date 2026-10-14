@@ -195,12 +195,13 @@ static int podcast_verify_properties(ZuneDevice *dev, uint32_t id, mtp_prop_entr
 {
     int mismatches = 0;
     uint16_t first_mismatch = 0;
-    /* On Keel and Pavo, the firmware's returned atom handle carries the record schema.
+    /* On Keel, Pavo and Draco, the firmware's returned atom handle carries the record schema.
      * Audio podcast schema 0x10 is authoritative even though MetaGenre reads 0
      * and the redundant SeriesName reads empty. The series handle and URL are
      * still checked exactly, as are format/size outside this helper. */
     int native_episode = (dev->device_family == ZUNE_FAMILY_KEEL ||
-                          dev->device_family == ZUNE_FAMILY_PAVO) && (id >> 24) == 0x10;
+                          dev->device_family == ZUNE_FAMILY_PAVO ||
+                          dev->device_family == ZUNE_FAMILY_DRACO) && (id >> 24) == 0x10;
     const char *title = NULL;
     for (int i = 0; i < count; ++i)
         if (props[i].prop_code == MTP_OPC_Name && props[i].data_type == PTP_DTC_STR)
@@ -535,8 +536,9 @@ int zune_get_podcast_episode_sources(ZuneDeviceHandle dev, ZunePodcastEpisodeSou
     if (out) *out = NULL;
     if (count) *count = 0;
     if (!out || !count || !podcast_ready(dev) || !dev->mtpz_authenticated ||
-        (dev->device_family != ZUNE_FAMILY_KEEL && dev->device_family != ZUNE_FAMILY_PAVO)) {
-        zune_set_error("Podcast source inventory requires an authenticated active Zune 30 or HD");
+        (dev->device_family != ZUNE_FAMILY_KEEL && dev->device_family != ZUNE_FAMILY_PAVO &&
+         dev->device_family != ZUNE_FAMILY_DRACO)) {
+        zune_set_error("Podcast source inventory requires an authenticated active Zune 30, 80/120 or HD");
         return -1;
     }
 #define SOURCE_CHECK(ok, why) do { if (!(ok)) { zune_set_error("%s", why); goto fail; } } while (0)

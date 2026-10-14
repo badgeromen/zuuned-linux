@@ -105,7 +105,7 @@ OBJS     := $(patsubst $(SRCDIR)/%.c,$(OBJDIR)/%.o,$(SRCS))
 SHARED   := libzune.$(SHARED_EXT)
 STATIC   := libzune.a
 
-.PHONY: all clean install uninstall zunetool
+.PHONY: all clean install uninstall zunetool examples
 
 all: $(STATIC) $(SHARED)
 
@@ -114,6 +114,17 @@ all: $(STATIC) $(SHARED)
 zunetool: $(STATIC)
 	$(CC) $(CFLAGS) tools/zunetool.c $(STATIC) $(LDFLAGS_EXE) -o zunetool
 	@echo "built ./zunetool — try: sudo ./zunetool info"
+
+# Standalone public-API examples. Building never connects to hardware.
+EXAMPLES := device_info spoken_inventory podcast_send audiobook_send
+EXAMPLE_BINS := $(addprefix examples/bin/,$(EXAMPLES))
+examples: $(EXAMPLE_BINS)
+
+examples/bin:
+	mkdir -p $@
+
+examples/bin/%: examples/%.c examples/common.h $(STATIC) | examples/bin
+	$(CC) $(CFLAGS) $< $(STATIC) $(LDFLAGS_EXE) -o $@
 
 $(OBJDIR):
 	mkdir -p $(OBJDIR)
@@ -147,4 +158,4 @@ uninstall:
 # ---- Clean ----
 
 clean:
-	rm -rf $(OBJDIR) $(SHARED) $(STATIC)
+	rm -rf $(OBJDIR) $(SHARED) $(STATIC) examples/bin

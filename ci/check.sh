@@ -49,6 +49,7 @@ run podcast-state bash libzune/tests/run-podcast-state.sh
 run podcast-state-inspector node libzune/tests/podcast-state-inspector.mjs
 run podcast-cleanup-worker node tests/podcast-cleanup-worker/run.mjs
 run audiobook-protocol bash libzune/tests/run-audiobook-gate.sh
+run audiobook-transfer-protocol bash libzune/tests/run-audiobook-protocol.sh
 run media-capabilities bash libzune/tests/run-media-capabilities.sh
 run video-protocol bash libzune/tests/run-video-named.sh
 run identity bash tests/music-dedup/run-identity.sh

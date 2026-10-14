@@ -6,10 +6,12 @@ Use `feature/podcasts-audiobooks` for this private work. Read
 [the usage guide](docs/SPOKEN_MEDIA.md), [research evidence](docs/SPOKEN_MEDIA_RESEARCH.md)
 and [TOC](docs/TOC.md) first. Podcast audio and visible show covers are confirmed
 by the user on Classic / Keel; resume and other models remain separate gates.
-Experimental native audiobook lookup/send APIs now support Keel/Pavo. Small
+Experimental native audiobook lookup/send APIs now support Keel/Pavo/Draco. Small
 two-part MP3 tests verified schema 0x12, metadata, exact audio and JPEG readback
-on Classic and HD; the user accepted Classic. Firmware resume, chapter mapping
-and HD screen/playback acceptance remain separate. Use wildcard inventory for
+on Classic, HD and Draco; the user accepted the initial Classic test. Draco
+podcast state reads Classic v2 with exact live identity correlation. Firmware
+resume, chapter mapping, Draco completed-podcast cleanup and HD/Draco
+screen/playback acceptance remain separate. Use wildcard inventory for
 audiobooks: HD MP3-filtered enumeration omits these objects. Preserve serialized
 device ownership, exact spoken identities and the no-blind-retry contract.
 Feeds, downloads and local state belong in the app. HD backgrounds are deferred.

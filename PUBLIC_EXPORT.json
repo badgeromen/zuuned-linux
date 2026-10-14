@@ -11,7 +11,7 @@
   "historyIncluded": false,
   "privateCredentialsIncluded": false,
   "bundledApiDefaultsIncluded": true,
-  "files": 701,
+  "files": 714,
   "excluded": [
     ".gitmodules",
     "docs/MUSIC_VISUALIZER.md",

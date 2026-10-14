@@ -12,6 +12,16 @@ libzune source verified against `PUBLIC_LIBZUNE.json`, as well as private
 submodules. See [BUILDING.md](../BUILDING.md) and the
 [0.2.0 release notes](releases/RELEASE_0.2.0.md) for current scope.
 
+**October 14 Draco scope:** the 0.2.0 source includes second-generation podcast
+metadata readback, audiobook browser/inventory and empty-inventory cleanup fixes.
+Existing isolated Draco audiobook tests establish two-part audio/art transfer,
+readback and test-object cleanup. The listening-state probe matched fifteen
+unplayed episodes. Neither result proves a completed-playback transition,
+automatic GUI cleanup deletion, physical audiobook playback or firmware resume.
+These remain explicit hardware acceptance gates. New package checks must identify
+the exact source and AppImage, separately from the earlier CLI evidence.
+
+
 The recorded `tester-r2` desktop-dialog candidate is built and passes the clean
 runtime, native picker and report-export rehearsal. Its exact artifact and
 evidence are in [TESTER_R2_DESKTOP_DIALOGS.md](releases/TESTER_R2_DESKTOP_DIALOGS.md). It has not been

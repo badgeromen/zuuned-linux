@@ -1045,11 +1045,18 @@ QString inspectPlayedPodcasts(ZuneDevice *dev, const QVariantList &episodes,
             zune_free_podcast_episode_sources(sources, sourceCount);
         }
     } snapshot;
-    if (zune_get_podcast_states(dev, &snapshot.states, &snapshot.stateCount)
-        || !active()
-        || zune_get_podcast_episodes(dev, &snapshot.episodes, &snapshot.episodeCount)
-        || !active())
+    // A complete empty live inventory is sufficient to prove there is nothing
+    // to clean up. Do not require firmware listening-state support in that case.
+    if (zune_get_podcast_episodes(dev, &snapshot.episodes, &snapshot.episodeCount) || !active())
+        return QStringLiteral("Could not read complete podcast inventory. Nothing was deleted.");
+    if (snapshot.episodeCount == 0) return {};
+    if (zune_get_podcast_states(dev, &snapshot.states, &snapshot.stateCount) || !active()) {
+        const auto family = zune_get_family(dev);
+        if (active() && family != ZUNE_FAMILY_KEEL && family != ZUNE_FAMILY_DRACO
+            && family != ZUNE_FAMILY_PAVO)
+            return QStringLiteral("Played-podcast cleanup is not supported on this Zune model yet. Episodes were kept; syncing can continue.");
         return QStringLiteral("Could not read complete podcast listening state. Nothing was deleted.");
+    }
     QHash<quint32, ZunePodcastState> states;
     QHash<quint32, ZunePodcastEpisode> live;
     for (int i = 0; i < snapshot.stateCount; ++i) {

@@ -158,16 +158,18 @@ int zune_get_podcast_states(ZuneDeviceHandle dev, ZunePodcastState **states, int
     if (count) *count = 0;
     if (!states || !count || !dev || !dev->mtpz_authenticated ||
         dev->disconnecting || dev->cancel_requested ||
-        (dev->device_family != ZUNE_FAMILY_KEEL && dev->device_family != ZUNE_FAMILY_PAVO)) {
-        zune_set_error("Podcast state requires an authenticated active Zune 30 or HD");
+        (dev->device_family != ZUNE_FAMILY_KEEL && dev->device_family != ZUNE_FAMILY_DRACO &&
+         dev->device_family != ZUNE_FAMILY_PAVO)) {
+        zune_set_error("Podcast state requires an authenticated active Zune 30, 80/120 or HD");
         return -1;
     }
     uint8_t *payload = NULL;
     uint32_t length = 0;
     if (zune_zmdb_read_payload(&dev->usb, &payload, &length)) return -1;
-    /* A handle's model must agree with the database layout before publishing. */
+    /* Keel and Draco share Classic v2; Pavo uses HD v5. Never infer a
+     * layout for an unknown model or parse a mismatched database as empty. */
     if (dev->disconnecting || dev->cancel_requested || length < 0x26 ||
-        state_u16(payload + 0x24) != (dev->device_family == ZUNE_FAMILY_KEEL ? 2 : 5)) {
+        state_u16(payload + 0x24) != (dev->device_family == ZUNE_FAMILY_PAVO ? 5 : 2)) {
         free(payload);
         zune_set_error("Podcast state canceled or model/layout mismatch");
         return -1;

@@ -93,3 +93,4 @@ console.log(`${checks} packaging checks passed`);
 JS
 bash packaging/tests/elf-inventory.sh
 node packaging/tests/snapshot.mjs
+bash packaging/tests/runtime-readiness.sh

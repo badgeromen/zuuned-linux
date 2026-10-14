@@ -10,6 +10,70 @@ The user requested all three workstreams for
 Zuuned and libzune, with local testing and private Gitea development before wider
 distribution. This is an implementation plan, not a supported-feature claim.
 
+## Draco podcast correction, 2026-10-13
+
+The Zune 80/120 (Draco) test exposed a model coverage gap, separate from episode
+length: podcast uploads were rejected during metadata readback, and cleanup tried
+to read unsupported listening state even on an empty device. The library now
+handles Draco's observed native podcast metadata normalization and complete live
+podcast/source inventory. See libzune's spoken-media documentation for the exact
+readback checks and hardware evidence; software support is not playback acceptance.
+
+Cleanup now reads live podcast inventory first. A successful, complete empty
+inventory is a no-op without a listening-state warning. An inventory read failure
+still fails closed. The subsequent read-only Draco probe confirmed ZMDB version 2
+and fifteen podcast states with exact live object, series, title, duration and
+source matches. All fifteen were unplayed (flags zero). Together with the existing
+Classic-layout documentation, this supports the Draco version-2 reader; the app
+now admits it alongside Keel and Pavo. Scorpius remains unvalidated and explicitly
+unsupported for cleanup. Failed or mismatched state remains unknown, never
+played. No flags, bookmarks or played history are invented; a preview never
+deletes, and approved cleanup is revalidated before any deletion.
+
+The initial correction preserved Draco podcast browsing while explicitly marking
+its audiobook browser unsupported. The subsequent user-requested audiobook fix
+removes that temporary restriction: Draco now uses the library's complete native
+audiobook inventory and the same folder/part grouping, artwork and explicit
+removal path as Classic and HD. Both facade and worker still validate the full
+live metadata before deletion. Scorpius and unknown models remain unsupported;
+their book page reports unavailable browsing rather than claiming an empty device.
+Local book import, chapter preparation and transfer identities are preserved.
+
+The device browser also defers its automatic refresh until after identity/visible
+bindings finish. Refresh emits the same native state notification as connected
+and serial; calling it synchronously from the identity-change handler reentered
+that binding. Deferred refreshes coalesce and recheck visibility and connection
+before accessing the facade.
+
+Verification gates cover empty/failed/stale Draco inventory, supported-family
+played/kept/unplayed cases, unavailable listening state, exact podcast badges alongside audiobook inventory, positive
+Draco book browse/delete, rejection of changed book metadata, unavailable-model
+book deletion, and honest empty-page messaging. Production QML passes 21 tests,
+including refresh coalescing, disconnect before deferred refresh and supported
+book management. After rebuilding the supported-family cleanup correction, the
+production worker passes 83 checks and the facade passes 55 checks. The worker
+matrix exercises Keel/Draco/Pavo played-removal, Keep on Zune, failed initial and
+pre-delete state reads, and an all-unplayed no-op. These software gates use no USB
+calls or app restart.
+
+The fixed public listening-state API also passes the separate read-only Draco
+probe: a 417,036-byte version-2 snapshot produces fifteen states agreeing with
+fifteen live episodes and fifteen exact source identities, all unplayed. Replay
+of prior hardware captures retains Keel's seven states and Pavo's three states;
+partial-HD and completed-HD semantics and Classic completed episodes with retained
+bookmarks remain covered in libzune's state gates. These captures establish reader
+compatibility, not a new physical completion/deletion acceptance result.
+
+A separate isolated CLI gate on the connected Draco passed two 45-second MP3
+parts: schema 0x12, exact book/author/part title, part order and duration, normalized
+genre zero, and byte-exact extracted MP3/JPEG. All four newly created test objects
+were removed; the pre-existing wildcard inventory was verified intact before cleanup. See libzune's dated
+hardware evidence for details. This proves transfer/readback/cleanup, not physical
+playback, resume, or UI cover presentation. Those remain user acceptance checks;
+Draco podcast baseline state readback is separately verified as described above.
+A physical completed-episode transition and automatic deletion remain hardware
+acceptance gates; an all-unplayed snapshot does not establish those outcomes.
+
 ## Audiobook Libraries island and cover corners, 2026-10-11
 
 The user-facing name is now **Libraries**, replacing Sublibraries. Existing

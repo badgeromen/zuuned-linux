@@ -13,7 +13,8 @@ Item {
     property var syncEngine: SyncEngine
     readonly property string kind: books ? "audiobook" : "podcast"
     readonly property string deviceIdentity: deviceService.connected ? deviceService.deviceSerial : ""
-    readonly property bool canManage: deviceService.connected && !deviceService.busy
+    readonly property bool categorySupported: !books || deviceService.audiobookBrowseSupported
+    readonly property bool canManage: page.categorySupported && deviceService.connected && !deviceService.busy
         && !deviceService.purging && !deviceService.pulling && !syncEngine.isSyncing
         && !deviceService.spokenMediaLoading && !deviceService.spokenMediaError
     readonly property var inventory: books ? deviceService.audiobookPartsList : deviceService.podcastEpisodesList
@@ -103,8 +104,10 @@ Item {
         const seconds = Math.max(0, Math.floor((ms || 0) / 1000))
         return Math.floor(seconds / 60) + ":" + (seconds % 60).toString().padStart(2, "0")
     }
-    onVisibleChanged: refreshIfVisible()
-    onDeviceIdentityChanged: { resetDevice(); refreshIfVisible() }
+    // Refresh emits DeviceService.stateChanged, which also notifies connected
+    // and deviceSerial. Defer it until the identity binding has finished.
+    onVisibleChanged: Qt.callLater(refreshIfVisible)
+    onDeviceIdentityChanged: { resetDevice(); Qt.callLater(refreshIfVisible) }
     onBooksChanged: resetDevice()
     onInventoryChanged: {
         // Confirmation belongs to the displayed snapshot, not a refreshed row
@@ -118,7 +121,7 @@ Item {
         checks = next
         if (openGroupKey && !inventory.some(row => groupKey(row) === openGroupKey)) openGroupKey = ""
     }
-    Component.onCompleted: refreshIfVisible()
+    Component.onCompleted: Qt.callLater(refreshIfVisible)
 
     component Cover: Rectangle {
         id: cover
@@ -396,11 +399,13 @@ Item {
                 }
             }
             Text {
+                objectName: "deviceSpokenEmptyMessage"
                 anchors.centerIn: parent
                 width: Math.min(parent.width, Theme.spokenEmptyWidth)
-                visible: !page.deviceService.connected || (!page.openGroup && !page.filteredGroups.length
+                visible: !page.deviceService.connected || !page.categorySupported || (!page.openGroup && !page.filteredGroups.length
                     && !page.deviceService.spokenMediaLoading && !page.deviceService.spokenMediaError)
                 text: !page.deviceService.connected ? "Plug in a Zune to browse its contents."
+                    : !page.categorySupported ? "Audiobook browsing is not supported on this Zune model yet."
                     : page.searchText ? "No matching titles"
                     : page.books ? "No audiobooks on this Zune yet." : "No podcasts on this Zune yet."
                 color: Theme.textSecondary

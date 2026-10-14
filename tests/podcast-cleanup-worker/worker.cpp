@@ -19,13 +19,17 @@ static QList<quint32> deleted;
 static bool aborted = false, failState = false, failInventory = false, failFind = false;
 static int clearCount = 0, failDeleteAt = -1, sourceReads = 0, stateReads = 0;
 static DeviceWorker *worker = nullptr;
+static ZuneDeviceFamily family = ZUNE_FAMILY_KEEL;
+static int bookReads = 0;
+static bool changeGenerationDuringInventory = false;
 static bool changeGenerationDuringFind = false, cancelAfterDelete = false;
 extern "C" {
+ZuneDeviceFamily __wrap_zune_get_family(ZuneDeviceHandle) { return family; }
 const char *__wrap_zune_get_serial(ZuneDeviceHandle) { return "fixture"; }
 int __wrap_zune_is_aborted(ZuneDeviceHandle) { return aborted; }
 void __wrap_zune_clear_abort(ZuneDeviceHandle) { aborted = false; ++clearCount; }
 int __wrap_zune_get_podcast_states(ZuneDeviceHandle, ZunePodcastState **out, int *count) {
-    ++stateReads; *out = nullptr; *count = 0; if (failState) return -1;
+    ++stateReads; *out = nullptr; *count = 0; if (failState || (family != ZUNE_FAMILY_KEEL && family != ZUNE_FAMILY_DRACO && family != ZUNE_FAMILY_PAVO)) return -1;
     *count = states.size(); *out = static_cast<ZunePodcastState *>(calloc(*count, sizeof(**out)));
     if (*count) memcpy(*out, states.data(), *count * sizeof(**out));
     for (int i = 0; i < *count; ++i) (*out)[i].title = states[i].title ? strdup(states[i].title) : nullptr;
@@ -38,7 +42,9 @@ void __wrap_zune_free_podcast_states(ZunePodcastState *p, int count) {
 int __wrap_zune_get_podcast_episodes(ZuneDeviceHandle, ZunePodcastEpisode **out, int *count) {
     *out = nullptr; *count = 0; if (failInventory) return -1;
     *count = inventory.size(); *out = static_cast<ZunePodcastEpisode *>(calloc(*count, sizeof(**out)));
-    if (*count) memcpy(*out, inventory.data(), *count * sizeof(**out)); return 0;
+    if (*count) memcpy(*out, inventory.data(), *count * sizeof(**out));
+    if (changeGenerationDuringInventory) worker->setSpokenGeneration(2);
+    return 0;
 }
 void __wrap_zune_free_podcast_episodes(ZunePodcastEpisode *p, int) { free(p); }
 int __wrap_zune_get_podcast_episode_sources(ZuneDeviceHandle, ZunePodcastEpisodeSource **out, int *count) {
@@ -65,6 +71,8 @@ int __wrap_zune_get_podcast_series(ZuneDeviceHandle, ZunePodcastSeries **out, in
 }
 void __wrap_zune_free_podcast_series(ZunePodcastSeries *p, int) { free(p); }
 int __wrap_zune_get_audiobook_parts(ZuneDeviceHandle, ZuneAudiobookPart **out, int *count) {
+    ++bookReads;
+    if (family != ZUNE_FAMILY_KEEL && family != ZUNE_FAMILY_DRACO && family != ZUNE_FAMILY_PAVO) { *out = nullptr; *count = 0; return -1; }
     *count = bookInventory.size(); *out = static_cast<ZuneAudiobookPart *>(calloc(*count, sizeof(**out)));
     if (*count) memcpy(*out, bookInventory.data(), *count * sizeof(**out));
     return 0;
@@ -78,12 +86,14 @@ int __wrap_zune_purge_track(ZuneDeviceHandle, uint32_t id) {
 int main(int argc, char **argv) {
     QCoreApplication app(argc, argv);
     DeviceWorker w; worker = &w; PodcastCleanupWorkerTestAccess::attach(w);
-    QVariantList planned, purged, progress; QString inspectError, purgeError;
+    QVariantList planned, purged, progress; QString inspectError, purgeError, spokenPurgeError;
     QObject::connect(&w, &DeviceWorker::podcastCleanupProgress, &app,
         [&](quint64 generation, const QString &token, const QString &serial, quint32 id, bool removed) {
             progress.append(QVariantMap{{"generation", QVariant::fromValue(generation)}, {"token", token},
                 {"serial", serial}, {"itemId", id}, {"removed", removed}});
         });
+    QObject::connect(&w, &DeviceWorker::spokenItemsPurged, &app,
+        [&](quint64, quint64, const QString &, const QVariantList &, int, const QString &error) { spokenPurgeError = error; });
     int checks = 0, failures = 0;
     auto check = [&](bool value, const char *name) { ++checks; failures += !value; printf("%s %s\n", value ? "PASS" : "FAIL", name); };
     QObject::connect(&w, &DeviceWorker::podcastCleanupInspected, &app,
@@ -99,6 +109,7 @@ int main(int argc, char **argv) {
                      {12, 9, 7, 60000, 1000, const_cast<char *>("Two"), const_cast<char *>("Author"), nullptr}};
         mappings = {{"https://feed|https://one", 11}, {"https://feed|https://two", 12}};
         aborted = failState = failInventory = failFind = changeGenerationDuringFind = cancelAfterDelete = false;
+        family = ZUNE_FAMILY_KEEL; bookReads = 0; changeGenerationDuringInventory = false;
         bookInventory.clear(); deleted.clear(); progress.clear(); clearCount = 0; sourceReads = 0; stateReads = 0; failDeleteAt = -1; w.setSpokenGeneration(1);
     };
     auto inspect = [&](const QVariantList &input) { w.doInspectPodcastCleanup(1, "token", "fixture", input); };
@@ -121,6 +132,48 @@ int main(int argc, char **argv) {
     reset(); states[0].raw_flags = 0x100; inspect({one}); check(planned.isEmpty(), "unrelated state flags do not imply played");
     reset(); failState = true; inspect({one}); check(!inspectError.isEmpty() && planned.isEmpty(), "state read failure cannot produce a partial plan");
     reset(); failInventory = true; inspect({one}); check(!inspectError.isEmpty() && planned.isEmpty(), "inventory read failure fails closed");
+    reset(); family = ZUNE_FAMILY_DRACO; inventory.clear(); inspect({one, two});
+    check(inspectError.isEmpty() && planned.isEmpty() && stateReads == 0 && sourceReads == 0 && deleted.isEmpty(),
+        "empty Draco inventory needs no unnecessary listening-state read or warning");
+    for (const auto testedFamily : {ZUNE_FAMILY_KEEL, ZUNE_FAMILY_DRACO, ZUNE_FAMILY_PAVO}) {
+        const auto familyName = testedFamily == ZUNE_FAMILY_KEEL ? "Keel" : testedFamily == ZUNE_FAMILY_DRACO ? "Draco" : "Pavo";
+        const auto familyCheck = [&](bool passed, const char *caseName) {
+            const auto label = QByteArray(familyName) + ": " + caseName;
+            check(passed, label.constData());
+        };
+        reset(); family = testedFamily; inspect({one, two});
+        familyCheck(inspectError.isEmpty() && planned.size() == 1 && deleted.isEmpty()
+            && planned.first().toMap().value("itemId").toUInt() == 11,
+            "complete played identity plans one removal without writing");
+        approved = planned; purge(approved);
+        familyCheck(purgeError.isEmpty() && purged == approved && deleted == QList<quint32>{11},
+            "revalidated played episode is removed and partial episode retained");
+        reset(); family = testedFamily; inspect({kept});
+        familyCheck(inspectError.isEmpty() && planned.isEmpty() && deleted.isEmpty(),
+            "Keep on Zune protects a firmware-played episode");
+        reset(); family = testedFamily; failState = true; inspect({one});
+        familyCheck(inspectError.contains("Could not read complete") && !inspectError.contains("not supported")
+            && planned.isEmpty() && deleted.isEmpty(),
+            "failed supported listening-state read reports failure and authorizes no deletion");
+        reset(); family = testedFamily; inspect({one}); approved = planned; failState = true; purge(approved);
+        familyCheck(!purgeError.isEmpty() && purged.isEmpty() && deleted.isEmpty(),
+            "state read failure after preview prevents deletion");
+        reset(); family = testedFamily; states[0].marked_played = 0; states[0].raw_flags = 0; inspect({one, two});
+        familyCheck(inspectError.isEmpty() && planned.isEmpty() && sourceReads == 0 && deleted.isEmpty(),
+            "complete unplayed snapshot is a successful no-op");
+    }
+    reset(); family = ZUNE_FAMILY_SCORPIUS; inspect({one});
+    check(inspectError.contains("not supported") && planned.isEmpty() && sourceReads == 0 && deleted.isEmpty(),
+        "unvalidated Scorpius remains unsupported and cannot authorize cleanup");
+    reset(); family = ZUNE_FAMILY_DRACO; inventory.clear(); failInventory = true; inspect({one});
+    check(!inspectError.isEmpty() && planned.isEmpty() && stateReads == 0 && deleted.isEmpty(),
+        "failed Draco inventory is never treated as known empty");
+    reset(); family = ZUNE_FAMILY_DRACO; inventory.clear(); changeGenerationDuringInventory = true; inspect({one});
+    check(!inspectError.isEmpty() && planned.isEmpty() && deleted.isEmpty(),
+        "empty inventory from a stale device generation is rejected");
+    reset(); inspect({one}); approved = planned; inventory.clear(); purge(approved);
+    check(!purgeError.isEmpty() && deleted.isEmpty(),
+        "inventory emptied after approval invalidates cleanup before deletion");
     reset(); failFind = true; inspect({one}); check(!inspectError.isEmpty() && planned.isEmpty(), "exact identity read failure fails closed");
     reset(); inspect({one, one}); check(!inspectError.isEmpty() && planned.isEmpty(), "duplicate local identity rejected");
     reset(); auto otherFeed = two; otherFeed["feedUrl"] = "https://other-feed"; otherFeed["identity"] = one.value("identity");
@@ -225,6 +278,33 @@ int main(int argc, char **argv) {
     reset(); inventory.clear(); states.clear(); failFind = true; w.doReadSpokenMedia(1, 13, "fixture");
     check(browseError.isEmpty() && browsed.isEmpty() && sourceReads == 0,
         "complete empty podcast inventory skips optional source reads and establishes empty membership");
+    reset(); family = ZUNE_FAMILY_DRACO; w.doReadSpokenMedia(1, 14, "fixture");
+    check(browseError.isEmpty() && browsed.size() == 2 && browsedBooks.isEmpty() && bookReads == 1
+        && browsed[0].toMap().value("sourceKnown").toBool() && browsed[0].toMap().value("playedKnown").toBool()
+        && browsed[0].toMap().value("played").toBool(),
+        "Draco podcast browser reads audiobook inventory and exact correlated played state");
+    const auto dracoBrowseRow = browsed.first();
+    w.doPurgeSpokenItems(1, 15, "fixture", "podcast", {dracoBrowseRow});
+    check(deleted == QList<quint32>{11} && bookReads == 2,
+        "explicit Draco podcast deletion validates metadata against complete spoken inventory");
+    reset(); family = ZUNE_FAMILY_DRACO; bookInventory.append(book);
+    w.doReadSpokenMedia(1, 16, "fixture");
+    check(browseError.isEmpty() && browsedBooks.size() == 1 && bookReads == 1
+        && browsedBooks.first().toMap().value("parentId").toUInt() == 20,
+        "Draco audiobook browser returns verified folder and part identity");
+    const auto dracoBookRows = browsedBooks;
+    w.doPurgeSpokenItems(1, 17, "fixture", "audiobook", dracoBookRows);
+    check(spokenPurgeError.isEmpty() && deleted == QList<quint32>{21} && bookReads == 2,
+        "explicit Draco audiobook removal revalidates full live metadata");
+    reset(); family = ZUNE_FAMILY_DRACO; bookInventory.append(book);
+    bookInventory[0].title = const_cast<char *>("Recycled chapter handle");
+    w.doPurgeSpokenItems(1, 18, "fixture", "audiobook", dracoBookRows);
+    check(!spokenPurgeError.isEmpty() && deleted.isEmpty(),
+        "changed Draco audiobook metadata rejects deletion before any write");
+    reset(); family = ZUNE_FAMILY_SCORPIUS;
+    w.doPurgeSpokenItems(1, 19, "fixture", "audiobook", {QVariantMap{{"itemId", 21u}}});
+    check(!spokenPurgeError.isEmpty() && deleted.isEmpty(),
+        "unsupported Scorpius audiobook inventory never authorizes deletion");
     printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

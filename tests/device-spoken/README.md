@@ -21,3 +21,10 @@ Hardware acceptance uses the running application's Zune island. Browse Podcasts
 and Audiobooks, open groups and inspect artwork/ordering. Physical deletion is a
 separate explicit user action with a confirmation. Do not delete real content
 merely to run these software gates.
+
+The Draco model regression verifies exact podcast membership with unavailable
+listening state alongside supported audiobook inventory and validated book
+removal admission. Scorpius remains unsupported and cannot authorize book deletion.
+The device-book page reports unsupported models honestly instead of claiming
+there are no books. QML also covers deferred/coalesced identity-change refresh,
+disconnection before that refresh, and explicit supported-book removal.

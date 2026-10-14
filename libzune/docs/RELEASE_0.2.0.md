@@ -1,6 +1,6 @@
 # libzune 0.2.0
 
-Prerelease notes, prepared October 13, 2026. Publication and release artifacts
+Prerelease notes, updated October 14, 2026. Publication and release artifacts
 are tracked separately; this document does not certify a packaged build.
 
 ## New device APIs
@@ -10,10 +10,15 @@ are tracked separately; this document does not certify a packaged build.
 - Native podcast episode and audiobook part inventories, with explicit complete
   success or failure and matching ownership/free functions.
 - Experimental audiobook part lookup and upload on Classic Zune 30 (Keel) and
-  Zune HD (Pavo). Applications prepare MP3 parts and supply stable book identity.
+  Zune HD (Pavo), plus Zune 80/120 (Draco). Applications prepare MP3 parts and
+  supply stable book identity.
 - Podcast firmware bookmark/marked-played reads and bulk exact feed/source
   identity maps. These read-only APIs support application retention policies;
   unknown state never means played and reading state never authorizes deletion.
+- Draco podcast readback accepts observed native schema-0x10 filename and
+  redundant-field normalization while retaining exact identity/size checks.
+- Podcast listening-state reads now require Classic v2 for Keel and Draco,
+  and HD v5 for Pavo; unsupported or mismatched snapshots fail closed.
 - Podcast cleanup outcomes distinguish confirmed deletion of a newly failed
   object from uncertain device state. Title-derived firmware filenames now
   accept the observed Classic punctuation behavior without loosening outgoing
@@ -22,16 +27,29 @@ are tracked separately; this document does not certify a packaged build.
 The [API reference](API_REFERENCE.md) covers all 105 public functions. The
 [integration guide](SPOKEN_MEDIA.md) explains identities, artwork placement,
 return values, ownership and serialized device access. The
-[source index](TOC.md) maps declarations to implementations.
+[source index](TOC.md) maps declarations to implementations. The new
+[buildable C examples](../examples/README.md) demonstrate standalone read-only
+inventory and prepared podcast/audiobook uploads using the public API. They do
+not require the Zuuned application and keep conversion, feeds and playback
+policy outside the device library.
 
 ## Evidence and limitations
 
 Classic podcast audio and covers have user acceptance. Native two-part MP3
 and cover readback passed on Classic and HD; Classic audiobook presentation was
-accepted by the user. Firmware played-state evidence exists for both families.
+accepted by the user. Firmware played-state evidence exists for Keel and Pavo.
+Draco passed an
+isolated two-part audiobook audio/art roundtrip and exact cleanup, plus a
+read-only 15-episode podcast state snapshot matched against independent live
+inventory/source identities. Every Draco bookmark/played flag in that baseline
+was zero; it does not prove a completed-playback transition or cleanup.
 The [research record](SPOKEN_MEDIA_RESEARCH.md) separates these observations
 from software fixtures and records the real Classic podcast batch following the
 filename correction.
+
+Corrected Draco podcast transfer/playback/artwork acceptance and a completed
+episode followed by cleanup remain hardware gates. The Draco audiobook roundtrip
+does not establish device-screen playback or resume.
 
 This is not certification of all models, HD podcast playback/artwork, audiobook
 resume, long-book chapter transitions, or every cleanup policy. RSS, downloads,

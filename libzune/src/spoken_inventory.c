@@ -1,4 +1,5 @@
-/* Native spoken-media browsing. Schema IDs are corroborated on Keel/Pavo.
+/* Native spoken-media browsing. Keel/Pavo/Draco use podcast schema 0x10
+ * and audiobook schema 0x12; exact property validation remains mandatory.
  * Wildcard enumeration is essential: Pavo omits book parts from MP3 queries.
  * No mutation, fallback creation, title-based grouping or partial publication. */
 #include "zune_internal.h"
@@ -10,8 +11,9 @@ static int spoken_ready(ZuneDevice *d)
         zune_set_error("Spoken inventory requires an authenticated, active device");
         return 0;
     }
-    if (d->device_family != ZUNE_FAMILY_KEEL && d->device_family != ZUNE_FAMILY_PAVO) {
-        zune_set_error("Native spoken inventory is supported on Zune 30 and Zune HD only");
+    if (d->device_family != ZUNE_FAMILY_KEEL && d->device_family != ZUNE_FAMILY_PAVO &&
+        d->device_family != ZUNE_FAMILY_DRACO) {
+        zune_set_error("Native spoken inventory requires Zune 30, 80/120 or HD");
         return 0;
     }
     return 1;

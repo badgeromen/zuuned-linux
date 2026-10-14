@@ -684,3 +684,107 @@ payload sends and 19 artwork completions with no filename mismatches; no podcast
 entries remained pending/failed when the app began the separate 49-video phase.
 Evidence: `/tmp/zuuned-filename-fixed-app.log`. This confirms actual episode
 transfer/metadata verification and queue continuation, not device playback.
+
+
+## Draco podcast readback correction, 2026-10-13
+
+A user-started sync from the 0.2.0 candidate (app `6003d698cc9d`, library
+`70088218af66`) identified family Draco `0x03`, device value `0x03070014`,
+on a Zune 120. The local desktop log `/tmp/zuuned-appimage-0.2.0-desktop-test.log`
+records a 154 MB payload sent before verification rejected object `0x100003f7`:
+
+- `0xDC07` returned the exact episode title plus `.mp3`, including `?` and `|`.
+- `0xDA9A` returned an empty redundant series name.
+- `0xDC95` returned a two-byte zero instead of requested MetaGenre 64.
+
+Subsequent Moonbound objects `0x100003f8` and `0x100003f9` failed the same
+series-name/genre checks. This is observed firmware normalization, not evidence
+that short titles or smaller episodes would fix it. Other checked properties
+were not logged as mismatches. This does not establish playback or completion
+of a corrected transfer.
+
+The readback exceptions now include Draco only for native schema `0x10`.
+Outgoing filenames, exact title/source/series, format and size checks remain.
+Draco podcast wildcard inventory and exact source mapping are enabled for
+browsing and duplicate avoidance, using the same strict per-property validation.
+At this stage, audiobook inventory and ZMDB listening-state layout remained
+unsupported on Draco; the later October 13 sections below record their separate
+roundtrip and read-only validation.
+No family/layout guess enables automatic deletion. The application can first
+establish a genuinely empty podcast inventory without querying listening state.
+
+Software fixtures reproduce normalized send/reuse/source lookup and reject
+wrong schema/title/filename/suffix, bad identities and incomplete reads.
+`tests/run-podcasts.sh` passes 100 checks, `tests/run-spoken-inventory.sh` 74,
+and `tests/run-podcast-state.sh` 110 under ASan/UBSan. No USB calls or changes to
+the running application were made during these checks. A corrected real-device
+transfer, subsequent inventory/artwork/playback and repeat reuse remain gates.
+
+
+## Draco audiobook roundtrip, 2026-10-13
+
+The Zune 120 passed the isolated `zunetool audiobook-test` gate after the idle
+application released its USB connection. Two generated 45-second MP3 parts
+returned native schema `0x12`, exact author/book/title/part number/duration,
+and MetaGenre zero. Each audio payload and representative-sample JPEG read back
+byte-for-byte. The pre-existing wildcard inventory remained intact; both parts
+and the two newly created folders were then deleted by their exact returned IDs.
+See [sanitized evidence](../tests/fixtures/spoken-media/draco-audiobook-roundtrip.txt).
+
+The public audiobook lookup/send APIs and native book inventory now admit Draco
+alongside Keel/Pavo. The firmware field checks, wildcard lookup, content-keyed
+folders, conflicting-title refusal and uncertain-write ID recovery are unchanged.
+Production-C software tests cover send/reuse, malformed readback, failed reads,
+size conflicts and wrong schema across supported models. The device browser now
+reads Draco books normally, and confirmed removal still validates the complete
+live selection before any deletion. A deferred UI refresh also avoids recursive
+connection-state notifications while opening the device page.
+
+This gate proves small multipart protocol transfer, exact metadata/audio/art
+readback and cleanup, not device-screen playback or firmware resume. Full user
+books, chapter transitions and resume still need device testing. Podcast
+listening-state parsing was not enabled by this audiobook change; the next
+section records its separate read-only validation. Neither gate authorizes
+played-episode cleanup on its own.
+
+
+## Draco podcast listening state, 2026-10-13
+
+The user observed an unsupported-cleanup warning after 213 audiobook parts
+completed on the Zune 120. It came from a podcast-state model restriction, not
+from those audiobook writes. Our earlier `ZMDB_FORMAT.md` already identifies
+Classic v2 on Zune 30/80/120/flash and v5 on HD. The pinned reference checkout
+`c2a6eebeac34d1a9e4c805b1ad51ec25895dfdc4` also routes Draco through
+`ZuneClassicParser` in `ZMDBParserFactory.cpp`; its podcast field-location lead
+uses the same v2 offsets documented above. No implementation was copied.
+
+After the idle app released USB, a read-only probe retrieved a complete 417,036-byte
+Draco v2 payload. Our unchanged bounded parser returned 15 podcast states.
+All 15 matched independent live MTP episode inventory and source maps by item,
+series, exact title/duration and parent relationship. All bookmarks and flags
+were zero. The corrected public `zune_get_podcast_states` API was then exercised
+against hardware and repeated the same 15/15 identity correlation successfully.
+Only connection/authentication, reads and session close occurred. No media write,
+played-state write, cleanup, or manual device reset was requested.
+
+The private baseline is `/tmp/zuuned-draco-state-baseline.payload`; the corrected
+API result is `/tmp/zuuned-draco-state-fixed.payload`. Raw dumps/authentication
+logs remain local. The [sanitized summary](../tests/fixtures/spoken-media/draco-podcast-state.txt)
+contains only the readback facts. The API now admits Draco and explicitly expects
+v2 for both Keel and Draco; Pavo still requires v5. Unknown and unvalidated flash
+families remain rejected. Merely adding Draco to the old allowlist would have
+incorrectly expected HD v5 and continued to fail.
+
+Native tests pass 146 checks under ASan/UBSan, including every supported
+family/version pair and incomplete/canceled/malformed/unauthenticated reads.
+Offline native replays of the prior physical Classic snapshot (7 states) and HD
+completed-playback snapshot (3 states) pass. The independent inspector preserves
+Classic's played episode with bookmark 40,599 ms, HD partial playback at 275,759 ms
+without a played flag, and HD completion with flag `0x200` and bookmark zero.
+
+The app retains full live identity correlation, durable history before deletion,
+Keep on Zune protection and whole-plan revalidation. The successful unplayed
+Draco baseline establishes readable state, not a new physical played-bit transition
+or end-to-end deletion test. Completion followed by reconnect/cleanup remains a
+user hardware test. Never substitute title, elapsed time or bookmark zero for the
+firmware's marked-played flag.

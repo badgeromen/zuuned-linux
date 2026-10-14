@@ -56,6 +56,7 @@ complete public signatures and their contracts.
 ## Start here
 
 - [README](../README.md): build, integration and the Rebellion API.
+- [Buildable examples](../examples/README.md): standalone public-API clients and software-only checks.
 - [API reference](API_REFERENCE.md): every public signature, ownership, status codes and implementation limits.
 - [Public authentication setup](PUBLIC_CREDENTIALS.md): embedded-header and external-file behavior.
 - [Wire capture findings](WIRE_CAPTURE_FINDINGS.md): observed Windows-client protocol behavior.
@@ -104,6 +105,8 @@ for (const [file, description] of Object.entries(headerDescriptions)) out += `| 
 out += '\nOptional `src/mtpz_keys.h` supplies embedded authentication material. It is not\npart of this generated index or required for a credential-free library build.\nSee [PUBLIC_CREDENTIALS.md](PUBLIC_CREDENTIALS.md) for the runtime override.\n';
 out += '\n## Source inventory\n\n| File | Lines |\n|---|---|\n';
 for (const file of ['include/zune.h', ...sourceFiles]) out += `| ${link(file)} | ${read(file).split('\n').length - (read(file).endsWith('\n') ? 1 : 0)} |\n`;
+out += '\n## Integration examples\n\n';
+for (const file of files('examples').filter(f => /\.(?:c|h|md)$/.test(f))) out += `- ${link(file)}\n`;
 out += '\n## Tools and regression tests\n\nThese are development tools, not additional library API. Software tests do not\nreplace device authentication, transfer and readback tests on real hardware.\n\n';
 for (const file of [...tools, ...tests]) {
     out += `- ${link(file)}\n`;

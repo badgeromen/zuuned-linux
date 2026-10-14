@@ -1,0 +1,29 @@
+Zune 120 (Draco), 2026-10-13. Sanitized isolated two-part gate.
+Generated MP3 tones: two 45-second parts; generated JPEG cover.
+Only the exact newly created test handles were removed.
+[libzune] device family: Draco (HDD 80/120) (0xD21A = 0x03070014)
+[audiobook-test] book=ZUUNED Book Test 1791929113-156040062 root=83887097 folder=83887098
+[audiobook-test] uploaded part=1 id=301990921 schema=0x12
+[audiobook-test] property=0xDC46 text=ZUUNED match=1
+[audiobook-test] property=0xDC44 text=01 Chapter One match=1
+[audiobook-test] property=0xDA9A text=ZUUNED Book Test 1791929113-156040062 match=1
+[audiobook-test] property=0xDC8B value=1 match=1
+[audiobook-test] property=0xDC95 value=0 match=1
+[audiobook-test] property=0xDC89 value=45000 match=1
+[audiobook-test] part=1 metadata=1 info=1 exact-audio=1
+[audiobook-test] part=1 exact-cover=1
+[audiobook-test] uploaded part=2 id=301990922 schema=0x12
+[audiobook-test] property=0xDC46 text=ZUUNED match=1
+[audiobook-test] property=0xDC44 text=02 Chapter Two match=1
+[audiobook-test] property=0xDA9A text=ZUUNED Book Test 1791929113-156040062 match=1
+[audiobook-test] property=0xDC8B value=2 match=1
+[audiobook-test] property=0xDC95 value=0 match=1
+[audiobook-test] property=0xDC89 value=45000 match=1
+[audiobook-test] part=2 metadata=1 info=1 exact-audio=1
+[audiobook-test] part=2 exact-cover=1
+[audiobook-test] original wildcard inventory preserved=1
+[audiobook-test] cleanup id=301990922 result=0
+[audiobook-test] cleanup id=301990921 result=0
+[audiobook-test] cleanup id=83887098 result=0
+[audiobook-test] cleanup id=83887097 result=0
+[audiobook-test] PASS; category, playback, ordering and resume require device-screen testing

@@ -12,7 +12,8 @@ struct DeviceSpokenTestAccess {
         QObject::disconnect(service.get(), nullptr, service->m_worker, nullptr);
         return service;
     }
-    static void connect(DeviceService &s) { s.m_connected = true; s.m_serial = "fixture-one"; }
+    static void connect(DeviceService &s) { s.m_connected = true; s.m_family = 0x00; s.m_serial = "fixture-one"; }
+    static void family(DeviceService &s, int family) { s.m_family = family; }
     static void disconnect(DeviceService &s) { s.m_connected = false; s.clearDeviceState(); }
     static quint64 generation(DeviceService &s) { return s.m_spokenGeneration; }
     static quint64 request(DeviceService &s) { return s.m_spokenRequest; }
@@ -225,6 +226,31 @@ int main(int argc, char **argv) {
         check(d->spokenMediaLoading(), "same-serial reconnect permits a fresh lazy status read");
         DeviceSpokenTestAccess::disconnect(*d);
     }
+    DeviceSpokenTestAccess::disconnect(*s);
+    DeviceSpokenTestAccess::connect(*s);
+    check(s->audiobookBrowseSupported(), "Classic audiobook inventory is supported");
+    DeviceSpokenTestAccess::family(*s, 0x03);
+    check(s->audiobookBrowseSupported(), "Draco audiobook inventory is supported");
+    s->refreshSpokenMedia();
+    auto exactPodcast = podcast;
+    exactPodcast["sourceKnown"] = true; exactPodcast["feedUrl"] = "https://feed";
+    exactPodcast["sourceUrl"] = "https://episode"; exactPodcast["playedKnown"] = false;
+    DeviceSpokenTestAccess::complete(*s, {exactPodcast}, {book});
+    check(s->spokenMediaError().isEmpty() && s->podcastInventoryReady()
+        && s->podcastDeviceStatus("https://feed", "https://episode").value("onDevice").toBool()
+        && !s->podcastDeviceStatus("https://feed", "https://episode").value("playedKnown").toBool(),
+        "Draco exact podcast membership coexists with books and unavailable listening state");
+    const int beforeDracoDelete = deletes;
+    s->purgeSpokenItems("audiobook", {21u});
+    check(deletes == beforeDracoDelete + 1 && requestedRows == QVariantList{book},
+        "Draco facade admits only existing book identity for worker revalidation");
+    DeviceSpokenTestAccess::purgeDone(*s, {21u});
+    DeviceSpokenTestAccess::family(*s, 0x02);
+    check(!s->audiobookBrowseSupported(), "Scorpius audiobook inventory remains unsupported");
+    const int beforeUnsupportedDelete = deletes;
+    s->purgeSpokenItems("audiobook", {21u});
+    check(deletes == beforeUnsupportedDelete && s->spokenMediaError().contains("not supported"),
+        "facade refuses deletion when audiobook inventory is unsupported");
     printf("Device spoken facade: %d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;
 }

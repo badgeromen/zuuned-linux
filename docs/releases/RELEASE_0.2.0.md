@@ -1,6 +1,6 @@
 # Zuuned Linux 0.2.0
 
-Prerelease notes, prepared October 13, 2026. Package checksums and completed
+Prerelease notes, updated October 14, 2026. Package checksums and completed
 validation belong to the final release manifest; these notes describe the
 candidate’s intended public scope.
 
@@ -23,6 +23,20 @@ candidate’s intended public scope.
   appropriate skip, speed, chapter, bookmark and sleep controls. Setup offers
   spoken-media defaults that can be changed later in Settings.
 
+## Zune 80 and 120 corrections
+
+- Podcast transfers recognize the metadata and title-derived filenames returned
+  by second-generation Zune 80/120 players (Draco), avoiding incorrect readback
+  failures while retaining exact episode identity and size checks.
+- Device audiobook browsing, book/part grouping, artwork and confirmed removal
+  now cover Draco, alongside the existing Classic and HD paths. Unsupported
+  models report unavailable browsing instead of an empty library.
+- Podcast cleanup checks live inventory first. A successful empty inventory is
+  a no-op; a failed inventory read still blocks deletion. Draco listening-state
+  reads now use the verified Classic-format records with exact live identities.
+- Device spoken-page refreshes are deferred and coalesced to prevent reentrant
+  updates while opening the page or changing devices.
+
 ## Playback and presentation
 
 Short or narrow windows use Now Playing instead of a ribbon overlapping the
@@ -38,11 +52,19 @@ the same reviewed source. ARM64 requires a 64-bit desktop system; the Debian 13
 build baseline is not a promise of compatibility with older distributions.
 Zuuned bundles libzune, so application users do not install it separately.
 
-Classic podcast audio/covers and small multipart audiobook hardware tests have
-existing evidence. HD podcast playback/artwork, firmware audiobook resume,
-long-book transitions and other model-specific behavior remain separate gates.
-Played-state reads and removal previews have hardware evidence; end-to-end GUI
-cleanup deletion still needs separate acceptance on Classic and HD.
+Classic podcast audio/covers have existing user acceptance. Isolated small
+multipart audiobook transfer/readback tests have passed on Classic, HD and
+Draco. The Draco test verified ordered audio and cover bytes and removed its
+own test objects; it did not establish physical playback, resume or GUI cover
+presentation.
+
+Draco listening-state readback matched fifteen live, unplayed episodes. That
+establishes baseline reader compatibility, not a completed-episode transition
+or successful automatic deletion. End-to-end GUI played-podcast cleanup still
+needs acceptance on Classic, HD and Draco. HD podcast playback/artwork,
+firmware audiobook resume, long-book transitions and other model-specific
+behavior remain separate gates. Scorpius remains unsupported for device audiobook
+browsing and played-podcast cleanup.
 The earlier ARM candidate launched and connected to a Zune on the user’s Pi;
 that result does not certify the new release’s complete playback/sync workflows.
 The layout matrix is a software test, not Bazzite compositor certification.

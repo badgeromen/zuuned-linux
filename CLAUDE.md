@@ -121,6 +121,16 @@ ordering and one-pass behavior. Clear queue cancels in-flight additions; transfe
 and played cleanup still require explicit Sync. See the spoken plan and native
 planner gates; this does not authorize device deletion or public distribution.
 
+**2026-10-13 Draco podcasts:** Zune 80/120 podcast readback now recognizes the
+observed native `0x10` title-derived filename, empty redundant SeriesName and
+zero MetaGenre. Podcast inventory/source maps accept Draco with strict validation;
+audiobook inventory/lookup/send now also accept Draco after the isolated two-part
+audio/art roundtrip. Podcast state now admits Draco Classic v2 after a 15-record
+read-only identity-matched snapshot; Keel v2/Pavo v5 regression captures pass.
+Cleanup still requires complete live firmware state and exact identities.
+The Draco completed-playback/deletion test remains separate from this baseline. See libzune
+`docs/SPOKEN_MEDIA_RESEARCH.md` for the failure evidence and retest boundaries.
+
 ## Project Overview
 
 ZuunedLinux is a native Qt 6 / QML application for managing Microsoft Zune

@@ -1,0 +1,19 @@
+Zune 120 (Draco), 2026-10-13: read-only public state API and live identity comparison.
+No media writes or deletions. All returned flags/bookmarks are zero.
+STATE family=3 bytes=417036 version=2
+STATE id=0x100003fa series=0x0f0003f8 duration=127000 bookmark=0 flags=0x00000000 played=0 live=1 identity=1 title=EXODUS - MoonBound - Trailer
+STATE id=0x100003fb series=0x0f0003f8 duration=1927000 bookmark=0 flags=0x00000000 played=0 live=1 identity=1 title=02 The Op
+STATE id=0x100003fc series=0x0f0003f8 duration=1201000 bookmark=0 flags=0x00000000 played=0 live=1 identity=1 title=03 Like Black Smoke
+STATE id=0x100003fd series=0x0f0003f8 duration=1924000 bookmark=0 flags=0x00000000 played=0 live=1 identity=1 title=04 Moon Mites
+STATE id=0x100003fe series=0x0f0003f8 duration=2055000 bookmark=0 flags=0x00000000 played=0 live=1 identity=1 title=05 Into the Hole
+STATE id=0x100003ff series=0x0f0003f8 duration=1689000 bookmark=0 flags=0x00000000 played=0 live=1 identity=1 title=27 Battle on the Flight Deck
+STATE id=0x10000400 series=0x0f0003f8 duration=1531000 bookmark=0 flags=0x00000000 played=0 live=1 identity=1 title=28 Planet Fall
+STATE id=0x10000401 series=0x0f0003f8 duration=1594000 bookmark=0 flags=0x00000000 played=0 live=1 identity=1 title=25 Love-Sodden
+STATE id=0x10000402 series=0x0f0003f8 duration=1339000 bookmark=0 flags=0x00000000 played=0 live=1 identity=1 title=26 Morstyn Makes His Move
+STATE id=0x10000403 series=0x0f0003f8 duration=1283000 bookmark=0 flags=0x00000000 played=0 live=1 identity=1 title=24 Dissent and Discovery
+STATE id=0x10000404 series=0x0f0003f9 duration=9480000 bookmark=0 flags=0x00000000 played=0 live=1 identity=1 title=What the HECK is happening with the PS5 right now? | Nontendo Podcast #190
+STATE id=0x10000405 series=0x0f0003f9 duration=10070000 bookmark=0 flags=0x00000000 played=0 live=1 identity=1 title=2027 is Going to Be HUGE for Nintendo | Nontendo Podcast #189
+STATE id=0x10000406 series=0x0f0003f9 duration=9012000 bookmark=0 flags=0x00000000 played=0 live=1 identity=1 title=Will Zelda: Ocarina Remake Be BETTER Than GTA 6? | Nontendo Podcast #188
+STATE id=0x10000407 series=0x0f0003f9 duration=10504000 bookmark=0 flags=0x00000000 played=0 live=1 identity=1 title=Fire Emblem: Fortunes Weave Reviews Are Absolutely INSANE | Nontendo Podcast #187
+STATE id=0x10000408 series=0x0f0003f9 duration=11192000 bookmark=0 flags=0x00000000 played=0 live=1 identity=1 title=We NEED to talk about the "BIGGEST" Week in Nintendo... | Nontendo Podcast #186
+STATE totals states=15 inventory=15 sources=15 exact_matches=15

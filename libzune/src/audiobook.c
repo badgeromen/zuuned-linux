@@ -10,10 +10,11 @@ static int book_ready(ZuneDevice *d) {
         "Audiobook operation requires an authenticated, active device");
     return 0;
   }
-  /* Other models need their own category/readback gate before GUI admission. */
-  if (d->device_family != ZUNE_FAMILY_KEEL && d->device_family != ZUNE_FAMILY_PAVO) {
+  /* Keep the model boundary independent from per-part schema/readback checks. */
+  if (d->device_family != ZUNE_FAMILY_KEEL && d->device_family != ZUNE_FAMILY_PAVO &&
+      d->device_family != ZUNE_FAMILY_DRACO) {
     zune_set_error(
-        "Native audiobook sync is currently validated for Zune 30 and Zune HD only");
+        "Native audiobook sync requires Zune 30, 80/120 or HD");
     return 0;
   }
   return 1;

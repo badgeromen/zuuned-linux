@@ -5,6 +5,20 @@
 set -euo pipefail
 umask 077
 
+# Frame coordinates belong to the X11 client drawable, not the WM's frame.
+# Kept as functions so software fixtures exercise the actual readiness policy.
+onboarding_probe_filter() {
+    printf 'crop=96:24:iw/2+144:ih-64,signalstats,metadata=mode=print:file=%s' "$1"
+}
+onboarding_is_painted() {
+    awk -F= '/lavfi.signalstats.YMIN=/{lo=$2; haveLo=1}
+             /lavfi.signalstats.YMAX=/{hi=$2; haveHi=1}
+             END{exit !(haveLo && haveHi && lo < 64 && hi - lo > 20)}' "$1"
+}
+# Sourcing exposes only these pure helpers to the software fixture. Executing
+# the harness always follows the isolation checks and complete runtime gate.
+if [[ ${BASH_SOURCE[0]} != "$0" ]]; then return 0; fi
+
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 assert_isolated() {
     [[ ! -e /dev/bus/usb ]] || fail 'Refusing a runtime test with USB exposed.'
@@ -439,15 +453,17 @@ start_app fresh-onboarding --page settings --settings-tab Appearance
 geometry=$(xdotool getwindowgeometry --shell "$window_id")
 width=$(sed -n 's/^WIDTH=//p' <<< "$geometry")
 height=$(sed -n 's/^HEIGHT=//p' <<< "$geometry")
-window_x=$(sed -n 's/^X=//p' <<< "$geometry")
-window_y=$(sed -n 's/^Y=//p' <<< "$geometry")
-[[ $width =~ ^[0-9]+$ && $height =~ ^[0-9]+$ && $window_x =~ ^[0-9]+$ && $window_y =~ ^[0-9]+$ ]] || fail 'No native window geometry.'
+[[ $width =~ ^[0-9]+$ && $height =~ ^[0-9]+$ ]] || fail 'No native window geometry.'
+printf '%s\n' "$geometry" > "$evidence/onboarding-window-geometry.txt"
 # A visible X11 window does not prove Qt has painted it. The October 12 ARM
 # emulation capture was still a black 1280x800 surface with white resize strips
 # when the fixed six-second wait expired. Do not click the unpainted strip.
 # Wait for contrast against the dark background in Skip's actual text region.
-# This is only a paint-readiness check; the real click and persisted completion
-# assertion below remain authoritative. Save every probe for failure diagnosis.
+# The October 13 x86/ARM screenshots were fully painted, but translating the
+# WM's position into root-screen offsets sampled blank background. Capture the
+# client drawable directly and crop within that image. Disable the mouse so a
+# pointer cannot masquerade as painted text. This remains only paint readiness:
+# the real click and persisted completion below are authoritative. Keep probes.
 mkdir -p "$evidence/onboarding-readiness"
 ready=0
 deadline=$((SECONDS + 120))
@@ -455,14 +471,11 @@ for ((probe=0; SECONDS<deadline; probe++)); do
     still_running
     probe_file="$evidence/onboarding-readiness/$probe"
     timeout 15s env LD_LIBRARY_PATH="$appdir/usr/lib" "$appdir/usr/bin/ffmpeg" \
-        -hide_banner -nostdin -y -v error -f x11grab -video_size 96x24 \
-        -i "$DISPLAY+$((window_x + width / 2 + 144)),$((window_y + height - 64))" \
-        -vf "signalstats,metadata=mode=print:file=$probe_file.txt" \
+        -hide_banner -nostdin -y -v error -f x11grab -window_id "$window_id" -draw_mouse 0 \
+        -i "$DISPLAY" -vf "$(onboarding_probe_filter "$probe_file.txt")" \
         -frames:v 1 -threads 1 "$probe_file.png" >> "$evidence/captures.log" 2>&1 \
         || fail 'Could not capture onboarding paint-readiness evidence.'
-    if awk -F= '/lavfi.signalstats.YMIN=/{lo=$2; haveLo=1}
-                /lavfi.signalstats.YMAX=/{hi=$2; haveHi=1}
-                END{exit !(haveLo && haveHi && lo < 64 && hi - lo > 20)}' "$probe_file.txt"; then
+    if onboarding_is_painted "$probe_file.txt"; then
         ready=1
         break
     fi
