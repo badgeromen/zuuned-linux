@@ -15,6 +15,62 @@ onboarding_is_painted() {
              /lavfi.signalstats.YMAX=/{hi=$2; haveHi=1}
              END{exit !(haveLo && haveHi && lo < 64 && hi - lo > 20)}' "$1"
 }
+# Compare user-owned customization fields semantically, allowing only the
+# automatic discovery cache to change. Evidence contains counts, never names,
+# paths, JSON payloads or a copied profile. Both databases remain read-only.
+check_collection_preservation() {
+    local previous=$1 current=$2 report=$3 previous_sql columns summary db
+    previous_sql=${previous//\'/\'\'}
+    for db in "$previous" "$current"; do
+        columns=$(sqlite3 -readonly "$db" "SELECT group_concat(name, ',') FROM pragma_table_info('collection_customizations');") || return 1
+        if [[ $columns != kind,item_key,identity_json,art_path ]]; then
+            printf 'FAIL: unexpected customization schema; comparison requires review.\n' > "$report"
+            return 1
+        fi
+        if [[ $(sqlite3 -readonly "$db" "SELECT count(*) FROM collection_customizations WHERE NOT json_valid(identity_json);") != 0 ]]; then
+            printf 'FAIL: invalid customization JSON.\n' > "$report"
+            return 1
+        fi
+        if [[ $(sqlite3 -readonly "$db" "SELECT count(*) FROM collection_customizations WHERE json_type(identity_json) IS NOT 'object';") != 0 ]]; then
+            printf 'FAIL: customization identity is not an object.\n' > "$report"
+            return 1
+        fi
+    done
+    summary=$(sqlite3 -readonly "$current" <<SQL
+ATTACH '$previous_sql' AS previous;
+PRAGMA query_only=ON;
+WITH
+lost AS (SELECT p.kind,p.item_key FROM previous.collection_customizations p
+ WHERE NOT EXISTS (SELECT 1 FROM main.collection_customizations n WHERE n.kind=p.kind AND n.item_key=p.item_key)),
+changed AS (SELECT p.kind,p.item_key FROM previous.collection_customizations p
+ JOIN main.collection_customizations n USING(kind,item_key)
+ WHERE p.rowid IS NOT n.rowid OR p.art_path IS NOT n.art_path OR EXISTS (
+ SELECT fullkey,type,atom FROM json_tree(json_remove(p.identity_json,'\$._artworkDiscovery'))
+ EXCEPT SELECT fullkey,type,atom FROM json_tree(json_remove(n.identity_json,'\$._artworkDiscovery')))
+ OR EXISTS (
+ SELECT fullkey,type,atom FROM json_tree(json_remove(n.identity_json,'\$._artworkDiscovery'))
+ EXCEPT SELECT fullkey,type,atom FROM json_tree(json_remove(p.identity_json,'\$._artworkDiscovery')))),
+added AS (SELECT n.* FROM main.collection_customizations n
+ WHERE NOT EXISTS (SELECT 1 FROM previous.collection_customizations p WHERE p.kind=n.kind AND p.item_key=n.item_key)),
+unsafe_added AS (SELECT * FROM added WHERE kind NOT IN ('artist','album') OR art_path IS NOT ''
+ OR json_type(identity_json,'\$._artworkDiscovery') IS NOT 'object'
+ OR EXISTS (SELECT 1 FROM json_each(identity_json) WHERE key != '_artworkDiscovery'))
+SELECT 'missing_original_rows='||(SELECT count(*) FROM lost)
+ UNION ALL SELECT 'changed_manual_rows='||(SELECT count(*) FROM changed)
+ UNION ALL SELECT 'unsafe_added_rows='||(SELECT count(*) FROM unsafe_added)
+ UNION ALL SELECT 'added_discovery_rows='||((SELECT count(*) FROM added)-(SELECT count(*) FROM unsafe_added))
+ UNION ALL SELECT 'updated_discovery_rows='||(SELECT count(*) FROM previous.collection_customizations p
+ JOIN main.collection_customizations n USING(kind,item_key)
+ WHERE json_extract(p.identity_json,'\$._artworkDiscovery') IS NOT json_extract(n.identity_json,'\$._artworkDiscovery'));
+SQL
+    ) || { printf 'FAIL: customization comparison query failed.\n' > "$report"; return 1; }
+    printf '%s\n' "$summary" > "$report"
+    if grep -Eq '^(missing_original_rows|changed_manual_rows|unsafe_added_rows)=[1-9]' "$report"; then
+        printf 'FAIL: user customization preservation.\n' >> "$report"
+        return 1
+    fi
+    printf 'PASS: original customization keys, manual identity and art preserved; only discovery cache changes allowed.\n' >> "$report"
+}
 # Sourcing exposes only these pure helpers to the software fixture. Executing
 # the harness always follows the isolation checks and complete runtime gate.
 if [[ ${BASH_SOURCE[0]} != "$0" ]]; then return 0; fi
@@ -712,6 +768,12 @@ if [[ -n ${ZUUNED_UPGRADE_INPUT:-} ]]; then
     upgrade_input_sql=${upgrade_input//\'/\'\'}
     while IFS= read -r table; do
         [[ $table =~ ^[a-z_]+$ ]] || fail 'Unexpected profile table name.'
+        if [[ $table == collection_customizations ]]; then
+            check_collection_preservation "$upgrade_input/library.db" "$upgrade_db" "$evidence/upgrade-customizations.txt" \
+                || fail 'Copied profile changed user customization data; see upgrade-customizations.txt.'
+            cat "$evidence/upgrade-customizations.txt" >> "$evidence/upgrade-preservation.txt"
+            continue
+        fi
         # Offline provider retries may change bookkeeping. Compare every old
         # column containing identity, art, order, playback or library content.
         columns=$(sqlite3 -readonly "$upgrade_input/library.db" "SELECT group_concat('\"'||name||'\"',',') FROM pragma_table_info('$table') WHERE NOT ('$table'='artists' AND name IN ('fetch_attempts','last_fetch_at')) AND NOT ('$table'='videos' AND name IN ('lookup_attempts','last_lookup_at'));")
