@@ -15,6 +15,14 @@ onboarding_is_painted() {
              /lavfi.signalstats.YMAX=/{hi=$2; haveHi=1}
              END{exit !(haveLo && haveHi && lo < 64 && hi - lo > 20)}' "$1"
 }
+playlist_import_probe_filter() {
+    printf 'crop=120:28:460:ih-112,signalstats,metadata=mode=print:file=%s' "$1"
+}
+playlist_import_is_painted() {
+    awk -F= '/lavfi.signalstats.YMIN=/{lo=$2; haveLo=1}
+             /lavfi.signalstats.YMAX=/{hi=$2; haveHi=1}
+             END{exit !(haveLo && haveHi && lo < 64 && hi > 130 && hi - lo > 100)}' "$1"
+}
 # Compare user-owned customization fields semantically, allowing only the
 # automatic discovery cache to change. Evidence contains counts, never names,
 # paths, JSON payloads or a copied profile. Both databases remain read-only.
@@ -70,6 +78,43 @@ SQL
         return 1
     fi
     printf 'PASS: original customization keys, manual identity and art preserved; only discovery cache changes allowed.\n' >> "$report"
+}
+# Cached audio-copy evidence must be invalidated when its source no longer
+# matches the indexed stat fingerprint. Never permit a new/replaced audio hash.
+check_track_fingerprint_preservation() {
+    local previous=$1 current=$2 report=$3 previous_sql unsafe pathhex oldsize oldmtime oldctime source_path
+    local stat_fields size modified created currentmtime currentctime rows missing=0 changed=0 rejected=0
+    previous_sql=${previous//\'/\'\'}
+    unsafe=$(sqlite3 -readonly "$current" "ATTACH '$previous_sql' AS previous; SELECT count(*) FROM previous.tracks p JOIN main.tracks n USING(id) WHERE p.audio_fingerprint IS NOT n.audio_fingerprint AND (p.audio_fingerprint='' OR n.audio_fingerprint IS NOT '' OR instr(p.filepath,char(0))>0);") || return 1
+    if [[ $unsafe != 0 ]]; then
+        printf 'FAIL: unexpected audio fingerprint changes=%s\n' "$unsafe" > "$report"
+        return 1
+    fi
+    rows=$(sqlite3 -readonly "$current" "ATTACH '$previous_sql' AS previous; SELECT hex(p.filepath),p.filesize,p.probe_mtime_ns,p.probe_ctime_ns FROM previous.tracks p JOIN main.tracks n USING(id) WHERE p.audio_fingerprint<>'' AND n.audio_fingerprint='';") || return 1
+    while IFS='|' read -r pathhex oldsize oldmtime oldctime; do
+        [[ -n $pathhex ]] || continue
+        printf -v source_path '%b' "$(sed 's/../\\x&/g' <<< "$pathhex")"
+        # Match scanner stat(): follow symlinks, require a regular file and
+        # compare size plus nanosecond mtime/ctime. Never log source paths.
+        if [[ ! -f $source_path ]] || ! stat_fields=$(stat -L -c '%s|%y|%z' -- "$source_path" 2>/dev/null); then
+            missing=$((missing+1))
+            continue
+        fi
+        IFS='|' read -r size modified created <<< "$stat_fields"
+        currentmtime=$(date -d "$modified" +%s%N) || return 1
+        currentctime=$(date -d "$created" +%s%N) || return 1
+        if [[ $size != "$oldsize" || $currentmtime != "$oldmtime" || $currentctime != "$oldctime" ]]; then
+            changed=$((changed+1))
+        else
+            rejected=$((rejected+1))
+        fi
+    done <<< "$rows"
+    printf 'missing_or_nonregular_source_invalidations=%s\nchanged_stat_invalidations=%s\nunchanged_source_invalidations=%s\n' "$missing" "$changed" "$rejected" > "$report"
+    if [[ $rejected != 0 ]]; then
+        printf 'FAIL: audio fingerprint cleared despite unchanged source.\n' >> "$report"
+        return 1
+    fi
+    printf 'PASS: only missing or stat-changed source fingerprints were invalidated.\n' >> "$report"
 }
 # Sourcing exposes only these pure helpers to the software fixture. Executing
 # the harness always follows the isolation checks and complete runtime gate.
@@ -316,6 +361,29 @@ portal_mark() {
     portal_tag=$1 portal_method=$2 portal_title=$3 portal_directory=${4:-false}
     portal_window= portal_handle=
     portal_offset=$(wc -l < "$evidence/portal-bus.log")
+}
+await_playlist_import_button() {
+    # A fixed wheel count can stop partway through the Settings Flickable on
+    # emulated ARM. Do not click an empty location and blame the portal. Keep
+    # scrolling normally until the actual bottom import label has painted.
+    # This readiness check never substitutes for the correlated portal proof.
+    local deadline=$((SECONDS + 120)) probe=0 probe_file ready=0
+    mkdir -p "$evidence/playlist-readiness"
+    xdotool getwindowgeometry --shell "$window_id" > "$evidence/playlist-window-geometry.txt"
+    while ((SECONDS < deadline)); do
+        still_running
+        xdotool mousemove --window "$window_id" 950 750 click --repeat 24 --delay 30 5
+        sleep 1
+        probe_file="$evidence/playlist-readiness/$probe"
+        bundled_ffmpeg -v error -f x11grab -window_id "$window_id" -draw_mouse 0 \
+            -i "$DISPLAY" -vf "$(playlist_import_probe_filter "$probe_file.txt")" \
+            -frames:v 1 -threads 1 "$probe_file.png" >> "$evidence/captures.log" 2>&1 \
+            || fail 'Could not capture playlist import readiness evidence.'
+        if playlist_import_is_painted "$probe_file.txt"; then ready=1; break; fi
+        ((probe+=1))
+    done
+    capture portal-playlist-settings
+    [[ $ready == 1 ]] || fail 'Playlist import button did not paint after scrolling within 120 seconds; inspect playlist-readiness.'
 }
 portal_records() {
     tail -n "+$((portal_offset + 1))" "$evidence/portal-bus.log" > "$evidence/portal-$portal_tag-bus.log"
@@ -603,9 +671,7 @@ grep -q '^artworkStyle=halftone$' "$settings" || fail 'Persisted halftone settin
 # OpenFile with directory=false is a separate production path: a local .m3u
 # picker followed by the native playlist importer, without any Zune connection.
 start_app playlist-file-picker --page settings --settings-tab Mixtapes
-xdotool mousemove --window "$window_id" 950 750 click --repeat 24 --delay 30 5
-sleep 1
-capture portal-playlist-settings
+await_playlist_import_button
 portal_mark playlist OpenFile 'Import a playlist (.m3u)'
 xdotool mousemove --window "$window_id" 515 824 click 1
 await_portal_chooser
@@ -776,10 +842,34 @@ if [[ -n ${ZUUNED_UPGRADE_INPUT:-} ]]; then
         fi
         # Offline provider retries may change bookkeeping. Compare every old
         # column containing identity, art, order, playback or library content.
-        columns=$(sqlite3 -readonly "$upgrade_input/library.db" "SELECT group_concat('\"'||name||'\"',',') FROM pragma_table_info('$table') WHERE NOT ('$table'='artists' AND name IN ('fetch_attempts','last_fetch_at')) AND NOT ('$table'='videos' AND name IN ('lookup_attempts','last_lookup_at'));")
+        columns=$(sqlite3 -readonly "$upgrade_input/library.db" "SELECT group_concat('\"'||name||'\"',',') FROM pragma_table_info('$table') WHERE NOT ('$table'='artists' AND name IN ('fetch_attempts','last_fetch_at')) AND NOT ('$table'='videos' AND name IN ('lookup_attempts','last_lookup_at')) AND NOT ('$table'='tracks' AND name='audio_fingerprint');")
         changes=$(sqlite3 "$upgrade_db" "ATTACH '$upgrade_input_sql/library.db' AS previous; SELECT (SELECT count(*) FROM (SELECT $columns FROM main.\"$table\" EXCEPT SELECT $columns FROM previous.\"$table\")) + (SELECT count(*) FROM (SELECT $columns FROM previous.\"$table\" EXCEPT SELECT $columns FROM main.\"$table\"));")
-        [[ $changes == 0 ]] || fail "Copied profile changed preserved data in $table."
+        if [[ $changes != 0 ]]; then
+            # Counts only: retain enough evidence to diagnose transient scanner
+            # state without copying rows, paths, metadata or a private profile.
+            {
+                printf 'table=%s\nchanged_row_projections=%s\n' "$table" "$changes"
+                while IFS= read -r column; do
+                    [[ $column =~ ^[a-z_]+$ ]] || fail 'Unexpected profile column name.'
+                    column_changes=$(sqlite3 -readonly "$upgrade_db" "ATTACH '$upgrade_input_sql/library.db' AS previous; SELECT (SELECT count(*) FROM (SELECT rowid,\"$column\" FROM main.\"$table\" EXCEPT SELECT rowid,\"$column\" FROM previous.\"$table\")) + (SELECT count(*) FROM (SELECT rowid,\"$column\" FROM previous.\"$table\" EXCEPT SELECT rowid,\"$column\" FROM main.\"$table\"));")
+                    printf '%s_changed_projections=%s\n' "$column" "$column_changes"
+                done < <(sqlite3 -readonly "$upgrade_input/library.db" "SELECT name FROM pragma_table_info('$table');")
+                if [[ $table == tracks && $(sqlite3 -readonly "$upgrade_input/library.db" "SELECT count(*) FROM pragma_table_info('tracks') WHERE name='audio_fingerprint';") != 0 ]]; then
+                    sqlite3 -readonly "$upgrade_db" "ATTACH '$upgrade_input_sql/library.db' AS previous; SELECT 'cleared_audio_fingerprints='||count(*) FROM previous.tracks p JOIN main.tracks n USING(id) WHERE p.audio_fingerprint<>'' AND n.audio_fingerprint='';"
+                fi
+            } > "$evidence/upgrade-$table-differences.txt"
+            fail "Copied profile changed preserved data in $table; see upgrade-$table-differences.txt."
+        fi
         [[ $(sqlite3 "$upgrade_db" "SELECT count(*) FROM \"$table\";") == $(sqlite3 -readonly "$upgrade_input/library.db" "SELECT count(*) FROM \"$table\";") ]] || fail "Copied profile changed the row count in $table."
+        if [[ $table == tracks ]]; then
+            if [[ $(sqlite3 -readonly "$upgrade_input/library.db" "SELECT count(*) FROM pragma_table_info('tracks') WHERE name='audio_fingerprint';") == 0 ]]; then
+                printf 'No prior audio fingerprint evidence: input schema predates the cache column; all original track columns and row counts preserved.\n' > "$evidence/upgrade-track-fingerprints.txt"
+            else
+                check_track_fingerprint_preservation "$upgrade_input/library.db" "$upgrade_db" "$evidence/upgrade-track-fingerprints.txt" \
+                    || fail 'Copied profile changed audio fingerprints unexpectedly; see upgrade-track-fingerprints.txt.'
+            fi
+            cat "$evidence/upgrade-track-fingerprints.txt" >> "$evidence/upgrade-preservation.txt"
+        fi
         printf '%s: %s rows preserved\n' "$table" "$(sqlite3 "$upgrade_db" "SELECT count(*) FROM \"$table\";")" >> "$evidence/upgrade-preservation.txt"
     done < <(sqlite3 -readonly "$upgrade_input/library.db" "SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name;")
     settings_entries() {
