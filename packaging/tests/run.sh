@@ -95,5 +95,6 @@ bash packaging/tests/elf-inventory.sh
 node packaging/tests/snapshot.mjs
 bash packaging/tests/runtime-readiness.sh
 bash packaging/tests/playlist-readiness.sh
+bash packaging/tests/photo-readiness.sh
 bash tests/profile-preservation/run.sh
 bash tests/profile-preservation/tracks.sh

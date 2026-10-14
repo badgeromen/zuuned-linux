@@ -23,6 +23,29 @@ playlist_import_is_painted() {
              /lavfi.signalstats.YMAX=/{hi=$2; haveHi=1}
              END{exit !(haveLo && haveHi && lo < 64 && hi > 130 && hi - lo > 100)}' "$1"
 }
+photo_stage_probe_filter() {
+    local region
+    case $1 in
+        albums) region=100:30:455:82 ;;
+        draft) region=150:22:80:98 ;;
+        saved-parent) region=155:26:320:328 ;;
+        parent-open) region=140:24:450:136 ;;
+        *) return 2 ;;
+    esac
+    printf 'crop=%s,signalstats,metadata=mode=print:file=%s' "$region" "$2"
+}
+photo_stage_is_painted() {
+    local minimum
+    case $1 in
+        albums|parent-open) minimum=80 ;;
+        draft) minimum=120 ;;
+        saved-parent) minimum=150 ;;
+        *) return 2 ;;
+    esac
+    awk -F= -v minimum="$minimum" '/lavfi.signalstats.YMIN=/{lo=$2; haveLo=1}
+             /lavfi.signalstats.YMAX=/{hi=$2; haveHi=1}
+             END{exit !(haveLo && haveHi && lo < 64 && hi > minimum && hi - lo > 40)}' "$2"
+}
 # Compare user-owned customization fields semantically, allowing only the
 # automatic discovery cache to change. Evidence contains counts, never names,
 # paths, JSON payloads or a copied profile. Both databases remain read-only.
@@ -724,6 +747,41 @@ printf 'PASS: actual Health export button and desktop portal SaveFile dialog wro
 # Optional packaged photo-organizer rehearsal. All mutations below come from
 # actual UI input; SQL only observes the disposable application's database.
 if [[ ${ZUUNED_PHOTO_GATE:-0} == 1 ]]; then
+    photo_click() {
+        # Leave the emulated event loop time to receive hover/press/release.
+        xdotool mousemove --sync --window "$window_id" "$1" "$2"
+        sleep 0.3
+        xdotool mousedown 1
+        sleep 0.3
+        xdotool mouseup 1
+    }
+    photo_wait_stage() {
+        local tag=$1 stage=$2 deadline=$((SECONDS + 120)) probe=0 probe_file
+        mkdir -p "$evidence/photo-readiness/$tag"
+        while ((SECONDS < deadline)); do
+            still_running
+            probe_file="$evidence/photo-readiness/$tag/$probe"
+            bundled_ffmpeg -v error -f x11grab -window_id "$window_id" -draw_mouse 0 \
+                -i "$DISPLAY" -vf "$(photo_stage_probe_filter "$stage" "$probe_file.txt")" \
+                -frames:v 1 -threads 1 "$probe_file.png" >> "$evidence/captures.log" 2>&1 \
+                || fail "Could not capture photo stage $tag."
+            if photo_stage_is_painted "$stage" "$probe_file.txt"; then return; fi
+            ((probe+=1))
+            sleep 1
+        done
+        capture "$tag-timeout"
+        fail "Photo stage $tag did not paint within 120 seconds; no dependent action was sent."
+    }
+    photo_wait_record() {
+        local query=$1 message=$2 deadline=$((SECONDS + 120))
+        while ((SECONDS < deadline)); do
+            still_running
+            [[ $(sqlite3 -readonly "$db" "$query") == 1 ]] && return
+            sleep 0.2
+        done
+        capture photo-save-timeout
+        fail "$message"
+    }
     photo_media="$work/photo-media"
     mkdir "$photo_media"
     cp "$media/cover.jpg" "$photo_media/runtime-photo.jpg"
@@ -747,40 +805,43 @@ if [[ ${ZUUNED_PHOTO_GATE:-0} == 1 ]]; then
     stop_app
     start_app photo-album-builder --page photos
     capture photo-02-folders
-    xdotool mousemove --window "$window_id" 410 90 click 1
-    sleep 1
+    photo_click 410 90
+    photo_wait_stage albums albums
     capture photo-03-albums
-    xdotool mousemove --window "$window_id" 505 90 click 1
-    sleep 1
+    photo_click 505 90
+    photo_wait_stage parent-draft draft
     capture photo-04-parent-draft
-    xdotool mousemove --window "$window_id" 180 147 click 1
+    photo_click 180 147
     xdotool key --clearmodifiers ctrl+a
-    xdotool type --clearmodifiers 'Runtime parent'
-    [[ $(sqlite3 "$db" "SELECT count(*) FROM photo_albums WHERE name='Runtime parent';") == 0 ]] || fail 'Unsaved parent draft unexpectedly persisted.'
-    xdotool mousemove --window "$window_id" 258 850 click 1
+    xdotool type --clearmodifiers --delay 100 'Runtime parent'
     sleep 1
+    [[ $(sqlite3 "$db" "SELECT count(*) FROM photo_albums WHERE name='Runtime parent';") == 0 ]] || fail 'Unsaved parent draft unexpectedly persisted.'
+    photo_click 258 850
+    photo_wait_record "SELECT count(*) FROM photo_albums WHERE name='Runtime parent' AND parent_id IS NULL;" 'Photo builder did not save the parent album.'
+    photo_wait_stage parent-saved saved-parent
     capture photo-05-parent-saved
     [[ $(sqlite3 "$db" "SELECT count(*) FROM photo_albums WHERE name='Runtime parent' AND parent_id IS NULL;") == 1 ]] || fail 'Photo builder did not save the parent album.'
-    xdotool mousemove --window "$window_id" 420 215 click 1
-    sleep 1
+    photo_click 420 215
+    photo_wait_stage parent-open parent-open
     capture photo-06-parent-open
-    xdotool mousemove --window "$window_id" 510 90 click 1
-    sleep 1
+    photo_click 510 90
+    photo_wait_stage child-draft draft
     capture photo-07-child-draft
-    xdotool mousemove --window "$window_id" 180 147 click 1
+    photo_click 180 147
     xdotool key --clearmodifiers ctrl+a
-    xdotool type --clearmodifiers 'Runtime child'
-    [[ $(sqlite3 "$db" "SELECT count(*) FROM photo_albums WHERE name='Runtime child';") == 0 ]] || fail 'Unsaved child draft unexpectedly persisted.'
-    xdotool mousemove --window "$window_id" 258 850 click 1
+    xdotool type --clearmodifiers --delay 100 'Runtime child'
     sleep 1
+    [[ $(sqlite3 "$db" "SELECT count(*) FROM photo_albums WHERE name='Runtime child';") == 0 ]] || fail 'Unsaved child draft unexpectedly persisted.'
+    photo_click 258 850
+    photo_wait_record "SELECT count(*) FROM photo_albums child JOIN photo_albums parent ON child.parent_id=parent.id WHERE child.name='Runtime child' AND parent.name='Runtime parent';" 'Photo builder did not save the nested album under its parent.'
     capture photo-08-child-saved
     [[ $(sqlite3 "$db" "SELECT count(*) FROM photo_albums child JOIN photo_albums parent ON child.parent_id=parent.id WHERE child.name='Runtime child' AND parent.name='Runtime parent';") == 1 ]] || fail 'Photo builder did not save the nested album under its parent.'
     stop_app
     start_app photo-albums-reopened --page photos
-    xdotool mousemove --window "$window_id" 410 90 click 1
-    sleep 1
-    xdotool mousemove --window "$window_id" 420 215 click 1
-    sleep 1
+    photo_click 410 90
+    photo_wait_stage reopened-albums saved-parent
+    photo_click 420 215
+    photo_wait_stage reopened-parent parent-open
     capture photo-09-reopened-parent
     [[ $(sqlite3 "$db" "SELECT count(*) FROM photo_albums child JOIN photo_albums parent ON child.parent_id=parent.id WHERE child.name='Runtime child' AND parent.name='Runtime parent';") == 1 ]] || fail 'Nested photo albums did not persist across restart.'
     sqlite3 -header -csv "$db" 'SELECT id,name,parent_id FROM photo_albums ORDER BY id;' > "$evidence/photo-albums.csv"
