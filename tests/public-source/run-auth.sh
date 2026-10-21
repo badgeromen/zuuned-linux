@@ -7,11 +7,11 @@ public_only=${2:-}
 [[ ! -e "$public_source/libzune/src/mtpz_keys.h" ]] || { echo 'Public header exclusion failed.'; exit 1; }
 auth_test_root=$(mktemp -d /tmp/zuuned-public-auth-test.XXXXXX)
 trap 'rm -rf -- "$auth_test_root"' EXIT
-cc -D_GNU_SOURCE -std=c99 -ffunction-sections -fdata-sections -I "$public_source/libzune/src" tests/public-source/auth.c "$public_source/libzune/src/mtpz.c" -Wl,--gc-sections -Wl,--wrap=fopen -lgcrypt -o "$auth_test_root/public"
+cc -D_GNU_SOURCE -std=c99 -ffunction-sections -fdata-sections -I "$public_source/libzune/src" -I "$public_source/libzune/include" tests/public-source/auth.c "$public_source/libzune/src/mtpz.c" "$public_source/libzune/src/wiretap.c" -pthread -Wl,--gc-sections -Wl,--wrap=fopen -lgcrypt -o "$auth_test_root/public"
 "$auth_test_root/public"
 if [[ "$public_only" == --public-only ]]; then
     echo 'NOT APPLICABLE private embedded-auth comparison in public checkout.'
     exit 0
 fi
-cc -DEXPECT_EMBEDDED -D_GNU_SOURCE -std=c99 -ffunction-sections -fdata-sections -I libzune/src tests/public-source/auth.c libzune/src/mtpz.c -Wl,--gc-sections -Wl,--wrap=fopen -lgcrypt -o "$auth_test_root/private"
+cc -DEXPECT_EMBEDDED -D_GNU_SOURCE -std=c99 -ffunction-sections -fdata-sections -I libzune/src -I libzune/include tests/public-source/auth.c libzune/src/mtpz.c libzune/src/wiretap.c -pthread -Wl,--gc-sections -Wl,--wrap=fopen -lgcrypt -o "$auth_test_root/private"
 "$auth_test_root/private"

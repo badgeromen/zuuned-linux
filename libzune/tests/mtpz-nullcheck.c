@@ -21,7 +21,8 @@
 static int fail_at, calls;
 static void *test_malloc(size_t n) { return ++calls == fail_at ? NULL : malloc(n); }
 static void *test_calloc(size_t a, size_t b) { return ++calls == fail_at ? NULL : calloc(a, b); }
-static char *test_strdup(const char *s) { return ++calls == fail_at ? NULL : strdup(s); }
+/* The embedded loader is absent in credential-free source builds. */
+static inline char *test_strdup(const char *s) { return ++calls == fail_at ? NULL : strdup(s); }
 #define malloc test_malloc
 #define calloc test_calloc
 #define strdup test_strdup
