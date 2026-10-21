@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(zuuned VERSION 0.2.0 LANGUAGES C CXX)
+project(zuuned VERSION 0.2.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -45,12 +45,15 @@ qt_add_executable(zuuned
     src/artwork/ArtworkRequest.h
     src/artwork/ArtworkPipeline.cpp
     src/artwork/ArtworkPipeline.h
+    src/artwork/HdArtistArtStore.cpp
+    src/artwork/HdArtistArtStore.h
     src/DeviceService.cpp
     src/DeviceService.h
     src/VideoTitleRepair.cpp
     src/VideoTitleRepair.h
     src/library/VideoIdentity.h
     src/DeviceWorker.cpp
+    src/DeviceWorkerHdArtwork.cpp
     src/DeviceWorker.h
     src/GrungeMaskProvider.cpp
     src/GrungeMaskProvider.h
@@ -95,6 +98,8 @@ qt_add_executable(zuuned
     src/library/MusicIdentityClient.cpp
     src/library/MusicIdentityClient.h
     src/library/AlbumArtService.h
+    src/sync/DeviceCover.cpp
+    src/sync/DeviceCover.h
     src/sync/SyncEngine.cpp
     src/sync/SyncEngine.h
     src/sync/SyncQueueModel.cpp
@@ -147,6 +152,8 @@ qt_add_qml_module(zuuned
         qml/PodcastPreferences.qml
         qml/SpokenFolderImport.qml
         qml/PodcastStatus.qml
+        qml/EpisodeList.qml
+        qml/KeyedRows.qml
         qml/PodcastCleanupControl.qml
         qml/PodcastSyncPicker.qml
         qml/SpokenMediaPage.qml
@@ -226,6 +233,7 @@ qt_add_qml_module(zuuned
         qml/GalleryView.qml
         qml/GenreDetail.qml
         qml/CustomizeSheet.qml
+        qml/HdArtistArtEditor.qml
         qml/CustomizeArtwork.qml
         qml/CustomizeField.qml
         qml/MusicIdentity.js
@@ -243,6 +251,8 @@ qt_add_qml_module(zuuned
         qml/images/zuuned.png
         qml/fonts/PermanentMarker-Regular.ttf
         qml/fonts/SpecimenAlien-Regular.ttf
+        qml/fonts/ZuunedSans-Regular.ttf
+        qml/fonts/ZuunedSans-OFL.txt
 )
 
 add_dependencies(zuuned libzune_build)
@@ -253,6 +263,8 @@ set(ZUUNED_SOURCE_REVISION "" CACHE STRING "Full app revision for a source archi
 set(ZUUNED_LIBZUNE_REVISION "" CACHE STRING "Full libzune revision for a source archive without Git metadata")
 set(ZUUNED_SOURCE_DIRTY "" CACHE STRING "Archive app state: true or false; unset means unknown")
 set(ZUUNED_LIBZUNE_DIRTY "" CACHE STRING "Archive libzune state: true or false; unset means unknown")
+set(ZUUNED_SOURCE_BRANCH "" CACHE STRING "Archive app branch, shown beside its revision; unset shows none")
+set(ZUUNED_LIBZUNE_BRANCH "" CACHE STRING "Archive libzune branch, shown beside its revision; unset shows none")
 add_custom_target(zuuned_build_info
     COMMAND ${CMAKE_COMMAND}
         "-DSOURCE_DIR=${CMAKE_SOURCE_DIR}"
@@ -263,6 +275,8 @@ add_custom_target(zuuned_build_info
         "-DZUUNED_LIBZUNE_REVISION=${ZUUNED_LIBZUNE_REVISION}"
         "-DZUUNED_SOURCE_DIRTY=${ZUUNED_SOURCE_DIRTY}"
         "-DZUUNED_LIBZUNE_DIRTY=${ZUUNED_LIBZUNE_DIRTY}"
+        "-DZUUNED_SOURCE_BRANCH=${ZUUNED_SOURCE_BRANCH}"
+        "-DZUUNED_LIBZUNE_BRANCH=${ZUUNED_LIBZUNE_BRANCH}"
         -P "${CMAKE_SOURCE_DIR}/packaging/WriteBuildInfo.cmake"
     BYPRODUCTS
         "${CMAKE_CURRENT_BINARY_DIR}/generated/ZuunedBuildInfo.h"
@@ -375,7 +389,7 @@ target_link_libraries(playertool PRIVATE
 # ── Install (E3 ship mechanics) ──
 include(GNUInstallDirs)
 install(TARGETS zuuned RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-install(FILES LICENSE COPYING.md
+install(FILES LICENSE COPYING.md qml/fonts/ZuunedSans-OFL.txt
         DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/zuuned)
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/generated/zuuned-build.json"
         DESTINATION ${CMAKE_INSTALL_DATADIR}/zuuned)

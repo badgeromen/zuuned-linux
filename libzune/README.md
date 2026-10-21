@@ -14,7 +14,7 @@ include [`zune.h`](include/zune.h) and link the static or shared library.
 | Operation | Functions |
 | --- | --- |
 | Connect / disconnect | `zune_breach`, `zune_sever` |
-| Send media | `zune_smuggle_track`, `zune_smuggle_movie`, `zune_smuggle_episode`, `zune_smuggle_photo` |
+| Send media | `zune_smuggle_track`, `zune_smuggle_video_named`, `zune_smuggle_photo`, `zune_smuggle_podcast_episode`, `zune_smuggle_audiobook_part` |
 | Retrieve media | `zune_extract_track` and video/photo extraction functions |
 | Create objects | `zune_forge_album`, `zune_forge_artist`, `zune_forge_playlist` |
 | Podcast shows and episodes | `zune_get_podcast_series`, `zune_forge_podcast_series`, `zune_smuggle_podcast_episode`, `zune_find_podcast_episode` |
@@ -25,8 +25,9 @@ include [`zune.h`](include/zune.h) and link the static or shared library.
 | Delete media | `zune_purge_track`, `zune_purge_video`, `zune_purge_photo` |
 | Read the device database | `zune_infiltrate` |
 | Diagnose / recover | `zune_autopsy`, `zune_autopsy_name`, `zune_unjam` |
+| Library version | `zune_dossier` |
 
-The [API reference](docs/API_REFERENCE.md) documents all 105 public functions,
+The [API reference](docs/API_REFERENCE.md) documents every public function,
 including ownership and implementation limits. The [source index](docs/TOC.md)
 maps functions to their current declarations and implementations. The header documents ownership, return values and callbacks.
 Older research documents may describe superseded implementations; consult the
@@ -42,7 +43,8 @@ identity-matched podcast-state baseline. Completed-playback cleanup and correcte
 Draco podcast playback/artwork acceptance remain hardware gates.
 Audiobook resume, long-book transitions and other models remain separate gates.
 Chaptered-file preparation belongs to the application, not libzune. See the
-[0.2.0 release notes](docs/RELEASE_0.2.0.md) for this prerelease’s scope.
+[0.3.0 release notes](docs/RELEASE_0.3.0.md) for this prerelease’s scope and
+the [0.2.0 notes](docs/RELEASE_0.2.0.md) for the spoken-media release.
 
 ## Platforms and scope
 
@@ -86,21 +88,32 @@ make
 make zunetool
 ```
 
-Build outputs: `libzune.a` and `libzune.so` on Linux, or `libzune.a` and
-`libzune.dylib` on macOS. Optional installation: `make install PREFIX=/your/prefix`.
-The shared-library target currently has no versioned SONAME or pkg-config file.
+Build outputs: `libzune.a`, `libzune.so.0.3.0` (SONAME `libzune.so.0`, with
+`libzune.so.0` and `libzune.so` links) and `libzune.pc` on Linux, or `libzune.a`
+and `libzune.dylib` (install name `@rpath/libzune.dylib`) on macOS. Only the
+functions declared in `zune.h` are exported; the library builds with
+`-fvisibility=hidden`. Optional installation:
+`make install PREFIX=/your/prefix`, which also installs `lib/pkgconfig/libzune.pc`
+(`pkg-config --libs --static libzune` lists gcrypt, libusb and libav).
 
 For standalone integrations, see the [buildable C examples](examples/README.md):
 read-only spoken-media inventory, a prepared podcast episode send, and an
 individual prepared audiobook part send. They use the public C API directly,
 without Zuuned or Qt. Start with inventory before running a write example.
 
-FFmpeg executables are used for thumbnail/photo preparation and legacy transcode
-helpers. **The audio/video `zune_arm_*` helpers and `zune_retag` currently hard-code
-`/opt/homebrew/bin/ffmpeg`; they are not portable Linux transcoders as written.**
-Linux callers should prepare compatible media themselves. `zunetool smuggle`
-sends the supplied file as-is. Zuuned's separate application transcode layer is
-not included in this library.
+FFmpeg executables are used for thumbnail/photo preparation and the legacy
+`zune_arm_*` / `zune_retag` transcode helpers. They run directly, never through a
+shell, and are found in this order:
+
+1. `ZUNE_FFMPEG`, `ZUNE_FFPROBE` or `ZUNE_SIPS` (macOS): a full path, or a name to
+   look up on `PATH` instead (for example `ZUNE_FFMPEG=ffmpeg7`).
+2. `PATH`. Empty entries are ignored; the current directory is never searched.
+3. macOS only: `/opt/homebrew/bin`, then `/usr/local/bin`, for apps launched from
+   Finder without the shell's `PATH`.
+
+A missing tool fails with an error naming it and its override variable. The
+transcode profiles are legacy helpers; `zunetool smuggle` sends the supplied file
+as-is, and Zuuned's separate application transcode layer is not included here.
 
 ## Authentication
 
@@ -184,8 +197,15 @@ For podcast/audiobook integration examples and their usage, prefer
 [spoken-media guide](docs/SPOKEN_MEDIA.md#command-line-testing) explains the
 bounded `podcast-test`, `podcast-send` and `audiobook-test` hardware tools.
 
-Logs go to stderr with `[libzune]`, `[ptp]`, `[mtpz]` and backend tags. After a
-failed device operation, inspect `zune_autopsy`: `0x200C` indicates full storage,
+Logs go to stderr as `[tag] message` lines (`[libzune]`, `[ptp]`, `[mtp]`,
+`[mtpz]` and backend tags). `ZUNE_CHATTER=whisper|talk|shout|scream|silent`
+sets the minimum level (default `talk`; `whisper` adds protocol detail such as
+the device serial). Applications can route the same messages with
+`zune_wiretap` and `zune_set_chatter`; `[mtpz]` lines still go to stderr
+directly. Status functions return `ZUNE_OK` or `ZUNE_BLOWN` (the
+[API reference](docs/API_REFERENCE.md#return-conventions) lists every
+function's convention), and `zune_get_error` describes the most recent call
+that can fail. After a failed device operation, inspect `zune_autopsy`: `0x200C` indicates full storage,
 `0x2005` an unsupported operation, and `0x02FF` a transport failure. Report the
 library revision, model, command and relevant logs, removing personal paths and
 device identifiers. Do not include authentication data.
@@ -196,3 +216,12 @@ Original libzune code is **GPL-3.0-or-later**. See [LICENSE](LICENSE) and
 [COPYING.md](COPYING.md). Preserve separate notices for third-party material.
 
 Your device. Your music. Your rules.
+
+### Zune HD artist content
+
+The native [HD artist-content C API](docs/HD_ARTWORK_API.md) serves Now Playing
+backgrounds, a separate thumbnail, an ordered gallery and biography over USB.
+No hosted server or Wi-Fi is required. The public-only `hd_artwork` example and
+`zunetool hd-art-publish` expose validation and explicit serving. Existing-artist
+cache refresh is not guaranteed; software tests and research hardware evidence
+are documented separately. JPEG validation adds a libavcodec link dependency.

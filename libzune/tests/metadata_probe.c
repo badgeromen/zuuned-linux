@@ -3,6 +3,10 @@
 #include "../src/util.c"
 #include <stddef.h>
 
+/* util.c reports tool-lookup failures; device.c (and USB) is not linked. */
+void zune_set_error(const char *fmt, ...) { (void)fmt; }
+void zune_clear_error(void) {}
+
 static int checks, failures;
 static void check(int success, const char *description)
 {

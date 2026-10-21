@@ -22,6 +22,11 @@
 
 #include "zune_internal.h"  /* bounded fixture reads raw properties by known ID */
 #include "media_capabilities.h"
+#include "hd_artist_probe.h"
+#include "hd_tunnel_probe.h"
+#include "hd_network_probe.h"
+#include "hd_art_serve.h"
+#include "hd_http_init.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -496,6 +501,239 @@ static int cmd_media_capabilities(int argc, char **argv) {
     return result == 0 ? 0 : 1;
 }
 
+static int cmd_hd_art_probe(int argc, char **argv) {
+    unsigned samples = 3;
+    if (argc < 2 || argc > 3 || (argc == 3 && hd_art_sample_count(argv[2], &samples))) {
+        fprintf(stderr, "usage: zunetool hd-art-probe [sample-count 1..8]\n");
+        return 2;
+    }
+    ZuneDeviceHandle dev = connect_or_die();
+    int result = hd_artist_probe_report(dev, samples, stdout);
+    zune_sever(dev);
+    return result == 0 ? 0 : 1;
+}
+
+#include "hd_art_binding_cli.h"
+
+static volatile sig_atomic_t hd_tunnel_stop;
+static void hd_tunnel_interrupt(int sig) { (void)sig; hd_tunnel_stop = 1; }
+static int cmd_hd_tunnel_probe(int argc, char **argv) {
+    int ack = argc == 3 && !strcmp(argv[2], "--ack-lcp");
+    if (argc != 2 && !ack) {
+        fprintf(stderr, "usage: zunetool hd-tunnel-probe [--ack-lcp]\n");
+        return 2;
+    }
+    ZuneDeviceHandle dev = connect_or_die();
+    hd_tunnel_stop = 0;
+    void (*old_int)(int) = signal(SIGINT, hd_tunnel_interrupt);
+    void (*old_term)(int) = signal(SIGTERM, hd_tunnel_interrupt);
+    int result = hd_tunnel_probe_report(dev, ack, stdout, &hd_tunnel_stop);
+    if (old_int != SIG_ERR) signal(SIGINT, old_int);
+    if (old_term != SIG_ERR) signal(SIGTERM, old_term);
+    zune_sever(dev);
+    return result == 0 ? 0 : 1;
+}
+
+#include "hd_art_first_recovery.h"
+#include "hd_art_graph_recovery.h"
+#include "hd_art_album_recovery.h"
+static int cmd_hd_art_album_inspect(int argc,char **argv) {
+    if(argc!=4){fprintf(stderr,"usage: zunetool hd-art-album-inspect plan.tsv journal\n");return 2;}
+    HdAlbumSync album={0};album.fd=album.wire.fd=-1;
+    if(hd_album_local(&album,argv[2])||hd_album_recovery_load(&album,argv[3])){
+        hd_album_release(&album);fprintf(stderr,"Album plan or recovery journal rejected; no device accessed.\n");return 2;
+    }
+    ZuneDeviceHandle dev=connect_or_die();hd_tunnel_stop=0;
+    void (*old_int)(int)=signal(SIGINT,hd_tunnel_interrupt);
+    void (*old_term)(int)=signal(SIGTERM,hd_tunnel_interrupt);
+    album.dev=dev;album.out=stdout;album.stop=&hd_tunnel_stop;album.now_fn=hd_art_ready_now;
+    album.deadline=album.now_fn()+120000;
+    int result=hd_album_recovery_inspect(&album);
+    if(old_int!=SIG_ERR)signal(SIGINT,old_int);
+    if(old_term!=SIG_ERR)signal(SIGTERM,old_term);
+    hd_cli_sever(dev,album.uncertain);hd_album_release(&album);return result?1:0;
+}
+static int cmd_hd_art_first_inspect(int argc,char **argv) {
+    if(argc!=4){fprintf(stderr,"usage: zunetool hd-art-first-inspect manifest fixture-mp3\n");return 2;}
+    HdFirstSync s,local;
+    if(hd_first_graph_load(&s,argv[2]))return 2;
+    if(hd_first_local(&local,argv[3])){hd_first_release(&s);return 2;}
+    if(local.mp3_size!=s.mp3_size){hd_first_release(&local);hd_first_release(&s);return 2;}
+    s.mp3=local.mp3;local.mp3=NULL;hd_first_release(&local);
+    ZuneDeviceHandle dev=connect_or_die();s.dev=dev;s.out=stdout;s.now_fn=hd_art_ready_now;s.deadline=s.now_fn()+120000;
+    int rc=hd_first_graph_diagnose(&s);hd_cli_sever(dev,s.uncertain);hd_first_release(&s);return rc?1:0;
+}
+static int cmd_hd_art_recover_graph(int argc,char **argv) {
+    int remove=argc==6&&!strcmp(argv[5],"--delete"),retain=argc==6&&!strcmp(argv[5],"--retain");
+    if(argc!=5&&!remove&&!retain){fprintf(stderr,"usage: zunetool hd-art-recover-graph original-manifest fixture-mp3 new-proof [--delete|--retain]\n");return 2;}
+    HdFirstSync s,local;
+    if(hd_first_graph_recovery_load(&s,argv[2])){fprintf(stderr,"Graph manifest rejected; no device accessed.\n");return 2;}
+    if(hd_first_local(&local,argv[3])){hd_first_release(&s);return 2;}
+    if(local.mp3_size!=s.mp3_size){hd_first_release(&local);hd_first_release(&s);return 2;}
+    s.mp3=local.mp3;local.mp3=NULL;hd_first_release(&local);
+    ZuneDeviceHandle dev=connect_or_die();hd_tunnel_stop=0;
+    void (*old_int)(int)=signal(SIGINT,hd_tunnel_interrupt);void (*old_term)(int)=signal(SIGTERM,hd_tunnel_interrupt);
+    s.dev=dev;s.out=stdout;s.stop=&hd_tunnel_stop;s.now_fn=hd_art_ready_now;s.deadline=s.now_fn()+600000;
+    int rc=hd_first_graph_recovery_inspect(&s);
+    if(!rc)rc=hd_first_recovery_proof(&s,argv[4]);
+    if(!rc)rc=hd_first_graph_extra_record(&s);
+    if(!rc&&remove)rc=hd_first_graph_recovery_delete(&s);
+    if(!rc&&retain)rc=hd_first_graph_recovery_retain(&s);
+    if(!rc&&!remove&&!retain)fprintf(stdout,"first-sync-graph-recovery\tinspection only; no device mutation\n");
+    if(old_int!=SIG_ERR)signal(SIGINT,old_int);
+    if(old_term!=SIG_ERR)signal(SIGTERM,old_term);
+    hd_cli_sever(dev,s.uncertain);hd_first_release(&s);return rc?1:0;
+}
+static int cmd_hd_art_recover_music(int argc,char **argv) {
+    int remove=argc==5&&!strcmp(argv[4],"--delete");
+    if((argc!=4&&!remove)||!argv[2][0]||!argv[3][0]) {
+        fprintf(stderr,"usage: zunetool hd-art-recover-music original-manifest new-proof-file [--delete]\n");return 2;
+    }
+    HdFirstSync s;
+    if(hd_first_recovery_load(&s,argv[2])) {
+        fprintf(stderr,"Recovery manifest rejected; no device accessed.\n");return 2;
+    }
+    ZuneDeviceHandle dev=connect_or_die();hd_tunnel_stop=0;
+    void (*old_int)(int)=signal(SIGINT,hd_tunnel_interrupt);
+    void (*old_term)(int)=signal(SIGTERM,hd_tunnel_interrupt);
+    s.dev=dev;s.out=stdout;s.stop=&hd_tunnel_stop;s.now_fn=hd_art_ready_now;s.deadline=s.now_fn()+120000;
+    int rc=hd_first_recovery_inspect(&s);
+    if(!rc)rc=hd_first_recovery_proof(&s,argv[3]);
+    if(!rc&&remove)rc=hd_first_recovery_delete(&s);
+    if(!rc&&!remove)fprintf(stdout,"first-sync-recovery\tinspection only; no device mutation\n");
+    if(rc)fprintf(stderr,"Recovery refused or incomplete; preserve manifests.\n");
+    if(old_int!=SIG_ERR)signal(SIGINT,old_int);
+    if(old_term!=SIG_ERR)signal(SIGTERM,old_term);
+    hd_cli_sever(dev,s.uncertain);hd_first_release(&s);return rc?1:0;
+}
+
+static int cmd_hd_art_serve(int argc,char **argv) {
+    int initialize=0,explicit_artist=0,first_preflight=0,album_preflight=0,retain=0,duration_explicit=0;unsigned seconds=60,fixture_ms=3000;const char *artist="Local artist";
+    const char *bind_handle=NULL,*bind_backup=NULL,*first_mp3=NULL,*first_manifest=NULL;uint32_t bind_id=0;
+    HdFirstSync first={0};first.fd=-1;HdArtGallery gallery={0};
+    HdAlbumSync album={0};album.fd=album.wire.fd=-1;const char *album_plan=NULL,*album_journal=NULL,*album_previous=NULL;
+    const char *gallery_ids[HDIS_GALLERY_MAX],*gallery_paths[HDIS_GALLERY_MAX],*primary=NULL;size_t gallery_count=0;
+    const char *thumbnail_id=NULL,*thumbnail_path=NULL,*biography_path=NULL;
+    char biography_text[HDIS_BIO_MAX+1];size_t biography_n=0;
+    if(argc<4)goto usage;
+    for(int i=4;i<argc;++i) {
+        if(!strcmp(argv[i],"--init-9231")&&!initialize)initialize=1;
+        else if(!strcmp(argv[i],"--init-full")&&!initialize)initialize=2;
+        else if(!strcmp(argv[i],"--artist-name")&&i+1<argc&&!explicit_artist){artist=argv[++i];explicit_artist=1;}
+        else if(!strcmp(argv[i],"--bind-on-ready")&&i+2<argc&&!bind_handle){bind_handle=argv[++i];bind_backup=argv[++i];}
+        else if(!strcmp(argv[i],"--first-sync")&&i+2<argc&&!first_mp3){first_mp3=argv[++i];first_manifest=argv[++i];}
+        else if(!strcmp(argv[i],"--album-sync")&&i+2<argc&&!album_plan){album_plan=argv[++i];album_journal=argv[++i];}
+        else if(!strcmp(argv[i],"--album-resume")&&i+3<argc&&!album_plan){album_plan=argv[++i];album_previous=argv[++i];album_journal=argv[++i];}
+        else if(!strcmp(argv[i],"--first-sync-preflight")&&!first_preflight)first_preflight=1;
+        else if(!strcmp(argv[i],"--album-preflight")&&!album_preflight)album_preflight=1;
+        else if(!strcmp(argv[i],"--retain")&&!retain)retain=1;
+        else if(!strcmp(argv[i],"--gallery")&&i+2<argc&&gallery_count<HDIS_GALLERY_MAX){gallery_ids[gallery_count]=argv[++i];gallery_paths[gallery_count++]=argv[++i];}
+        else if(!strcmp(argv[i],"--primary")&&i+1<argc&&!primary)primary=argv[++i];
+        else if(!strcmp(argv[i],"--biography")&&i+1<argc&&!biography_path)biography_path=argv[++i];
+        else if(!strcmp(argv[i],"--thumbnail")&&i+2<argc&&!thumbnail_id){thumbnail_id=argv[++i];thumbnail_path=argv[++i];}
+        else if(!strcmp(argv[i],"--first-sync-duration-ms")&&i+1<argc&&!duration_explicit){
+            char *end=NULL;errno=0;const char *value=argv[++i];unsigned long parsed=strtoul(value,&end,10);
+            if(errno||!*value||*end||value[0]<'0'||value[0]>'9'||parsed<1000||parsed>60000)goto usage;
+            fixture_ms=(unsigned)parsed;duration_explicit=1;
+        }
+        else if(!strcmp(argv[i],"--seconds")&&i+1<argc) {
+            char *end=NULL;errno=0;const char *value=argv[++i];
+            unsigned long parsed=strtoul(value,&end,10);
+            if(errno||!*value||*end||value[0]<'0'||value[0]>'9'||parsed<1||parsed>360)goto usage;
+            seconds=(unsigned)parsed;
+        } else goto usage;
+    }
+    if(biography_path && hd_art_load_biography(biography_path,biography_text,&biography_n)) {
+        fprintf(stderr,"Invalid biography file (1..4096 UTF-8 bytes required); no device accessed.\n");return 2;
+    }
+    if(album_preflight&&!album_plan)goto usage;
+    if(album_previous&&(!*album_previous||!strcmp(album_previous,album_journal)))goto usage;
+    if(album_plan&&(first_mp3||bind_handle||retain||first_preflight||duration_explicit||explicit_artist||!album_journal||!*album_journal))goto usage;
+    if(primary&&!gallery_count)goto usage;
+    if(thumbnail_id ? (!gallery_count||primary) : gallery_count>=HDIS_LEGACY_ASSETS)goto usage;
+    if(gallery_count&&seconds<5)goto usage;
+    if((first_preflight||retain||duration_explicit)&&!first_mp3)goto usage;
+    if(first_preflight&&retain)goto usage;
+    if(first_mp3&&(bind_handle||strcmp(argv[2],hd_art_test_guid)||!first_manifest||!*first_manifest))goto usage;
+    if(first_mp3){
+        if(explicit_artist&&!hd_first_probe_name(artist))goto usage;
+        if(hd_first_local(&first,first_mp3)){fprintf(stderr,"Invalid bounded MP3 fixture; no device accessed.\n");return 2;}
+        if(explicit_artist)snprintf(first.name,sizeof(first.name),"%s",artist);
+        artist=first.name;first.retain_requested=retain;first.fixture_duration_ms=fixture_ms;
+    }
+    if(bind_handle&&hd_art_ready_options(bind_handle,bind_backup,argv[2],artist,explicit_artist,&bind_id))goto usage;
+    if(album_plan){
+        if(hd_album_local(&album,album_plan)){fprintf(stderr,"Invalid bounded album plan or local files; no device accessed.\n");return 2;}
+        if(hd_album_set_guid(&album,argv[2])){hd_album_release(&album);fprintf(stderr,"Invalid album routing GUID; no device accessed.\n");return 2;}
+        if(album_previous&&(hd_album_recovery_load(&album,album_previous)||strcasecmp(album.guid,argv[2]))){
+            hd_album_release(&album);fprintf(stderr,"Album recovery journal or matching routing GUID rejected; no device accessed.\n");return 2;
+        }
+        if(album.cover&&hd_art_jpeg_decode(album.cover,album.cover_size)){hd_album_release(&album);fprintf(stderr,"Invalid decoded album cover; no device accessed.\n");return 2;}
+        artist=album.artist;
+    }
+    size_t size=0;uint8_t *image=hd_art_load_jpeg(argv[3],&size);
+    HdArtServing check={0};
+    if(!image || (album_plan&&hd_art_jpeg_decode(image,size)) || hd_image_server_init(&check.server,0xc0a83764,argv[2],image,size,hd_art_emit,&check)||
+       (gallery_count&&((thumbnail_id?hd_art_gallery_load_roles(&gallery,&check.server,gallery_ids,gallery_paths,gallery_count,thumbnail_id,thumbnail_path,hd_art_load_jpeg):
+        hd_art_gallery_load(&gallery,&check.server,gallery_ids,gallery_paths,gallery_count,primary,hd_art_load_jpeg))||
+        hd_art_gallery_configure(&check.server,&gallery)))||
+       hd_image_server_set_artist(&check.server,artist)||
+       (biography_path&&hd_image_server_set_biography(&check.server,biography_text,biography_n))) {
+        hd_art_gallery_release(&gallery);free(image);hd_first_release(&first);hd_album_release(&album);fprintf(stderr,"Invalid GUID, artist name, biography, gallery role or JPEG (maximum 128 KiB each; six legacy assets or six gallery images plus background and thumbnail). No device accessed.\n");return 2;
+    }
+    ZuneDeviceHandle dev=connect_or_die();hd_tunnel_stop=0;
+    void (*old_int)(int)=signal(SIGINT,hd_tunnel_interrupt);
+    void (*old_term)(int)=signal(SIGTERM,hd_tunnel_interrupt);
+    int uncertain=0,result=0;HdArtReadyBinding binding;
+    hd_art_ready_init(&binding,dev,stdout,&hd_tunnel_stop);
+    if(bind_handle){
+        result=hd_art_ready_prepare(&binding,bind_id,artist,bind_backup);
+        uncertain=binding.uncertain;
+    }
+    if(first_mp3){
+        first.dev=dev;first.out=stdout;first.stop=&hd_tunnel_stop;first.storage=dev->storage_id;first.now_fn=hd_art_ready_now;
+        first.deadline=first.now_fn()+600000;
+        if(!dev->serial||strlen(dev->serial)>=sizeof(first.serial))result=-1;
+        else{strcpy(first.serial,dev->serial);result=hd_first_prepare(&first,first_manifest);}
+        uncertain=first.uncertain;
+    }
+    if(!result&&album_plan){
+        album.dev=dev;album.out=stdout;album.stop=&hd_tunnel_stop;album.now_fn=hd_art_ready_now;
+        album.deadline=album.now_fn()+600000;
+        if(album_previous){
+            result=hd_album_recovery_inspect(&album);
+            if(!result&&!album_preflight)result=hd_album_recovery_prepare(&album,album_journal);
+        }else result=hd_album_prepare(&album,album_journal);
+        uncertain=album.uncertain;
+    }
+    if(!result&&!first_preflight&&!album_preflight&&initialize==2)result=hd_http_init_full_ex(dev,stdout,&hd_tunnel_stop,&uncertain);
+    else if(!result&&!first_preflight&&!album_preflight&&initialize==1){
+        HdHttpInitResult initial;
+        result=hd_http_init_run(dev,stdout,&hd_tunnel_stop,&initial);
+        uncertain=initial.transport_uncertain;
+    }
+    if(!result&&!first_preflight&&!album_preflight)result=hd_art_serve_experiment_content(dev,argv[2],artist,image,size,seconds*1000,&hd_tunnel_stop,stdout,&uncertain,bind_handle?&binding:NULL,first_mp3?&first:NULL,gallery_count?&gallery:NULL,album_plan?&album:NULL,biography_path?biography_text:NULL,biography_n);
+    if(old_int!=SIG_ERR)signal(SIGINT,old_int);
+    if(old_term!=SIG_ERR)signal(SIGTERM,old_term);
+    hd_cli_sever(dev,uncertain);hd_art_gallery_release(&gallery);free(image);hd_first_release(&first);hd_album_release(&album);return result?1:0;
+ usage:
+    fprintf(stderr,"usage: zunetool hd-art-serve <routing-guid> <jpeg> [--artist-name name] [--init-9231|--init-full] [--seconds 1..360] [--bind-on-ready handle new-backup-file | --first-sync short-mp3 new-manifest | --album-sync plan.tsv new-journal | --album-resume plan.tsv old-journal new-journal] [--first-sync-preflight|--album-preflight] [--retain] [--first-sync-duration-ms 1000..60000] [--gallery image-uuid jpeg (up to 5 legacy, 6 with thumbnail)] [--primary image-uuid | --thumbnail image-uuid jpeg] [--biography utf8.txt]\n");return 2;
+}
+
+static int cmd_hd_network_probe(int argc) {
+    if (argc != 2) { fprintf(stderr, "usage: zunetool hd-network-probe\n"); return 2; }
+    ZuneDeviceHandle dev = connect_or_die();
+    hd_tunnel_stop = 0;
+    void (*old_int)(int) = signal(SIGINT, hd_tunnel_interrupt);
+    void (*old_term)(int) = signal(SIGTERM, hd_tunnel_interrupt);
+    int uncertain=0;
+    int result = hd_network_probe_run_ex_status(dev,stdout,&hd_tunnel_stop,NULL,NULL,NULL,0,60000,&uncertain);
+    if (old_int != SIG_ERR) signal(SIGINT, old_int);
+    if (old_term != SIG_ERR) signal(SIGTERM, old_term);
+    hd_cli_sever(dev,uncertain);
+    return result == 0 ? 0 : 1;
+}
+
 #include "podcast_test.h"
 #include "podcast_send.h"
 #include "audiobook_test.h"
@@ -514,12 +752,26 @@ static int cmd_podcasts(int argc) {
     return 0;
 }
 
+/* The supported catalog command is the same public-only C example client. */
+#define main hd_art_public_main
+#include "../examples/hd_artwork.c"
+#undef main
+
 int main(int argc, char **argv) {
     if (argc < 2) {
         fprintf(stderr,
             "zunetool — libzune test harness\n"
             "  zunetool info\n"
             "  zunetool media-capabilities <format-code>   read-only descriptor probe\n"
+            "  zunetool hd-art-probe [1..8]   read-only HD artist identities and capabilities\n"
+            "  zunetool hd-tunnel-probe [--ack-lcp]   experimental HD USB tunnel/LCP gate\n"
+            "  zunetool hd-network-probe   experimental HD PPP/IP observation gate\n"
+            "  zunetool hd-art-recover-music <original-manifest> <new-proof-file> [--delete]\n"
+            "  zunetool hd-art-album-inspect plan.tsv journal   read-only interrupted album inspection\n"
+            "  zunetool hd-art-publish --validate|--serve ARTIST UUID BACKGROUND THUMBNAIL BIO|- [GALLERY_UUID JPEG]...\n"
+            "  zunetool hd-art-serve <guid> <jpeg> [--artist-name name] [--init-9231|--init-full] [--seconds 1..360] [--bind-on-ready handle new-backup-file | --first-sync short-mp3 new-manifest | --album-sync plan.tsv new-journal | --album-resume plan.tsv old-journal new-journal] [--first-sync-preflight|--album-preflight] [--retain] [--first-sync-duration-ms 1000..60000] [--gallery image-uuid jpeg (up to 5 legacy, 6 with thumbnail)] [--primary image-uuid | --thumbnail image-uuid jpeg] [--biography utf8.txt]\n"
+            "  zunetool hd-art-bind <handle> <exact-name> <backup>   experimental DA97 mapping\n"
+            "  zunetool hd-art-restore <backup>   restore exact snapshotted artist mapping\n"
             "  zunetool podcasts     read-only experimental series inventory\n"
             "  zunetool audiobook-test <part1.mp3> <part2.mp3> <cover.jpg> [--retain]   isolated native book gate\n"
             "  zunetool podcast-test <short-mp3> [title]   isolated upload/readback/cleanup gate\n"
@@ -536,6 +788,17 @@ int main(int argc, char **argv) {
     const char *cmd = argv[1];
     if      (!strcmp(cmd, "info"))    return cmd_info();
     else if (!strcmp(cmd, "media-capabilities")) return cmd_media_capabilities(argc, argv);
+    else if (!strcmp(cmd, "hd-art-probe")) return cmd_hd_art_probe(argc, argv);
+    else if (!strcmp(cmd, "hd-tunnel-probe")) return cmd_hd_tunnel_probe(argc, argv);
+    else if (!strcmp(cmd, "hd-art-bind")) return cmd_hd_art_bind(argc, argv);
+    else if (!strcmp(cmd, "hd-art-restore")) return cmd_hd_art_restore(argc, argv);
+    else if (!strcmp(cmd, "hd-art-recover-graph")) return cmd_hd_art_recover_graph(argc, argv);
+    else if (!strcmp(cmd, "hd-art-album-inspect")) return cmd_hd_art_album_inspect(argc, argv);
+    else if (!strcmp(cmd, "hd-art-first-inspect")) return cmd_hd_art_first_inspect(argc, argv);
+    else if (!strcmp(cmd, "hd-art-recover-music")) return cmd_hd_art_recover_music(argc, argv);
+    else if (!strcmp(cmd, "hd-art-publish")) return hd_art_public_main(argc-1, argv+1);
+    else if (!strcmp(cmd, "hd-art-serve")) return cmd_hd_art_serve(argc, argv);
+    else if (!strcmp(cmd, "hd-network-probe")) return cmd_hd_network_probe(argc);
     else if (!strcmp(cmd, "audiobook-test")) return cmd_audiobook_test(argc, argv);
     else if (!strcmp(cmd, "podcasts")) return cmd_podcasts(argc);
     else if (!strcmp(cmd, "podcast-test")) return cmd_podcast_test(argc, argv);

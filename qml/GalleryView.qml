@@ -30,6 +30,19 @@ Item {
     property Component cardDelegate
     // Rail filter ("" = everything) — hosts clear it on tab change
     property string letterFilter: ""
+    // Optional: a row's identity. With it the grid's rows change in place
+    // (KeyedRows), so it keeps its scroll position while rows update; a
+    // grid given a new array jumps back to the top.
+    property var keyOf: null
+    // A new question (another tab or filter): rebuilt, from the top.
+    function restart() {
+        if (keyOf) keyedRows.apply(shownRows, true)
+        flatGrid.positionViewAtBeginning()
+    }
+    KeyedRows { id: keyedRows; keyOf: root.keyOf || (r => r.id) }
+    onShownRowsChanged: { if (keyOf) keyedRows.apply(shownRows, false) }
+    onLetterFilterChanged: { if (keyOf) flatGrid.positionViewAtBeginning() }
+    Component.onCompleted: { if (keyOf) keyedRows.apply(shownRows, true) }
 
     readonly property bool sectionsOn: lettered && AppSettings.letterBreaks
 
@@ -119,6 +132,7 @@ Item {
     // only way to pin the column count and center the block.
     GridView {
         id: flatGrid
+        objectName: "galleryGrid"
         visible: !root.sectionsOn
         x: root.contentX
         width: root.plan.cols * cellWidth
@@ -140,7 +154,7 @@ Item {
         cellHeight: root.cellHeightFor(root.plan.cell) + Gallery.rowGap
         topMargin: Theme.spaceMd
         bottomMargin: Theme.spaceXl
-        model: root.sectionsOn ? [] : root.shownRows
+        model: root.sectionsOn ? [] : root.keyOf ? keyedRows : root.shownRows
         delegate: root.cardDelegate
     }
 

@@ -7,17 +7,10 @@
 
 #include "zune_internal.h"
 
-/* Same helper as album.c's (file-static there). */
-static int pl_prop_supported(uint16_t prop, uint16_t *list, int count) {
-    for (int i = 0; i < count; i++)
-        if (list[i] == prop)
-            return 1;
-    return 0;
-}
-
 /* ---- Get all playlists ---- */
 
 ZunePlaylist *zune_get_playlists(ZuneDevice *dev, int *count) {
+    zune_clear_error();
     if (!dev || !count) {
         zune_set_error("Invalid device or count pointer");
         if (count) *count = 0;
@@ -26,7 +19,7 @@ ZunePlaylist *zune_get_playlists(ZuneDevice *dev, int *count) {
 
     *count = 0;
 
-    if (dev->disconnecting) {
+    if (ZUNE_FLAG_GET(dev->disconnecting)) {
         zune_set_error("Device is disconnecting");
         return NULL;
     }
@@ -51,7 +44,7 @@ ZunePlaylist *zune_get_playlists(ZuneDevice *dev, int *count) {
 
     int valid = 0;
     for (int i = 0; i < n; i++) {
-        if (dev->disconnecting) break;
+        if (ZUNE_FLAG_GET(dev->disconnecting)) break;
 
         uint32_t id = handles[i];
 
@@ -61,15 +54,7 @@ ZunePlaylist *zune_get_playlists(ZuneDevice *dev, int *count) {
         if (ret != 0) continue;
 
         /* Also try to get the Name property (DC44) which is the display name */
-        uint8_t *name_data = NULL;
-        uint32_t name_len = 0;
-        char *name = NULL;
-        if (mtp_get_object_prop_value(&dev->ptp, id, MTP_OPC_Name,
-                                      &name_data, &name_len) == 0 &&
-            name_data && name_len > 0) {
-            name = mtp_ucs2_to_string(name_data, name_len);
-            free(name_data);
-        }
+        char *name = mtp_read_string_prop(&dev->ptp, id, MTP_OPC_Name);
 
         if (!name || !name[0]) {
             free(name);
@@ -126,8 +111,9 @@ void zune_free_playlists(ZunePlaylist *playlists, int count) {
  * forge hit. Rebuilt on the album template: SendObjectPropList
  * (0x9808, the only creation op the official client ever uses for
  * media), declared size 0 with a zero-byte SendObject commit, then
- * SetObjectReferences. Format defaults to 0xBA05; ZUNE_PL_FMT
- * overrides for hardware experiments (e.g. 0xBA09/0xBA00).
+ * SetObjectReferences. Format defaults to 0xBA05; in builds with
+ * -DZUNE_DEBUG_KNOBS, ZUNE_PL_FMT overrides it for hardware experiments
+ * (e.g. 0xBA09/0xBA00).
  *
  * Hardware-verified 2026-08-30 on Keel (Zune 30) AND Pavo (Zune HD):
  * both survive finalize + re-index with refs intact, both advertise
@@ -137,25 +123,28 @@ void zune_free_playlists(ZunePlaylist *playlists, int count) {
 
 uint32_t zune_forge_playlist(ZuneDevice *dev, const char *name,
                                uint32_t *track_ids, int count) {
+    zune_clear_error();
     if (!dev || !name) {
         zune_set_error("Invalid device or playlist name");
         return 0;
     }
 
     uint16_t fmt = MTP_OFC_AbstractAudioVideoPlaylist;
+#ifdef ZUNE_DEBUG_KNOBS
+    /* Research builds only: try another playlist format code. */
     const char *fmt_env = getenv("ZUNE_PL_FMT");
     if (fmt_env && fmt_env[0])
         fmt = (uint16_t)strtoul(fmt_env, NULL, 0);
+#endif
 
     /* Query supported props for the playlist format (album pattern) */
     uint16_t *supported = NULL;
     int sup_count = 0;
     if (mtp_get_props_supported(&dev->ptp, fmt, &supported, &sup_count) == 0) {
-        fprintf(stderr, "[libzune] playlist (0x%04X) supported props (%d):",
-                fmt, sup_count);
-        for (int i = 0; i < sup_count; i++)
-            fprintf(stderr, " 0x%04X", supported[i]);
-        fprintf(stderr, "\n");
+        char label[64];
+        snprintf(label, sizeof(label), "playlist (0x%04X) supported props (%d):",
+                 fmt, sup_count);
+        zune_log_codes(ZUNE_CHATTER_WHISPER, "libzune", label, supported, sup_count);
     }
 
     size_t namelen = strlen(name);
@@ -170,7 +159,7 @@ uint32_t zune_forge_playlist(ZuneDevice *dev, const char *name,
     props[n].data_type = PTP_DTC_STR;
     props[n].value.str = filename;
     n++;
-    if (!supported || pl_prop_supported(MTP_OPC_Name, supported, sup_count)) {
+    if (!supported || zune_prop_listed(MTP_OPC_Name, supported, sup_count)) {
         props[n].prop_code = MTP_OPC_Name;
         props[n].data_type = PTP_DTC_STR;
         props[n].value.str = (char *)name;
@@ -190,17 +179,16 @@ uint32_t zune_forge_playlist(ZuneDevice *dev, const char *name,
     /* Zero-byte commit matching the declared size (album-forge rule:
      * a fake 1-byte body contradicts the declaration and the device
      * refuses or later discards the object). */
-    mtp_send_object(&dev->ptp, NULL, 0);
+    if (mtp_send_object(&dev->ptp, NULL, 0) != 0)
+        return zune_forge_failed(dev, new_handle, "Playlist", name, "commit (SendObject)");
 
     /* Track references */
-    if (count > 0 && track_ids) {
-        ret = mtp_set_object_references(&dev->ptp, new_handle, track_ids, count);
-        if (ret != 0)
-            zune_set_error("Failed to set tracks for playlist '%s'", name);
-    }
+    if (count > 0 && track_ids &&
+        mtp_set_object_references(&dev->ptp, new_handle, track_ids, count) != 0)
+        return zune_forge_failed(dev, new_handle, "Playlist", name, "track references");
 
-    fprintf(stderr,
-            "[libzune] created playlist '%s' (id=0x%08X, fmt=0x%04X, %d tracks)\n",
+    ZLOG(ZUNE_CHATTER_TALK, "libzune",
+            "created playlist '%s' (id=0x%08X, fmt=0x%04X, %d tracks)",
             name, new_handle, fmt, count);
     return new_handle;
 }
@@ -210,9 +198,10 @@ uint32_t zune_forge_playlist(ZuneDevice *dev, const char *name,
 int zune_rewire_playlist(ZuneDevice *dev, uint32_t playlist_id,
                           const char *name,
                           uint32_t *track_ids, int count) {
+    zune_clear_error();
     if (!dev) {
         zune_set_error("Invalid device");
-        return -1;
+        return ZUNE_BLOWN;
     }
 
     /* Update name if provided */
@@ -221,7 +210,7 @@ int zune_rewire_playlist(ZuneDevice *dev, uint32_t playlist_id,
                                                 MTP_OPC_Name, name);
         if (ret != 0) {
             zune_set_error("Failed to update playlist name for %u", playlist_id);
-            return -1;
+            return ZUNE_BLOWN;
         }
     }
 
@@ -230,23 +219,24 @@ int zune_rewire_playlist(ZuneDevice *dev, uint32_t playlist_id,
                                         track_ids, count);
     if (ret != 0) {
         zune_set_error("Failed to update playlist %u", playlist_id);
-        return -1;
+        return ZUNE_BLOWN;
     }
-    return 0;
+    return ZUNE_OK;
 }
 
 /* ---- Delete playlist ---- */
 
 int zune_purge_playlist(ZuneDevice *dev, uint32_t playlist_id) {
+    zune_clear_error();
     if (!dev) {
         zune_set_error("Invalid device");
-        return -1;
+        return ZUNE_BLOWN;
     }
 
     int ret = mtp_delete_object(&dev->ptp, playlist_id);
     if (ret != 0) {
         zune_set_error("Failed to delete playlist %u", playlist_id);
-        return -1;
+        return ZUNE_BLOWN;
     }
-    return 0;
+    return ZUNE_OK;
 }

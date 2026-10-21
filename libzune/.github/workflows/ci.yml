@@ -1,0 +1,46 @@
+# Offline CI for libzune: warnings-as-errors build, every hardware-free test
+# suite under ASan/UBSan, the exported-symbol gate, generated-docs freshness
+# and 60 seconds of each libFuzzer harness. No Zune is needed or attached.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  offline:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build and test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential clang pkg-config python3 ffmpeg \
+            libusb-1.0-0-dev libgcrypt20-dev libxml2-dev \
+            libavformat-dev libavcodec-dev libavutil-dev
+
+      - name: Build (warnings as errors)
+        run: |
+          make CFLAGS+=-Werror
+          make CFLAGS+=-Werror zunetool
+
+      - name: Offline test suites
+        run: |
+          for suite in tests/run-*.sh; do
+            echo "::group::$suite"
+            bash "$suite"
+            echo "::endgroup::"
+          done
+
+      - name: Exported symbols match zune.h
+        run: bash tests/run-symbols.sh
+
+      - name: Generated documentation is current
+        run: |
+          node tools/update-toc.mjs --check
+          node tools/update-api-reference.mjs --check
+
+      - name: Fuzz the ZMDB and MTP reply parsers (60 s each)
+        run: bash tests/fuzz/run-fuzz.sh 60

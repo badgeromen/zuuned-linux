@@ -6,6 +6,7 @@
  */
 
 #include "usb.h"
+#include "wiretap.h"
 #include <libusb.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -27,14 +28,14 @@ static int libusb_backend_open(zune_usb_handle_t *handle, uint16_t vid, uint16_t
     if (!bd) return ZUNE_USB_ERROR;
 
     if (libusb_init(&bd->ctx) != 0) {
-        fprintf(stderr, "[libusb] init failed\n");
+        ZLOG(ZUNE_CHATTER_SCREAM, "libusb", "init failed");
         free(bd);
         return ZUNE_USB_ERROR;
     }
 
     bd->handle = libusb_open_device_with_vid_pid(bd->ctx, vid, pid);
     if (!bd->handle) {
-        fprintf(stderr, "[libusb] device not found (vid=0x%04X pid=0x%04X)\n", vid, pid);
+        ZLOG(ZUNE_CHATTER_WHISPER, "libusb", "device not found (vid=0x%04X pid=0x%04X)", vid, pid);
         libusb_exit(bd->ctx);
         free(bd);
         return ZUNE_USB_ERROR;
@@ -51,7 +52,7 @@ static int libusb_backend_open(zune_usb_handle_t *handle, uint16_t vid, uint16_t
     /* Claim interface 0 */
     int ret = libusb_claim_interface(bd->handle, 0);
     if (ret != 0) {
-        fprintf(stderr, "[libusb] claim_interface failed: %s\n", libusb_strerror(ret));
+        ZLOG(ZUNE_CHATTER_SCREAM, "libusb", "claim_interface failed: %s", libusb_strerror(ret));
         libusb_close(bd->handle);
         libusb_exit(bd->ctx);
         free(bd);
@@ -88,7 +89,7 @@ static int libusb_backend_open(zune_usb_handle_t *handle, uint16_t vid, uint16_t
 
     handle->backend_data = bd;
 
-    fprintf(stderr, "[libusb] opened: bulk_in=0x%02X(%u) bulk_out=0x%02X(%u) int=0x%02X\n",
+    ZLOG(ZUNE_CHATTER_TALK, "libusb", "opened: bulk_in=0x%02X(%u) bulk_out=0x%02X(%u) int=0x%02X",
             handle->bulk_in_ep, handle->bulk_in_maxpacket,
             handle->bulk_out_ep, handle->bulk_out_maxpacket,
             handle->interrupt_ep);
@@ -107,7 +108,7 @@ static int libusb_backend_close(zune_usb_handle_t *handle)
     free(bd);
     handle->backend_data = NULL;
 
-    fprintf(stderr, "[libusb] closed\n");
+    ZLOG(ZUNE_CHATTER_TALK, "libusb", "closed");
     return ZUNE_USB_OK;
 }
 
@@ -126,12 +127,12 @@ static int libusb_backend_bulk_read(zune_usb_handle_t *handle, uint8_t endpoint,
      * device ZLP and masked every hang as a mysterious short read.
      * A timeout after PARTIAL data still returns what arrived. */
     if (ret == LIBUSB_ERROR_TIMEOUT && transferred == 0) {
-        fprintf(stderr, "[libusb] bulk_read timeout: ep=0x%02X (%u ms)\n",
+        ZLOG(ZUNE_CHATTER_SHOUT, "libusb", "bulk_read timeout: ep=0x%02X (%u ms)",
                 endpoint, timeout_ms);
         return ZUNE_USB_ERROR;
     }
     if (ret != 0 && ret != LIBUSB_ERROR_TIMEOUT) {
-        fprintf(stderr, "[libusb] bulk_read failed: ep=0x%02X err=%s\n",
+        ZLOG(ZUNE_CHATTER_SCREAM, "libusb", "bulk_read failed: ep=0x%02X err=%s",
                 endpoint, libusb_strerror(ret));
         return ZUNE_USB_ERROR;
     }
@@ -149,7 +150,7 @@ static int libusb_backend_bulk_write(zune_usb_handle_t *handle, uint8_t endpoint
     if (actual_length) *actual_length = (uint32_t)transferred;
 
     if (ret != 0) {
-        fprintf(stderr, "[libusb] bulk_write failed: ep=0x%02X err=%s\n",
+        ZLOG(ZUNE_CHATTER_SCREAM, "libusb", "bulk_write failed: ep=0x%02X err=%s",
                 endpoint, libusb_strerror(ret));
         return ZUNE_USB_ERROR;
     }
@@ -168,6 +169,16 @@ static int libusb_backend_reset(zune_usb_handle_t *handle)
     return libusb_reset_device(bd->handle) == 0 ? ZUNE_USB_OK : ZUNE_USB_ERROR;
 }
 
+static int libusb_backend_class_request(zune_usb_handle_t *handle, uint8_t request_type,
+                                        uint8_t request, uint8_t *data, uint16_t length,
+                                        uint32_t timeout_ms)
+{
+    libusb_backend_data_t *bd = get_data(handle);
+    int r = libusb_control_transfer(bd->handle, request_type, request, 0, bd->interface_num,
+                                    data, length, timeout_ms);
+    return r < 0 ? ZUNE_USB_ERROR : r;
+}
+
 static const zune_usb_backend_t libusb_backend = {
     .open       = libusb_backend_open,
     .close      = libusb_backend_close,
@@ -175,6 +186,7 @@ static const zune_usb_backend_t libusb_backend = {
     .bulk_write = libusb_backend_bulk_write,
     .clear_halt = libusb_backend_clear_halt,
     .reset      = libusb_backend_reset,
+    .class_request = libusb_backend_class_request,
 };
 
 const zune_usb_backend_t *zune_usb_get_backend(void) {
@@ -192,6 +204,6 @@ int zune_usb_find_device(zune_usb_handle_t *handle)
     if (handle->backend->open(handle, ZUNE_USB_VID, ZUNE_USB_PID_ZUNE_HD) == ZUNE_USB_OK)
         return ZUNE_USB_OK;
 
-    fprintf(stderr, "[libusb] no Zune device found\n");
+    ZLOG(ZUNE_CHATTER_TALK, "libusb", "no Zune device found");
     return ZUNE_USB_ERROR;
 }

@@ -184,3 +184,12 @@ the default. The original Specimen study is preserved.
 Coverage is the declared 368-character Latin set, including digits, punctuation,
 Latin accents, symbols and combining marks; it is not all Unicode. Generation
 remains a developer tool with no new application runtime dependencies.
+
+## Zuuned Sans: third display choice, October 18, 2026
+
+[Zuuned Sans](variants/zuuned-sans/README.md) adds an original clean humanist face,
+with distinct lowercase, numbers, punctuation and declared Latin coverage. It is
+available alongside Permanent Marker and Specimen Alien in Settings and setup;
+Permanent Marker remains the default. Its source, real TTF specimen, 350-character
+manifest and validators live in `variants/zuuned-sans/`. The new font carries a
+separate SIL OFL 1.1 notice. Earlier font studies and their licenses are unchanged.

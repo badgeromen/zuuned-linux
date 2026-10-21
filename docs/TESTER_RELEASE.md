@@ -1,5 +1,24 @@
 # Tester release preparation
 
+**October 21 public update:** see [0.2.1 release notes](releases/RELEASE_0.2.1.md).
+The private candidate evidence below is retained with its original provenance.
+New binary checks belong to the 0.2.1 release manifest.
+
+**October 21 private hardening candidate:** app `100527be8e22` with libzune
+`09fa9221fd5f` (0.3.0) is packaged from clean `hardening/0.3.0` snapshots.
+The exact AppImage passes the Debian runtime/photo-builder gates and a GUI
+podcast preview, download, local playback progression, HD transfer and device
+inventory test using the feed from GitHub issue #1. See
+[the artifact and acceptance record](releases/TESTER_HARDENING_2026-10-21.md).
+The same artifact subsequently passed a normal-profile Draco GUI removal and
+resync of all seven audiobooks (213 parts), plus one music, video, photo and
+podcast transfer. Fresh inventory matched all expected counts and all seven
+book covers displayed. Handheld playback/resume remains a separate user check.
+The same GUI regression also passed on a Keel/Zune 30: one complete 20-part
+chaptered book, five podcasts, music, a WMV video and a photo, with matching
+post-reindex inventory and no failed transfers. Existing Keel media was preserved.
+This is a private test build, not a new public release or an Ubuntu certification.
+
 **Reading this checklist, October 4, 2026:** the candidate names and results
 below describe historical builds. The public source snapshot is newer than the
 0.1.1 executable being migrated to the new account. Migration does not rerun

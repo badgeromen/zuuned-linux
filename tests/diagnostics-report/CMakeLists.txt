@@ -17,10 +17,10 @@ foreach(component DiagnosticsSettings Theme)
     set_source_files_properties("${repo}/qml/${component}.qml" PROPERTIES QT_RESOURCE_ALIAS "${component}.qml")
 endforeach()
 set_source_files_properties("${repo}/qml/Theme.qml" PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
-foreach(font PermanentMarker-Regular.ttf SpecimenAlien-Regular.ttf)
+foreach(font PermanentMarker-Regular.ttf SpecimenAlien-Regular.ttf ZuunedSans-Regular.ttf)
     set_source_files_properties("${repo}/qml/fonts/${font}" PROPERTIES QT_RESOURCE_ALIAS "fonts/${font}")
 endforeach()
 qt_add_qml_module(diagnostics-report URI Zuuned VERSION 1.0 NO_GENERATE_EXTRA_QMLDIRS
     SOURCES "${repo}/src/diagnostics/DiagnosticsService.h" "${repo}/src/AppSettings.h"
     QML_FILES "${repo}/qml/DiagnosticsSettings.qml" "${repo}/qml/Theme.qml"
-    RESOURCES "${repo}/qml/fonts/PermanentMarker-Regular.ttf" "${repo}/qml/fonts/SpecimenAlien-Regular.ttf")
+    RESOURCES "${repo}/qml/fonts/PermanentMarker-Regular.ttf" "${repo}/qml/fonts/SpecimenAlien-Regular.ttf" "${repo}/qml/fonts/ZuunedSans-Regular.ttf")

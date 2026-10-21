@@ -49,6 +49,7 @@ void PodcastQueuePlanner::update() {
         ++m_epoch;
         m_hasReady = false;
         m_manual.clear();
+        m_parked.clear();
         // Completing a sync does not refill a queue the user has already reviewed.
         if (sessionChanged || policyChanged || queueChangedDevice) m_attempted.clear();
         m_inventoryNotice.clear();
@@ -68,9 +69,21 @@ void PodcastQueuePlanner::update() {
     }
     m_starred = starred;
     if (!c.connected || c.serial.isEmpty() || c.syncing || c.queueMismatch || m_fetching || m_service->busy()) return;
+    if (!m_hasReady)
+        for (int i = 0; i < m_parked.size(); ++i)
+            if (!m_service->readingOlder(m_parked[i].showId)) {
+                m_ready = m_parked.takeAt(i);
+                m_hasReady = true;
+                break;
+            }
     if (m_hasReady) {
         if (!valid(m_ready)) m_hasReady = false;
-        else if (c.inventoryReady && !c.inventoryLoading) {
+        // The oldest episodes of a paged feed are known once its older pages
+        // are read; other shows go on meanwhile.
+        else if (m_ready.order == "oldest" && m_service->readingOlder(m_ready.showId)) {
+            m_parked.append(m_ready);
+            m_hasReady = false;
+        } else if (c.inventoryReady && !c.inventoryLoading) {
             const auto ready = m_ready;
             m_hasReady = false;
             admit(ready);
@@ -122,6 +135,7 @@ void PodcastQueuePlanner::requestSelection(const QString &id) {
 void PodcastQueuePlanner::dismissPending() {
     ++m_epoch;
     m_manual.clear();
+    m_parked.clear();
     m_hasReady = false;
     const auto c = m_ports.context();
     for (const auto &v : m_service->collections("show")) {
@@ -147,36 +161,37 @@ void PodcastQueuePlanner::admit(const Request &request) {
     if (!valid(request)) return;
     QStringList additions;
     int selected = 0;
-    QSet<QString> sources;
     // Source ambiguity must not create failed duplicate queue rows, including
     // when the conflicting entry falls outside the selected range.
-    for (const auto &v : m_service->entries(request.showId)) {
-        const auto identity = m_service->podcastDeviceIdentity(v.toMap().value("id").toString());
-        const auto source = identity.value("sourceUrl").toString();
-        if (source.isEmpty() || sources.contains(source)) {
-            emit m_service->notification("Podcast queue unchanged: this feed has ambiguous audio identities.");
-            return;
-        }
-        sources.insert(source);
+    if (m_service->podcastSourcesAmbiguous(request.showId)) {
+        emit m_service->notification("Podcast queue unchanged: this feed has ambiguous audio identities.");
+        return;
     }
     // Select from all episodes, including feed-only rows. Existing episodes
     // count toward N; only their upload is omitted. Never infer absent/played.
-    for (const auto &v : m_service->orderedPodcastEpisodes(request.showId, request.order)) {
-        const auto row = v.toMap();
-        const auto id = row.value("id").toString();
-        const auto identity = m_service->podcastDeviceIdentity(id);
-        const auto status = m_ports.status(identity.value("feedUrl").toString(), identity.value("sourceUrl").toString());
-        if (!status.value("known").toBool()) {
-            emit m_service->notification("Podcast queue unchanged: refresh the Zune's podcast inventory first.");
-            return;
+    // A long show is read a page at a time until N are chosen.
+    const auto feed = m_service->item(request.showId).value("identity").toString();
+    constexpr int page = 1000;
+    for (int offset = 0; selected < request.count; offset += page) {
+        const auto rows = m_service->orderedPodcastEpisodes(request.showId, request.order, offset, page);
+        for (const auto &v : rows) {
+            const auto row = v.toMap();
+            const auto id = row.value("id").toString();
+            const auto source = row.value("deviceSourceUrl", row.value("sourceUrl")).toString();
+            const auto status = m_ports.status(feed, source);
+            if (!status.value("known").toBool()) {
+                emit m_service->notification("Podcast queue unchanged: refresh the Zune's podcast inventory first.");
+                return;
+            }
+            const bool played = row.value("played").toBool() ||
+                (status.value("playedKnown").toBool() && status.value("played").toBool()) ||
+                row.value("devicePlayedSerials").toMap().value(m_context.serial).toBool();
+            if (request.unplayedOnly && played) continue;
+            ++selected;
+            if (!status.value("onDevice").toBool()) additions.append(id);
+            if (selected >= request.count) break;
         }
-        const bool played = row.value("played").toBool() ||
-            (status.value("playedKnown").toBool() && status.value("played").toBool()) ||
-            row.value("devicePlayedSerials").toMap().value(m_context.serial).toBool();
-        if (request.unplayedOnly && played) continue;
-        ++selected;
-        if (!status.value("onDevice").toBool()) additions.append(id);
-        if (selected >= request.count) break;
+        if (rows.size() < page) break;
     }
     if (valid(request) && !additions.isEmpty()) m_service->queuePodcasts(additions);
 }

@@ -24,6 +24,9 @@ QtObject {
     readonly property int spokenHeroSize: 170
     readonly property int spokenDetailCoverSize: 210
     readonly property int spokenDetailBreakpoint: 640
+    // Below the breakpoint the cover stacks above the heading; it shows only
+    // when the page is tall enough to keep the episode list usable too.
+    readonly property int spokenStackedCoverHeight: 820
     readonly property int spokenDetailTitleSize: 32
     readonly property int spokenDetailRowHeight: 34
     readonly property int spokenShelfWidth: 300
@@ -43,6 +46,8 @@ QtObject {
     readonly property int spokenDragWidth: 180
     readonly property int spokenDragCoverSize: 64
     readonly property int spokenSearchWidth: 150
+    // Episode search queries SQLite; wait for a pause in typing.
+    readonly property int spokenSearchDelay: 250
     readonly property int spokenEmptyWidth: 420
     readonly property real spokenCoverFraction: 0.3
     readonly property real spokenLineHeight: 1.6
@@ -197,12 +202,18 @@ QtObject {
         source: "fonts/SpecimenAlien-Regular.ttf"
     }
 
+    readonly property FontLoader zuunedSans: FontLoader {
+        source: "fonts/ZuunedSans-Regular.ttf"
+    }
+
     // The resolved display face for identity moments — Permanent Marker
-    // by default, Specimen Alien only when chosen in Settings. Components
+    // by default, with Specimen Alien and Zuuned Sans as optional choices. Components
     // use THIS, never a FontLoader directly, so the setting reaches
     // every identity moment at once.
     readonly property string displayFamily:
         AppSettings.headerFont === "specimenAlien"
             ? specimenAlien.font.family
-            : marker.font.family
+            : AppSettings.headerFont === "zuunedSans"
+                ? zuunedSans.font.family
+                : marker.font.family
 }

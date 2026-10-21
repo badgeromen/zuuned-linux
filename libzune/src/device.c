@@ -18,50 +18,32 @@ void zune_set_error(const char *fmt, ...) {
     va_end(ap);
 }
 
+/* Every public call that can fail starts here, so zune_get_error describes
+ * the most recent such call (T3.5). */
+void zune_clear_error(void) {
+    tls_error[0] = 0;
+}
+
 const char *zune_get_error(void) {
     return tls_error[0] ? tls_error : NULL;
 }
 
-/* ---- Kill competing MTP daemons ---- */
-/* COMMENTED OUT: Replaced by DEXT (DriverKit driver extension).
- * Kept for reference only. Removed from public API (zune.h).
+/* ---- Runtime version ---- */
 
-void zune_kill_competitors_fast(void) {
-#ifdef __APPLE__
-    system("killall -9 PTPCamera 2>/dev/null");
-    system("killall -9 ptpcamerad 2>/dev/null");
-    system("killall -9 AMPDeviceDiscoveryAgent 2>/dev/null");
-    system("killall -9 AMPLibraryAgent 2>/dev/null");
-#endif
-}
+#define ZUNE_STRINGIFY_(x) #x
+#define ZUNE_STRINGIFY(x) ZUNE_STRINGIFY_(x)
 
-void zune_kill_competitors(void) {
-#ifdef __APPLE__
-    zune_kill_competitors_fast();
-    usleep(3000000);
-#else
-    system("systemctl --user stop gvfs-mtp-volume-monitor.service 2>/dev/null");
-    system("systemctl --user mask gvfs-mtp-volume-monitor.service 2>/dev/null");
-    system("pkill -9 -f gvfsd-mtp 2>/dev/null");
-    system("pkill -9 -f gvfs-mtp 2>/dev/null");
-    usleep(1500000);
-#endif
+const char *zune_dossier(void) {
+    return ZUNE_STRINGIFY(LIBZUNE_VERSION_MAJOR) "."
+           ZUNE_STRINGIFY(LIBZUNE_VERSION_MINOR) "."
+           ZUNE_STRINGIFY(LIBZUNE_VERSION_PATCH);
 }
-*/
 
 /* ---- Connect ---- */
 
-ZuneDevice *zune_breach(void) {
-    /* Initialize libgcrypt before anything — required for MTPZ auth. */
-    gcry_check_version(NULL);
-    gcry_control(GCRYCTL_INITIALIZATION_FINISHED, 0);
-
-    /* Load MTPZ keys from ~/.mtpz-data */
-    if (mtpz_load_keys() < 0) {
-        fprintf(stderr, "[libzune] warning: MTPZ keys not loaded from ~/.mtpz-data\n");
-        fprintf(stderr, "[libzune] MTPZ authentication will fail\n");
-    }
-
+/* Allocate the device and open its USB interface, retrying for an
+ * interface the host has not released yet. NULL on failure. */
+static ZuneDevice *breach_open(void) {
     /* Find and open the Zune USB device */
     ZuneDevice *dev = calloc(1, sizeof(ZuneDevice));
     if (!dev) {
@@ -81,7 +63,7 @@ ZuneDevice *zune_breach(void) {
         }
 
         if (attempt < 3) {
-            fprintf(stderr, "[libzune] USB open attempt %d failed, retrying...\n", attempt);
+            ZLOG(ZUNE_CHATTER_SHOUT, "libzune", "USB open attempt %d failed, retrying...", attempt);
             usleep(2000000);
         }
     }
@@ -92,8 +74,12 @@ ZuneDevice *zune_breach(void) {
         return NULL;
     }
 
-    dev->disconnecting = 0;
+    return dev;
+}
 
+/* Open the PTP session, resetting the device once if it does not answer.
+ * -1 on failure, with the USB interface closed. */
+static int breach_session(ZuneDevice *dev) {
     /* Initialize PTP session */
     ptp_session_init(&dev->ptp, &dev->usb);
     /* Let the protocol layer see zune_abort() so a cancel can stop a
@@ -105,7 +91,7 @@ ZuneDevice *zune_breach(void) {
          * breach/sever cycles the device stops answering OpenSession
          * entirely (bulk IN times out before any data). A USB device
          * reset revives it every time. Reset, reopen, retry once. */
-        fprintf(stderr, "[libzune] OpenSession dead — resetting device and retrying\n");
+        ZLOG(ZUNE_CHATTER_SHOUT, "libzune", "OpenSession dead — resetting device and retrying");
         dev->usb.backend->reset(&dev->usb);
         dev->usb.backend->close(&dev->usb);
         usleep(1500000);
@@ -113,8 +99,7 @@ ZuneDevice *zune_breach(void) {
         memset(&dev->usb, 0, sizeof(dev->usb));
         if (zune_usb_find_device(&dev->usb) != ZUNE_USB_OK) {
             zune_set_error("Zune did not come back after USB reset");
-            free(dev);
-            return NULL;
+            return -1;
         }
         ptp_session_init(&dev->ptp, &dev->usb);
         dev->ptp.abort_flag = &dev->cancel_requested;
@@ -122,13 +107,20 @@ ZuneDevice *zune_breach(void) {
         if (ptp_open_session(&dev->ptp) < 0) {
             zune_set_error("Failed to open PTP session (even after device reset)");
             dev->usb.backend->close(&dev->usb);
-            free(dev);
-            return NULL;
+            return -1;
         }
     }
 
-    /* GetDeviceInfo MUST be called before MTPZ — initializes MTP session state.
-     * Vendored libmtp does this; without it, MTPZ operations return 0x2002. */
+    return 0;
+}
+
+/* The first GetDeviceInfo, then MTPZ authentication. A failed handshake
+ * leaves the device usable for reads. */
+static void breach_auth(ZuneDevice *dev) {
+    /* GetDeviceInfo, call 1 of 2: MUST run before MTPZ — it initializes MTP
+     * session state. Vendored libmtp does this; without it, MTPZ operations
+     * return 0x2002. Its dataset is discarded on purpose. Keep both calls:
+     * this one is a protocol prerequisite, the second is the one parsed. */
     {
         uint8_t *devinfo = NULL;
         uint32_t devinfo_len = 0;
@@ -143,24 +135,27 @@ ZuneDevice *zune_breach(void) {
             /* (full parsing happens below) */
             free(devinfo);
         }
-        fprintf(stderr, "[libzune] GetDeviceInfo sent (%u bytes received)\n", devinfo_len);
+        ZLOG(ZUNE_CHATTER_WHISPER, "libzune", "GetDeviceInfo sent (%u bytes received)", devinfo_len);
     }
 
     /* MTPZ authentication — AFTER GetDeviceInfo */
     if (mtpz_keys_available()) {
         if (mtpz_handshake(&dev->ptp) < 0) {
-            fprintf(stderr, "[libzune] MTPZ handshake failed — device may reject operations\n");
+            ZLOG(ZUNE_CHATTER_SCREAM, "libzune", "MTPZ handshake failed — device may reject operations");
             /* Don't abort — some operations may still work, and the user
              * should see the error in the UI rather than a silent failure */
         } else {
             dev->mtpz_authenticated = 1;
-            fprintf(stderr, "[libzune] MTPZ authentication successful\n");
+            ZLOG(ZUNE_CHATTER_TALK, "libzune", "MTPZ authentication successful");
         }
     }
+}
 
-    /* Read device info via PTP GetDeviceInfo (0x1001) — works without MTPZ.
-     * This returns a dataset with model, serial, vendor, etc.
-     * Individual GetDevicePropValue calls fail without MTPZ authentication. */
+/* Model, serial, friendly name, device family and battery level. */
+static void breach_identify(ZuneDevice *dev) {
+    /* GetDeviceInfo, call 2 of 2 (0x1001), after authentication: the dataset
+     * parsed for model, serial, vendor, etc. It works without MTPZ, but
+     * individual GetDevicePropValue calls fail without authentication. */
     {
         uint8_t *devinfo = NULL;
         uint32_t devinfo_len = 0;
@@ -172,71 +167,9 @@ ZuneDevice *zune_breach(void) {
                                     &resp, NULL, NULL);
 
         if (ret2 == 0 && devinfo && devinfo_len > 0) {
-            /* Parse GetDeviceInfo dataset:
-             * Offset  0: uint16 StandardVersion
-             * Offset  2: uint32 VendorExtensionID
-             * Offset  6: uint16 VendorExtensionVersion
-             * Offset  8: MTP String VendorExtensionDesc
-             * Then: uint16 FunctionalMode
-             * Then: uint32 array OperationsSupported
-             * Then: uint32 array EventsSupported
-             * Then: uint32 array DevicePropertiesSupported
-             * Then: uint32 array CaptureFormats
-             * Then: uint32 array ImageFormats
-             * Then: MTP String Manufacturer
-             * Then: MTP String Model
-             * Then: MTP String DeviceVersion
-             * Then: MTP String SerialNumber
-             */
-            uint32_t off = 8;  /* skip to VendorExtensionDesc */
-
-            /* Skip VendorExtensionDesc (MTP string) */
-            if (off < devinfo_len) {
-                uint8_t slen = devinfo[off];
-                off += 1 + slen * 2;
-            }
-
-            /* Skip FunctionalMode (uint16) */
-            off += 2;
-
-            /* Skip arrays: each is uint32 count + count * uint16/uint32 */
-            for (int skip = 0; skip < 5 && off + 4 <= devinfo_len; skip++) {
-                uint32_t count = devinfo[off] | (devinfo[off+1]<<8) |
-                                 (devinfo[off+2]<<16) | (devinfo[off+3]<<24);
-                off += 4;
-                if (skip < 4)
-                    off += count * 2; /* uint16 arrays (ops, events, props, capture formats) */
-                else
-                    off += count * 2; /* uint16 array (image formats) */
-            }
-
-            /* Now we should be at: Manufacturer, Model, DeviceVersion, SerialNumber */
-            /* Read Manufacturer (skip it) */
-            if (off < devinfo_len) {
-                uint8_t slen = devinfo[off];
-                off += 1 + slen * 2;
-            }
-
-            /* Read Model */
-            if (off < devinfo_len) {
-                dev->model = mtp_ucs2_to_string(devinfo + off, devinfo_len - off);
-                uint8_t slen = devinfo[off];
-                off += 1 + slen * 2;
-            }
-
-            /* Read DeviceVersion (skip) */
-            if (off < devinfo_len) {
-                uint8_t slen = devinfo[off];
-                off += 1 + slen * 2;
-            }
-
-            /* Read SerialNumber */
-            if (off < devinfo_len) {
-                dev->serial = mtp_ucs2_to_string(devinfo + off, devinfo_len - off);
-            }
-
+            zune_parse_device_info(dev, devinfo, devinfo_len);
             free(devinfo);
-            fprintf(stderr, "[libzune] GetDeviceInfo: model='%s' serial='%s'\n",
+            ZLOG(ZUNE_CHATTER_WHISPER, "libzune", "GetDeviceInfo: model='%s' serial='%s'",
                     dev->model ? dev->model : "(null)",
                     dev->serial ? dev->serial : "(null)");
         }
@@ -262,7 +195,7 @@ ZuneDevice *zune_breach(void) {
         uint32_t len = 0;
         dev->device_family = ZUNE_FAMILY_UNKNOWN;
         if (ptp_get_device_prop_value(&dev->ptp, 0xD21A, &data, &len) == 0 && data && len >= 4) {
-            memcpy(&dev->device_id_raw, data, 4);
+            dev->device_id_raw = zune_le32(data);
             dev->device_family = (dev->device_id_raw >> 24) & 0xFF;
             const char *family_name = "unknown";
             switch (dev->device_family) {
@@ -271,10 +204,10 @@ ZuneDevice *zune_breach(void) {
             case 0x03: family_name = "Draco (HDD 80/120)"; break;
             case 0x06: family_name = "Pavo (Zune HD)"; break;
             }
-            fprintf(stderr, "[libzune] device family: %s (0xD21A = 0x%08X)\n",
+            ZLOG(ZUNE_CHATTER_TALK, "libzune", "device family: %s (0xD21A = 0x%08X)",
                     family_name, dev->device_id_raw);
         } else {
-            fprintf(stderr, "[libzune] device property 0xD21A not available, family unknown\n");
+            ZLOG(ZUNE_CHATTER_SHOUT, "libzune", "device property 0xD21A not available, family unknown");
         }
         free(data);
     }
@@ -288,7 +221,10 @@ ZuneDevice *zune_breach(void) {
             free(data);
         }
     }
+}
 
+/* The first storage's ID, capacity and free space. */
+static void breach_storage(ZuneDevice *dev) {
     /* Storage info */
     {
         uint32_t *storage_ids = NULL;
@@ -309,8 +245,39 @@ ZuneDevice *zune_breach(void) {
             free(storage_ids);
         }
     }
+}
 
-    fprintf(stderr, "[libzune] connected: %s (%s), battery: %u%%, storage: %llu/%llu\n",
+ZuneDevice *zune_breach(void) {
+    zune_clear_error();
+    /* libgcrypt is required for MTPZ auth. A host that set it up keeps its
+     * own configuration. */
+    if (mtpz_init_gcrypt() < 0) {
+        zune_set_error("libgcrypt %s or newer is required (found %s)", GCRYPT_VERSION,
+                       gcry_check_version(NULL));
+        return NULL;
+    }
+
+    /* MTPZ keys: loaded on the first breach, kept until zune_go_dark. */
+    if (mtpz_load_keys() < 0) {
+        ZLOG(ZUNE_CHATTER_SHOUT, "libzune", "warning: MTPZ keys not loaded from ~/.mtpz-data");
+        ZLOG(ZUNE_CHATTER_SHOUT, "libzune", "MTPZ authentication will fail");
+    }
+
+    ZuneDevice *dev = breach_open();
+    if (!dev)
+        return NULL;
+
+    ZUNE_FLAG_SET(dev->disconnecting, 0);
+
+    if (breach_session(dev) < 0) {
+        free(dev);
+        return NULL;
+    }
+    breach_auth(dev);
+    breach_identify(dev);
+    breach_storage(dev);
+
+    ZLOG(ZUNE_CHATTER_TALK, "libzune", "connected: %s (%s), battery: %u%%, storage: %llu/%llu",
             dev->name, dev->model, dev->battery,
             (unsigned long long)dev->storage_free,
             (unsigned long long)dev->storage_total);
@@ -323,20 +290,26 @@ ZuneDevice *zune_breach(void) {
 void zune_sever(ZuneDevice *dev) {
     if (!dev) return;
 
-    dev->disconnecting = 1;
+    ZUNE_FLAG_SET(dev->disconnecting, 1);
     dev->cached_library = NULL;  /* borrowed ref — don't free, caller owns it */
     usleep(300000);
 
-    ptp_close_session(&dev->ptp);
+    if (!dev->hd_transport_uncertain)
+        ptp_close_session(&dev->ptp);
 
     if (dev->usb.backend)
         dev->usb.backend->close(&dev->usb);
 
+    zune_free_folder_cache(dev);
     free(dev->name);
     free(dev->model);
     free(dev->serial);
     free(dev->storage_desc);
     free(dev);
+}
+
+void zune_go_dark(void) {
+    mtpz_free_keys();
 }
 
 /* ---- Info getters ---- */
@@ -371,18 +344,19 @@ uint64_t zune_get_headroom(ZuneDevice *dev) {
  * we don't overcommit and hit StoreFull (0x200C). Cheap (~1 GetStorageInfo
  * transaction). Returns 0 on success, -1 on failure (cached values kept). */
 int zune_refresh_storage(ZuneDevice *dev) {
-    if (!dev || dev->storage_id == 0) return -1;
+    zune_clear_error();
+    if (!dev || dev->storage_id == 0) return ZUNE_BLOWN;
     mtp_storage_info_t sinfo;
     memset(&sinfo, 0, sizeof(sinfo));
     if (mtp_get_storage_info(&dev->ptp, dev->storage_id, &sinfo) != 0) {
-        fprintf(stderr, "[libzune] refresh_storage: GetStorageInfo failed (%s 0x%04X)\n",
+        ZLOG(ZUNE_CHATTER_SCREAM, "libzune", "refresh_storage: GetStorageInfo failed (%s 0x%04X)",
                 zune_autopsy_name(dev->ptp.last_response), dev->ptp.last_response);
-        return -1;
+        return ZUNE_BLOWN;
     }
     dev->storage_total = sinfo.max_capacity;
     dev->storage_free  = sinfo.free_space;
     mtp_free_storage_info(&sinfo);
-    return 0;
+    return ZUNE_OK;
 }
 
 /* ---- Model detection ---- */
@@ -413,7 +387,7 @@ ZuneModel zune_identify(ZuneDevice *dev) {
             return ZUNE_MODEL_80;
     }
 
-    fprintf(stderr, "[libzune] model detection failed — family=0x%02X model='%s'\n",
+    ZLOG(ZUNE_CHATTER_SHOUT, "libzune", "model detection failed — family=0x%02X model='%s'",
             dev->device_family, dev->model ? dev->model : "(null)");
     return ZUNE_MODEL_UNKNOWN;
 }
@@ -439,7 +413,7 @@ int zune_is_hdd(ZuneDevice *dev) {
 
 int zune_is_live(ZuneDevice *dev) {
     if (!dev) return 0;
-    if (dev->disconnecting) return 0;
+    if (ZUNE_FLAG_GET(dev->disconnecting)) return 0;
     if (!dev->usb.backend) return 0;
     return 1;
 }
@@ -447,31 +421,47 @@ int zune_is_live(ZuneDevice *dev) {
 /* ---- Folder operations ---- */
 
 uint32_t zune_forge_folder(ZuneDevice *dev, const char *name, uint32_t parent_id) {
+    zune_clear_error();
     if (!dev || !name) return 0;
     uint32_t new_handle = 0;
     if (mtp_create_folder(&dev->ptp, parent_id, dev->storage_id, name, &new_handle) < 0) {
-        fprintf(stderr, "[libzune] create folder '%s' failed\n", name);
+        ZLOG(ZUNE_CHATTER_SCREAM, "libzune", "create folder '%s' failed", name);
         return 0;
     }
-    fprintf(stderr, "[libzune] created folder: %s (id=%u)\n", name, new_handle);
+    ZLOG(ZUNE_CHATTER_TALK, "libzune", "created folder: %s (id=%u)", name, new_handle);
     return new_handle;
 }
 
 int zune_get_folders(ZuneDevice *dev, ZuneFolderEntry **out) {
-    if (!dev || !out) return -1;
-    *out = NULL;
+    zune_clear_error();
+    if (out) *out = NULL;
+    if (!dev || !out) {
+        zune_set_error("Invalid device or folder output");
+        return ZUNE_BLOWN;
+    }
 
-    /* Get all folder handles (format=Association, parent=root) */
+    /* Get all folder handles (format=Association, parent=root). A failed
+     * query is an error, not an empty device. */
     uint32_t *handles = NULL;
     int nhandles = 0;
     if (mtp_get_object_handles(&dev->ptp, dev->storage_id, MTP_OFC_Association,
-                                0x00000000, &handles, &nhandles) < 0 || nhandles == 0) {
+                                0x00000000, &handles, &nhandles) < 0) {
+        free(handles);
+        zune_set_error("Could not list device folders (%s 0x%04X)",
+                       zune_autopsy_name(dev->ptp.last_response), dev->ptp.last_response);
+        return ZUNE_BLOWN;
+    }
+    if (nhandles == 0) {
         free(handles);
         return 0;
     }
 
     ZuneFolderEntry *entries = calloc(nhandles, sizeof(ZuneFolderEntry));
-    if (!entries) { free(handles); return -1; }
+    if (!entries) {
+        free(handles);
+        zune_set_error("Out of memory listing %d folders", nhandles);
+        return ZUNE_BLOWN;
+    }
 
     int count = 0;
     int fail_streak = 0;
@@ -485,11 +475,16 @@ int zune_get_folders(ZuneDevice *dev, ZuneFolderEntry **out) {
             mtp_free_object_info(&info);
             fail_streak = 0;
         } else if (++fail_streak >= 2) {
-            /* A dead transport burns a full USB timeout per call —
-             * bail with what we have instead of freezing the breach. */
-            fprintf(stderr, "[libzune] get_folders: transport looks dead, "
-                    "stopping after %d/%d\n", i + 1, nhandles);
-            break;
+            /* A dead transport burns a full USB timeout per call: stop, and
+             * report it instead of returning part of the list as complete. */
+            uint16_t code = dev->ptp.last_response;
+            ZLOG(ZUNE_CHATTER_SCREAM, "libzune", "get_folders: transport looks dead, "
+                    "stopping after %d/%d", i + 1, nhandles);
+            zune_free_folders(entries, count);
+            free(handles);
+            zune_set_error("Could not read device folders: no answer after %d of %d (%s 0x%04X)",
+                           i + 1, nhandles, zune_autopsy_name(code), code);
+            return ZUNE_BLOWN;
         }
     }
 
@@ -507,15 +502,15 @@ void zune_free_folders(ZuneFolderEntry *entries, int count) {
 /* ---- Cancel support ---- */
 
 void zune_abort(ZuneDevice *dev) {
-    if (dev) dev->cancel_requested = 1;
+    if (dev) ZUNE_FLAG_SET(dev->cancel_requested, 1);
 }
 
 int zune_is_aborted(ZuneDevice *dev) {
-    return dev ? dev->cancel_requested : 0;
+    return dev ? ZUNE_FLAG_GET(dev->cancel_requested) : 0;
 }
 
 void zune_clear_abort(ZuneDevice *dev) {
-    if (dev) dev->cancel_requested = 0;
+    if (dev) ZUNE_FLAG_SET(dev->cancel_requested, 0);
 }
 
 /* ---- Autopsy: cause of death for the last operation ---- */
@@ -545,9 +540,11 @@ const char *zune_autopsy_name(uint16_t code) {
     case 0x2019: return "DeviceBusy";
     case 0x201D: return "InvalidParameter";
     case 0x201E: return "SessionAlreadyOpen";
+    case 0x201F: return "TransactionCancelled";
     case 0xA801: return "MTP_InvalidObjectPropCode";
     case 0xA802: return "MTP_InvalidObjectPropFormat";
     case 0xA803: return "MTP_InvalidObjectPropValue";
+    case 0xA804: return "MTP_InvalidObjectReference";
     case 0xA806: return "MTP_InvalidDataset";
     case 0xA808: return "MTP_ObjectTooLarge";
     case 0x02FF: return "TransportError";
@@ -558,7 +555,8 @@ const char *zune_autopsy_name(uint16_t code) {
 /* ---- Rename device ---- */
 
 int zune_rename(ZuneDevice *dev, const char *new_name) {
-    if (!dev || !new_name) return -1;
+    zune_clear_error();
+    if (!dev || !new_name) return ZUNE_BLOWN;
 
     /* Encode as MTP string (UCS-2LE wire format) */
     uint32_t wire_len = 0;
@@ -566,7 +564,7 @@ int zune_rename(ZuneDevice *dev, const char *new_name) {
     if (!wire || wire_len == 0) {
         zune_set_error("Failed to encode device name to UCS-2");
         free(wire);
-        return -1;
+        return ZUNE_BLOWN;
     }
 
     /* Set Friendly Name device property (0xD402) */
@@ -576,7 +574,7 @@ int zune_rename(ZuneDevice *dev, const char *new_name) {
     if (ret == 0) {
         free(dev->name);
         dev->name = strdup(new_name);
-        fprintf(stderr, "[libzune] device renamed to '%s'\n", new_name);
+        ZLOG(ZUNE_CHATTER_TALK, "libzune", "device renamed to '%s'", new_name);
     } else {
         zune_set_error("Failed to set device name property (0xD402)");
     }

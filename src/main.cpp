@@ -167,7 +167,9 @@ int main(int argc, char *argv[]) {
         QObject::connect(worker, &DeviceWorker::sendProgress, sync, &SyncEngine::onSendProgress);
         QObject::connect(worker, &DeviceWorker::sendDone, sync, &SyncEngine::onSendDone);
         QObject::connect(worker, &DeviceWorker::forgeProgress, sync, &SyncEngine::onForgeProgress);
-        QObject::connect(worker, &DeviceWorker::forgeDone, sync, &SyncEngine::onForgeDone);
+        QObject::connect(worker, &DeviceWorker::forgeBatchDone, sync, &SyncEngine::onForgeBatchDone);
+        QObject::connect(worker, &DeviceWorker::hdArtworkProgress, sync, &SyncEngine::onHdArtworkProgress);
+        QObject::connect(worker, &DeviceWorker::hdArtworkDone, sync, &SyncEngine::onHdArtworkDone);
         // Phase 6: video sends (after the album forge)
         QObject::connect(sync, &SyncEngine::workerSendVideo,
                          worker, &DeviceWorker::doSendVideo, Qt::QueuedConnection);
@@ -204,7 +206,9 @@ int main(int argc, char *argv[]) {
     auto *spoken = engine.singletonInstance<SpokenMediaService *>("Zuuned", "SpokenMediaService");
     if (spoken) spoken->attachPlayer(player);
     if (spoken && device && sync) {
-        sync->attachPodcastCleanup([spoken] { return spoken->podcastCleanupCandidates(); });
+        sync->attachPodcastCleanup([spoken](const QStringList &sources, bool everything) {
+            return spoken->podcastCleanupCandidates(sources, everything);
+        });
         QObject::connect(spoken, &SpokenMediaService::changed, sync, &SyncEngine::refreshPodcastCleanupPreview, Qt::QueuedConnection);
         auto *settings = engine.singletonInstance<AppSettings *>("Zuuned", "AppSettings");
         if (settings) QObject::connect(settings, &AppSettings::changed, sync, &SyncEngine::refreshPodcastCleanupPreview, Qt::QueuedConnection);

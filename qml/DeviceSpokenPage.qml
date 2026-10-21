@@ -55,6 +55,16 @@ Item {
     readonly property var openGroup: groups.find(g => g.key === openGroupKey) || null
     readonly property var rows: openGroup ? openGroup.rows : []
     readonly property var selectedIds: rows.filter(row => checks[String(row.itemId)]).map(row => row.itemId)
+    // Rows change in place, so a refreshed inventory (after a sync or a
+    // removal) leaves the list where it was; another show starts at the top.
+    KeyedRows { id: shownRows; keyOf: r => r.itemId }
+    property string shownGroup: ""
+    onRowsChanged: {
+        const fresh = openGroupKey !== shownGroup
+        shownGroup = openGroupKey
+        shownRows.apply(rows, fresh)
+        if (fresh && rowList) rowList.positionViewAtBeginning()
+    }
 
     function openCollection(key) { openGroupKey = key; checks = {}; actionError = "" }
     function toggle(id) {
@@ -222,6 +232,9 @@ Item {
             rowSpacing: Theme.spaceMd
             SpokenShelf {
                 id: deviceShelf
+                // Stacked above the heading it would leave a short window no
+                // room for the episode list.
+                visible: page.width >= Theme.spokenDetailBreakpoint || page.height >= Theme.spokenStackedCoverHeight
                 Layout.preferredWidth: Theme.spokenShelfWidth
                 Layout.preferredHeight: Theme.spokenShelfHeight
                 property double artItemId: page.openGroup ? page.openGroup.artItemId : 0
@@ -291,6 +304,7 @@ Item {
                 liftColumnCap: !page.books
                 cellHeightFor: w => w * (page.books ? Theme.spokenBookRatio : 1) + Theme.spokenCardCaption
                 rows: page.filteredGroups
+                keyOf: g => g.key
                 cardDelegate: Component { Item {
                     id: card
                     required property var modelData
@@ -338,7 +352,7 @@ Item {
                 anchors.rightMargin: Math.max(Theme.spaceXxxl, parent.width - Gallery.spine(page.width) - Gallery.frameW(page.width))
                 visible: page.deviceService.connected && !!page.openGroup
                 clip: true
-                model: page.rows
+                model: shownRows
                 boundsBehavior: Flickable.StopAtBounds
                 ScrollBar.vertical: ZuneScrollBar {}
                 delegate: Rectangle {

@@ -574,7 +574,8 @@ Item {
                             Seg {
                                 Layout.alignment: Qt.AlignVCenter
                                 options: [{ label: "Permanent Marker", value: "permanentMarker" },
-                                          { label: "Specimen Alien", value: "specimenAlien" }]
+                                          { label: "Specimen Alien", value: "specimenAlien" },
+                                          { label: "Zuuned Sans", value: "zuunedSans" }]
                                 current: AppSettings.headerFont
                                 onPicked: (v) => AppSettings.headerFont = v
                             }

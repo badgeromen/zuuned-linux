@@ -63,16 +63,29 @@ void zuuned_transcode_set_hw_decode(int mode) { g_hw_decode = mode; }
 
 /* ---- Helper: build temp output path ---- */
 
+/* A temp output name unique within this process: the sync pipeline runs
+ * transcodes concurrently, and two sources with the same file name (episode
+ * files in different folders) must not share an output that one send is
+ * still reading. $TMPDIR when absolute, else /tmp. */
 static char *make_temp_path(const char *input_path, const char *suffix, const char *ext)
 {
+    static unsigned sequence;
     const char *base = strrchr(input_path, '/');
     base = base ? base + 1 : input_path;
     const char *dot = strrchr(base, '.');
     size_t base_len = dot ? (size_t)(dot - base) : strlen(base);
+    if (base_len > 160) {
+        base_len = 160;                       /* keep the extension; cut on a UTF-8 boundary */
+        while (base_len > 0 && ((unsigned char)base[base_len] & 0xC0) == 0x80) base_len--;
+    }
+    const char *dir = getenv("TMPDIR");
+    if (!dir || dir[0] != '/') dir = "/tmp";
 
     char path[512];
-    snprintf(path, sizeof(path), "/tmp/zuuned_%s_%.*s_%d.%s",
-             suffix, (int)base_len, base, (int)getpid(), ext);
+    if (snprintf(path, sizeof(path), "%s/zuuned_%s_%.*s_%d_%u.%s", dir, suffix, (int)base_len,
+                 base, (int)getpid(), __atomic_add_fetch(&sequence, 1, __ATOMIC_RELAXED),
+                 ext) >= (int)sizeof(path))
+        return NULL;
     return strdup(path);
 }
 

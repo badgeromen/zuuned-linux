@@ -4,7 +4,10 @@ Private development, 2026-10-08. Experimental podcast series inventory/create
 and MP3 episode transfer APIs are implemented and software-tested. An isolated
 upload, reuse, byte-for-byte extraction and cleanup gate passes on Keel. Audiobook
 transfer now has experimental APIs and a two-part Keel/Pavo hardware gate;
-HD artist catalog transport remains deferred. On October 9 the user
+HD artist catalog transport was deferred during spoken-media work; the user
+activated its separate research workstream on October 17. See
+[HD artwork research](HD_ARTWORK_RESEARCH.md) for the re-audited captures,
+successful read-only HD probe and remaining transport/display gates. On October 9 the user
 confirmed podcast audio and images work on the tested Classic. Resume and
 other-model acceptance remain pending. This document separates
 research evidence from implemented and physically verified behavior.
@@ -37,7 +40,10 @@ External reference inspected at XuneSyncLibrary commit
 - [HTTP request parser contract](https://github.com/xune-software/XuneSyncLibrary/blob/c2a6eebeac34d1a9e4c805b1ad51ec25895dfdc4/lib/src/protocols/http/HTTPParser.h)
   includes artist biography, image-list and deviceBackgroundImage routes.
   Our own [vendor-opcode captures](ZUNE_VENDOR_OPS.md) independently document
-  the PPP-over-USB tunnel, which current libzune has not implemented.
+  PPP-over-USB framing and negotiation. They do not show these HTTP routes.
+  The [October capture audit](HD_ARTWORK_RESEARCH.md#capture-evidence) corrects
+  old assumptions about `0x922F`; current libzune does not yet implement the
+  complete artist-catalog transport.
 - An audiobook CLI exists in that snapshot, but references
   `UploadTrackWithMetadata`, whose implementation is absent from that snapshot
   (the `MediaType::Audiobook` enum does exist). Historical investigation below
@@ -788,3 +794,38 @@ Draco baseline establishes readable state, not a new physical played-bit transit
 or end-to-end deletion test. Completion followed by reconnect/cleanup remains a
 user hardware test. Never substitute title, elapsed time or bookmark zero for the
 firmware's marked-played flag.
+
+
+## Audiobook and podcast cover size, 2026-10-20
+
+The user reported that audiobook covers did not show during playback on a
+Zune 80 (Draco) and loaded slowly on the HD. Zuuned stored each spoken cover
+at up to 1600x1600, JPEG quality 93 (Qt writes 4:4:4 at that quality), and
+sent those bytes unchanged to every audiobook part and podcast show: 171 KB
+to 1.06 MB per cover. Our October 9 test books used a 240x240 JPEG.
+
+A read-only probe of the Zune 30 (Keel) found the device declares artwork of
+at most 240x240 and 1 MiB, JPEG only, for MP3, WMA, album, podcast-series and
+WMV objects ([vendor properties](ZUNE_VENDOR_PROPERTIES.md#artwork-limits-zune-30-descriptors-2026-10-20)).
+It had just received a 19-part audiobook with 615,515-byte covers.
+About 13 minutes after that sync, a probe read no art on parts 1-9 and the
+full cover on parts 10-19; 40 minutes later the same probe read the full
+cover on all 19. Treat that first read as a transient firmware state, not
+lost artwork.
+
+`zune_get_brand_limits` now reports an item's declared limits (Zune 30
+descriptors replayed in `tests/run-brand-limits.sh`, 17 checks). Zuuned fits
+every audiobook and show cover to them before `zune_brand`: never larger than
+declared, never above 480 pixels, 240x240 when nothing is declared, baseline
+4:2:0 JPEG. A one-off repair then rebranded the 19 Zuuned parts and both
+podcast shows on the Zune 30 (21,220 and 10,571/8,409 bytes, each read back
+byte for byte, then CleanDataStore); the October 9 test book was left as it
+was.
+
+App gate on the Zune 120 (Draco): Zuuned removed a 19-part audiobook through
+its device page, then its own sync sent the book again (19 parts, 7 m 55 s,
+CleanDataStore OK). The limits were read from the
+device without error and every part's cover was 240x240, 21,220 bytes. The
+user confirmed the cover now shows during playback on the Zune 120. Still
+open: the Zune 30 screen check, the other six books on the Zune 120 (sent with
+1600x1600 covers), and the HD's limits and books.

@@ -14,6 +14,7 @@
 uint32_t zune_find_track(ZuneDevice *dev,
                           const char *title, const char *artist,
                           const char *album) {
+    zune_clear_error();
     if (!dev || !dev->cached_library || !title)
         return 0;
 
@@ -37,6 +38,7 @@ uint32_t zune_find_track(ZuneDevice *dev,
 /* ---- Video search by filename ---- */
 
 uint32_t zune_find_video(ZuneDevice *dev, const char *filename) {
+    zune_clear_error();
     if (!dev || !dev->cached_library || !filename)
         return 0;
 
@@ -53,6 +55,7 @@ uint32_t zune_find_video(ZuneDevice *dev, const char *filename) {
 /* ---- Photo search by filename ---- */
 
 uint32_t zune_find_photo(ZuneDevice *dev, const char *filename) {
+    zune_clear_error();
     if (!dev || !dev->cached_library || !filename)
         return 0;
 

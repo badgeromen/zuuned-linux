@@ -1,5 +1,59 @@
 # CLAUDE.md — AI Assistant Guide for libzune
 
+## Active hardening workstream, 2026-10-19
+
+The user's libzune 0.3.0 hardening spec is
+[docs/HARDENING_0.3.0.md](docs/HARDENING_0.3.0.md). Work on
+`hardening/0.3.0`, one commit per task ID (`T1.2: ...`), with a sanitizer
+regression test for each fix. Preserve every public `zune_*` name; new public
+functions take themed verbs from the spec's lexicon. Only **[HW]** tasks may
+change wire behavior, and each records its gate in Appendix A. Never touch
+MTPZ crypto math or key material. Appendix C records baseline, deviations
+and hardware evidence. October 20: every task, Tier 3 included, is
+implemented and passes on the Zune HD, the Zune 30 and the Zune 80 (Draco);
+Scorpius has not been tested (Appendix A), and `docs/RELEASE_0.3.0.md` is the
+release draft. The same day an eight-agent validation round found and fixed
+the defects in the last Appendix C entry; read it before changing the upload
+engine, album forging, the ZMDB reader or the build. Uploads go through `zune_smuggle_core` (src/upload.c);
+byte packing lives in `src/bytes.h`.
+
+## Active HD artwork workstream, 2026-10-17
+
+The user activated Zune HD Now Playing artist backgrounds after the spoken-media
+release. Use `feature/hd-now-playing-art`; start with read-only descriptor and
+identity evidence. PPP capture evidence is in `docs/ZUNE_VENDOR_OPS.md` and
+earlier catalog-route leads in `docs/SPOKEN_MEDIA_RESEARCH.md`. Preserve existing
+artist IDs and serialized device ownership. Advertised properties, a successful
+USB exchange and physical image presentation are separate gates. The spoken
+workstream below describes the preserved implementation baseline.
+
+October 18: the fully tagged fresh-artist experiment delivered two acknowledged
+JPEG responses over the native USB responder, including the device-background
+route (3 DNS queries, 9 HTTP requests). This is transport evidence, not visual
+acceptance or a safe existing-artist retrofit. The startup stream parser passes
+179 checks for fragmented/coalesced/repeated CLIENT greetings before PPP.
+See `docs/HD_ARTWORK_RESEARCH.md` for journals, cleanup and remaining gates.
+The first-sync/recovery commands retain experimental CLI tooling. October 19
+extracts the responder into shared `src/hd/` and adds a public C API in
+`src/hd_artwork.c`. Read `docs/HD_ARTWORK_API.md` for ownership, callback ordering,
+identity refusal, partial delivery and the remaining app hardware gate.
+October 19: the responder has sixteen bounded TCP slots and separate background,
+six-image gallery and thumbnail roles. `--biography utf8.txt` now supplies bounded
+plain text through escaped Atom HTML, with independent full-response ACKs.
+The existing Disturbed refresh received no biography request. After the user
+deleted the album on the HD and restarted, a fresh import with the same catalog
+GUID received two biography requests/two complete ACKs and all eight image
+assets. Separate full album proof and reindex handoff passed, and the user
+confirmed the biography works on the HD. Persistence and existing-artist
+replacement remain separate gates; do not automatically delete/recreate artists. See the dated
+research and transport walkthrough for the initial final-proof failure and
+subsequent successful verification.
+The subsequent full-album test retained 16 Disturbed tracks with exact payload,
+cover and ordered-reference proof, preserved the original inventory and confirmed
+one reindex handoff. Three distinct artist JPEGs were acknowledged over USB;
+visible rotation/persistence remain separate. See the transport walkthrough and
+dated full-album evidence before extending this experimental mechanism.
+
 ## Active spoken-media workstream
 
 Use `feature/podcasts-audiobooks` for this private work. Read
@@ -14,7 +68,8 @@ resume, chapter mapping, Draco completed-podcast cleanup and HD/Draco
 screen/playback acceptance remain separate. Use wildcard inventory for
 audiobooks: HD MP3-filtered enumeration omits these objects. Preserve serialized
 device ownership, exact spoken identities and the no-blind-retry contract.
-Feeds, downloads and local state belong in the app. HD backgrounds are deferred.
+Feeds, downloads and local state belong in the app. The historical HD background
+deferral was superseded by the October 17 workstream above.
 
 ## Project Overview
 
@@ -37,7 +92,7 @@ Produces `libzune.dylib` (macOS) or `libzune.so` (Linux) + `libzune.a` (static).
 - **macOS:** IOKit framework (DEXT IOUserClient backend)
 - **Linux:** libusb-1.0
 - **Linux build:** libavformat/libavutil for native metadata probing
-- **Runtime helpers:** ffmpeg/ffprobe CLI where used; audio/video arm helpers and retag currently hard-code Homebrew ffmpeg. Linux photo preparation uses ffmpeg on PATH. See README.md.
+- **Runtime helpers:** ffmpeg/ffprobe/sips CLIs where used, run without a shell via `zune_run_tool`. Lookup: `ZUNE_FFMPEG`/`ZUNE_FFPROBE`/`ZUNE_SIPS`, then PATH, then (macOS only) Homebrew and /usr/local. See README.md.
 
 ## Architecture
 
@@ -84,8 +139,15 @@ Produces `libzune.dylib` (macOS) or `libzune.so` (Linux) + `libzune.a` (static).
 - All public functions prefixed `zune_` with rebellion-themed verbs
 - Internal MTP functions prefixed `mtp_`
 - PTP protocol functions prefixed `ptp_`
-- Error handling: `fprintf(stderr, "[prefix] ...")`, return -1 or 0/NULL
-- Thread-local error string via `zune_set_error()` / `zune_get_error()`
+- Logging: `ZLOG(ZUNE_CHATTER_<LEVEL>, "tag", "message", ...)` from `wiretap.h`
+  (no trailing newline): WHISPER protocol detail/per-item progress, TALK
+  lifecycle, SHOUT retries/fallbacks, SCREAM failures. Never write stderr
+  directly. Status functions return
+  `ZUNE_OK`/`ZUNE_BLOWN`; others return an ID or 0, or a pointer or NULL (see
+  the return-convention table in docs/API_REFERENCE.md).
+- Thread-local error string via `zune_set_error()` / `zune_get_error()`. A
+  public function that can fail starts with `zune_clear_error()`; one that
+  cannot fail never clears it (`tests/run-error-convention.sh`).
 
 ## Zune Rebellion API — Function Naming Convention
 
@@ -109,7 +171,7 @@ Produces `libzune.dylib` (macOS) or `libzune.so` (Linux) + `libzune.a` (static).
 
 ## Current API documentation
 
-Read docs/API_REFERENCE.md for all 94 declarations and current ownership/return-value limits. Never sever while a worker still uses the device. Keep a returned scan allocated while calling find helpers; free_scan does not clear the borrowed device cache. Regenerate/check both API_REFERENCE.md and TOC.md after interface changes.
+Read docs/API_REFERENCE.md for every declaration and its current ownership/return-value limits. Public declarations carry `ZUNE_API`; the build uses `-fvisibility=hidden`, and `tests/run-symbols.sh` keeps the export list equal to zune.h. Never sever while a worker still uses the device. Keep a returned scan allocated while calling find helpers; free_scan does not clear the borrowed device cache. Regenerate/check both API_REFERENCE.md and TOC.md after interface changes.
 
 ## Important Patterns
 
@@ -164,7 +226,7 @@ Implement `zune_usb_backend_t` function table (open, close, bulk_read, bulk_writ
 
 ## Debugging
 
-- All logs go to stderr with `[prefix]` tags
+- All logs go through `zune_log` to the installed wiretap or stderr as `[prefix] message`; `ZUNE_CHATTER=whisper` shows debug detail
 - `[libzune]` — high-level operations
 - `[ptp]` — PTP protocol (CMD/RESP hex dumps when enabled)
 - `[mtp]` — MTP operations

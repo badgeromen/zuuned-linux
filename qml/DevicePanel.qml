@@ -1034,6 +1034,8 @@ Item {
                                 + (parts.length ? parts.join(", ") : "nothing new")
                             if (s.podcastsRemoved > 0) line += " · " + s.podcastsRemoved + " played podcasts removed"
                             if (s.podcastCleanupWarning) line += " · " + s.podcastCleanupWarning
+                            if (s.hdArtworkDelivered) line += " · " + s.hdArtworkDelivered + " HD artist sets received"
+                            if (s.hdArtworkWarning) line += " · " + s.hdArtworkWarning
                             if (s.skipped > 0) line += " · " + s.skipped + " skipped"
                             if (s.failed > 0) line += " · " + s.failed + " FAILED"
                             const mins = Math.floor(

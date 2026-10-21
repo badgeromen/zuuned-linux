@@ -2,10 +2,9 @@
  * docs/SPOKEN_MEDIA_RESEARCH.md. No music album/artist objects are created. */
 #include "zune_internal.h"
 #include <fcntl.h>
-#include <sys/mman.h>
 
 static int book_ready(ZuneDevice *d) {
-  if (!d || !d->mtpz_authenticated || d->disconnecting || d->cancel_requested) {
+  if (!d || !d->mtpz_authenticated || ZUNE_FLAG_GET(d->disconnecting) || ZUNE_FLAG_GET(d->cancel_requested)) {
     zune_set_error(
         "Audiobook operation requires an authenticated, active device");
     return 0;
@@ -132,17 +131,18 @@ static int book_folders(ZuneDevice *d, const char *key, uint32_t *root,
 }
 int zune_find_audiobook_part(ZuneDevice *d, const ZuneAudiobookPartInput *p,
                              uint32_t *folder, uint32_t *out) {
+  zune_clear_error();
   if (folder)
     *folder = 0;
   if (out)
     *out = 0;
   if (!folder || !out || !book_ready(d) || !book_input(p))
-    return -1;
+    return ZUNE_BLOWN;
   uint32_t root = 0, dir = 0, *ids = NULL, match = 0;
   int n = 0, ok = 1;
   if (!book_folders(d, p->book_key, &root, &dir) ||
       !book_inventory(d, 0, &ids, &n))
-    return -1;
+    return ZUNE_BLOWN;
   for (int i = 0; ok && i < n; ++i) {
     if (!book_ready(d)) {
       ok = 0;
@@ -207,29 +207,30 @@ int zune_find_audiobook_part(ZuneDevice *d, const ZuneAudiobookPartInput *p,
   }
   free(ids);
   if (!ok)
-    return -1;
+    return ZUNE_BLOWN;
   *folder = dir;
   *out = match;
-  return 0;
+  return ZUNE_OK;
 }
 int zune_smuggle_audiobook_part(ZuneDevice *d, const char *path,
                                 const ZuneAudiobookPartInput *p,
                                 uint32_t *out) {
+  zune_clear_error();
   if (out)
     *out = 0;
   if (!out || !book_ready(d) || !book_input(p) || !path)
-    return -1;
+    return ZUNE_BLOWN;
   uint32_t folder = 0, existing = 0;
   if (zune_find_audiobook_part(d, p, &folder, &existing))
-    return -1;
-  int fd = open(path, O_RDONLY);
+    return ZUNE_BLOWN;
+  int fd = open(path, O_RDONLY | O_CLOEXEC);
   struct stat st;
   if (fd < 0 || fstat(fd, &st) || !S_ISREG(st.st_mode) || st.st_size <= 0 ||
       (uint64_t)st.st_size > UINT32_MAX) {
     if (fd >= 0)
       close(fd);
     zune_set_error("Prepared audiobook MP3 must be nonempty and under 4 GiB");
-    return -1;
+    return ZUNE_BLOWN;
   }
   if (existing) {
     mtp_object_info_t info = {0};
@@ -241,17 +242,12 @@ int zune_smuggle_audiobook_part(ZuneDevice *d, const char *path,
     if (!ok) {
       zune_set_error(
           "Existing audiobook part size conflicts with prepared audio");
-      return -1;
+      return ZUNE_BLOWN;
     }
     *out = existing;
-    return 0;
+    return ZUNE_OK;
   }
-  void *data = mmap(NULL, (size_t)st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
-  close(fd);
-  if (data == MAP_FAILED) {
-    zune_set_error("Cannot map prepared audiobook audio");
-    return -1;
-  }
+  close(fd);  /* the upload engine reopens it and checks it has not changed */
   char filename[32];
   snprintf(filename, sizeof(filename), "Part %05u.mp3", p->part_number);
   mtp_prop_entry_t props[] = {
@@ -273,16 +269,9 @@ int zune_smuggle_audiobook_part(ZuneDevice *d, const char *path,
        .data_type = PTP_DTC_UINT32,
        .value.u32 = p->duration_ms}};
   int ok = 1;
-  for (int i = 0; ok && i < 7; ++i) {
-    uint8_t *raw = NULL;
-    uint32_t n = 0;
-    ok = book_ready(d) &&
-         !mtp_get_prop_desc(&d->ptp, props[i].prop_code, MTP_OFC_MP3, &raw,
-                            &n) &&
-         raw && n >= 5 && (raw[0] | (raw[1] << 8)) == props[i].prop_code &&
-         (raw[2] | (raw[3] << 8)) == props[i].data_type && raw[4] == 1;
-    free(raw);
-  }
+  for (int i = 0; ok && i < 7; ++i)
+    ok = book_ready(d) && mtp_prop_desc_writable(&d->ptp, props[i].prop_code,
+                                                 MTP_OFC_MP3, props[i].data_type);
   uint32_t id = 0;
   if (!ok) {
     zune_set_error("Audiobook descriptor check failed");
@@ -309,20 +298,24 @@ int zune_smuggle_audiobook_part(ZuneDevice *d, const char *path,
       goto done;
     }
   }
-  ok = !mtp_send_object_prop_list(&d->ptp, d->storage_id, folder, MTP_OFC_MP3,
-                                  (uint64_t)st.st_size, props, 7, &id);
-  if (!id || id == UINT32_MAX) {
-    ok = 0;
-    id = 0;
-    goto done;
+  {
+    /* Strict: an unanswered creation is never retried. A failed payload
+     * removes the new part before any retry; a part that cannot be removed
+     * is returned for inspection. */
+    zune_upload_t up = {.kind = "audiobook part", .path = path,
+                        .size = (uint32_t)st.st_size, .parent = folder,
+                        .format = MTP_OFC_MP3, .props = props, .nprops = 7,
+                        .strict = 1};
+    int sent = zune_smuggle_core(d, &up, &id);
+    if (sent == ZUNE_UPLOAD_ORPHANED) {
+      *out = id;
+      return ZUNE_BLOWN;
+    }
+    if (sent != ZUNE_UPLOAD_SENT)
+      return ZUNE_BLOWN; /* the engine set the error */
   }
   *out = id; /* Retain exact identity on every subsequent failure; no automatic
                 purge. */
-  if (!ok || !book_ready(d) ||
-      mtp_send_object(&d->ptp, data, (uint32_t)st.st_size)) {
-    ok = 0;
-    goto done;
-  }
   {
     uint32_t verified_folder = 0, verified_id = 0;
     ok = !zune_find_audiobook_part(d, p, &verified_folder, &verified_id) &&
@@ -335,12 +328,11 @@ int zune_smuggle_audiobook_part(ZuneDevice *d, const char *path,
     mtp_free_object_info(&info);
   }
 done:
-  munmap(data, (size_t)st.st_size);
   if (!ok) {
     zune_set_error("Audiobook send/readback failed (0x%04X); inspect returned "
                    "ID before retrying",
                    d->ptp.last_response);
-    return -1;
+    return ZUNE_BLOWN;
   }
-  return 0;
+  return ZUNE_OK;
 }

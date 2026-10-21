@@ -22,9 +22,20 @@ class DeviceWorker : public QObject {
     Q_OBJECT
 
 public:
+    // libzune's errors for a photo it refused before any device write
+    // (photo.c): no object can exist, so the sync goes on without recovery.
+    static bool photoRefusedBeforeWrite(const QString &error) {
+        return error.startsWith(QLatin1String("Photo is not a JPEG"))
+            || error.startsWith(QLatin1String("Cannot read photo:"))
+            || error.startsWith(QLatin1String("Could not read the device's photo albums"));
+    }
+
     struct BreachData {
         bool ok = false;
         QString error;
+        // Connected, but the device database could not be read: its lists
+        // below are empty because they are unknown, not because the Zune is.
+        QString libraryError;
         QString name, model, serial;
         // ZuneDeviceFamily from MTP 0xD21A (0x00=Keel/Zune30, 0x02=Scorpius,
         // 0x03=Draco, 0x06=Pavo/HD, 0xFF=unknown). Drives the video
@@ -172,8 +183,10 @@ signals:
     void sendVideoDone(const QString &entryId, bool ok, quint32 itemId,
                        const QString &autopsyName);
     void extractVideoDone(quint32 itemId, const QString &destPath, bool ok);
+    // refusal: non-empty when libzune refused the photo before anything
+    // reached the device (its reason), so no recovery is needed.
     void sendPhotoDone(const QString &entryId, bool ok, quint32 itemId,
-                       const QString &autopsyName);
+                       const QString &autopsyName, const QString &refusal);
     void extractPhotoDone(quint32 itemId, const QString &destPath, bool ok);
     void extractTrackDone(quint32 itemId, const QString &destPath, bool ok);
     void renameItemDone(quint32 itemId, const QString &newName, bool ok);
@@ -182,6 +195,12 @@ signals:
     void storageRefreshed(double capacityGB, double freeGB);
     void forgeProgress(int current, int total);
     void forgeDone(int okCount, int failCount);
+    void forgeBatchDone(const QString &runToken, int okCount, int failCount);
+    void hdArtworkProgress(const QString &serial, quint64 generation,
+                           const QString &runToken, const QString &artist,
+                           int acknowledged, int total);
+    void hdArtworkDone(const QString &serial, quint64 generation,
+                       const QString &artist, const QVariantMap &result);
     void finalizeDone(bool ok);
     void purgeProgress(int current, int total);
     void purgeDone(int okCount, int failCount, const QVariantList &purgedIds);
@@ -190,6 +209,10 @@ signals:
 
 private:
     friend struct PodcastCleanupWorkerTestAccess;
+    friend struct HdArtworkWorkerTestAccess;
+    friend struct SpokenCoverWorkerTestAccess;
+    QPair<int, int> forgeAlbumsCore(const QVariantList &buckets,
+                                   const QHash<QString, quint32> &artistOverrides = {});
     ZuneDevice *m_dev = nullptr;
     std::atomic<quint64> m_spokenGeneration{1};
     // Mirror of m_dev for the cross-thread requestAbort() read.

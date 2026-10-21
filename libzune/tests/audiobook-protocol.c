@@ -12,7 +12,8 @@ typedef struct {
     Property props[8];
 } Object;
 static Object objects[16];
-static int used, creates, payloads, folders, calls, checks, wildcard_reads;
+static int used, creates, payloads, folders, calls, checks, wildcard_reads, deletes;
+static int fail_times, failed;          /* fail_op fails this many times; 0 = always */
 static uint16_t fail_op, fail_prop, corrupt_prop;
 static int zero_category, wrong_schema, wrong_descriptor, bad_handles;
 static char error_text[512];
@@ -24,6 +25,7 @@ static void put32(uint8_t *p, uint32_t value) { for (int i = 0; i < 4; ++i) p[i]
 void zune_set_error(const char *fmt, ...) {
     va_list ap; va_start(ap, fmt); vsnprintf(error_text, sizeof(error_text), fmt, ap); va_end(ap);
 }
+void zune_clear_error(void) { error_text[0] = 0; }
 const char *zune_get_error(void) { return error_text; }
 static void check(int ok, const char *label) {
     if (!ok) { fprintf(stderr, "FAIL: %s (%s)\n", label, error_text); exit(1); }
@@ -55,7 +57,8 @@ static void reset(void) {
     for (int i = 0; i < used; ++i)
         for (int j = 0; j < objects[i].count; ++j) free(objects[i].props[j].data);
     memset(objects, 0, sizeof(objects));
-    used = creates = payloads = folders = calls = wildcard_reads = 0;
+    used = creates = payloads = folders = calls = wildcard_reads = deletes = 0;
+    fail_times = failed = 0;
     fail_op = fail_prop = corrupt_prop = 0;
     zero_category = wrong_schema = wrong_descriptor = bad_handles = 0;
     error_text[0] = 0;
@@ -82,7 +85,8 @@ int ptp_transaction(ptp_session_t *s, uint16_t op, uint32_t *params, int nparams
     ++calls;
     if (recv) *recv = NULL;
     if (recv_len) *recv_len = 0;
-    s->last_response = (op == fail_op || (op == MTP_OC_GetObjectPropValue && params[1] == fail_prop))
+    int failing = op == fail_op && (!fail_times || failed++ < fail_times);
+    s->last_response = (failing || (op == MTP_OC_GetObjectPropValue && params[1] == fail_prop))
         ? 0x2002 : PTP_RC_OK;
     if (response) *response = s->last_response;
     if (s->last_response != PTP_RC_OK) return -1;
@@ -140,6 +144,11 @@ int ptp_transaction(ptp_session_t *s, uint16_t op, uint32_t *params, int nparams
     }
     case PTP_OC_SendObject:
         assert(used && send_len == objects[used - 1].size); ++payloads; return 0;
+    case PTP_OC_DeleteObject: {
+        Object *o = object(params[0]);
+        if (!o) { s->last_response = PTP_RC_InvalidObjectHandle; if (response) *response = s->last_response; return -1; }
+        o->id = 0; ++deletes; return 0;
+    }
     case MTP_OC_GetObjectPropValue: {
         Property *p = property(object(params[0]), params[1]); assert(p);
         reply(p->data, p->size, recv, recv_len);
@@ -221,9 +230,23 @@ int main(void) {
         if (mode == 0) wrong_schema = 1;
         if (mode == 1) corrupt_prop = 0xDC95;
         if (mode == 2) corrupt_prop = 0xDC44;
-        if (mode == 3) fail_op = PTP_OC_SendObject;
-        check(zune_smuggle_audiobook_part(&dev, path, &part, &id) < 0 && id && object(id) && creates == 1,
-              "failed new schema, category, title or payload retains exact recovery ID and never deletes");
+        if (mode == 3) {
+            /* Upload engine (T3.2): a failed payload removes the new part and
+             * retries; when every attempt fails nothing is left and no ID is
+             * returned. */
+            fail_op = PTP_OC_SendObject;
+            check(zune_smuggle_audiobook_part(&dev, path, &part, &id) < 0 && !id && creates == 3 &&
+                  deletes == 3 && !payloads, "a payload that keeps failing is removed after each attempt; no ID remains");
+            continue;
+        }
+        check(zune_smuggle_audiobook_part(&dev, path, &part, &id) < 0 && id && object(id) && creates == 1 && !deletes,
+              "failed new schema, category or title retains exact recovery ID and never deletes");
+    }
+    {
+        reset(); uint32_t id = 0;
+        fail_op = PTP_OC_SendObject; fail_times = 1;
+        check(!zune_smuggle_audiobook_part(&dev, path, &part, &id) && id && object(id) && creates == 2 &&
+              deletes == 1 && payloads == 1, "one failed payload is removed and the retry delivers the part");
     }
     for (int mode = 0; mode < 3; ++mode) {
         reset(); uint32_t id = 99;

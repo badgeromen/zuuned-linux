@@ -28,7 +28,7 @@ function functions(file, terminator) {
         internal: /^static\b/.test(m[0]),
     }));
 }
-const sourceFiles = files('src').filter(f => /\.[ch]$/.test(f) && !f.endsWith('/mtpz_keys.h'));
+const sourceFiles = [...files('src'), ...files('src/hd')].filter(f => /\.[ch]$/.test(f) && !f.endsWith('/mtpz_keys.h'));
 const definitions = sourceFiles.flatMap(f => functions(f, '\\{'));
 const publicFunctions = functions('include/zune.h', ';');
 const byName = name => definitions.filter(f => f.name === name);
@@ -45,7 +45,7 @@ Run \`node tools/update-toc.mjs --check\` to detect stale references.
 Node.js is needed only to regenerate this document, not to build or use libzune.
 
 The public API is [include/zune.h](../include/zune.h). This index covers every
-ordinary C function definition in \`src/*.c\` and inline definition in \`src/*.h\`,
+ordinary C function definition in \`src/*.c\` and private definitions in \`src/*.h\` and \`src/hd/*.h\`,
 including static helpers and both platform/FFmpeg conditional branches.
 Definitions under inactive build conditions are indexed, not a promise that
 every symbol is present in every compiled library. Authentication values are
@@ -63,6 +63,9 @@ complete public signatures and their contracts.
 - [Linux testing](LINUX_TESTING.md): hardware findings and test workflow.
 - [Artist reuse](ARTIST_REUSE.md): \`zune_forge_artist\` reuses a live matching artist;
   failed inventory reads do not justify creating one, and existing duplicates are not deleted.
+- [HD artist-content C API](HD_ARTWORK_API.md): reusable native USB content API, callbacks, examples and hardening handoff.
+- [HD artwork research](HD_ARTWORK_RESEARCH.md): artist-background identity, USB tunnel evidence and experimental hardware gates.
+- [How HD artwork travels over USB](HD_ARTWORK_TRANSPORT.md): native local HTTP responder, protocol layers, image roles and current limits.
 - [Metadata probe](METADATA_PROBE.md): native/fallback tags and disc/year behavior.
 - [Video titles](VIDEO_TITLES.md): independent display titles and wire filenames.
 - [Spoken-media integration](SPOKEN_MEDIA.md): podcast APIs, identity, covers, CLI testing and audiobook limits.

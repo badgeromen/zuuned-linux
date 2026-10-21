@@ -282,26 +282,34 @@ static int parse_id3v2_frames(const uint8_t *tag_data, uint32_t tag_size,
     return count;
 }
 
-/* ---- Find MPEG sync word ---- */
+/* ---- Locate the MPEG audio ---- */
 
 /*
- * Find the first MPEG audio sync word in the buffer.
- * MPEG sync: 0xFF followed by 0xE0-0xFF (11 sync bits set).
- * Returns offset from start, or -1 if not found.
+ * An MPEG audio frame header (Layer I-III) at buf: the 11 sync bits and a
+ * valid version, layer, bitrate index and sample rate. FLAC frames and ADTS
+ * AAC (layer 00) fail; so do most metadata bytes, which is why the header is
+ * required at the exact start of the audio rather than searched for: FLAC
+ * seek-table placeholders (FF FF ..) and UTF-16 BOMs (FF FE ..) inside a FLAC
+ * file's metadata pass these checks.
  */
-static long find_mpeg_sync(const uint8_t *buf, long size)
+static int mpeg_frame_at(const uint8_t *buf, long size)
 {
-    for (long i = 0; i + 1 < size; i++) {
-        if (buf[i] == 0xFF && (buf[i + 1] & 0xE0) == 0xE0) {
-            /* Verify it's a valid MPEG frame header */
-            uint8_t version = (buf[i + 1] >> 3) & 0x03;
-            uint8_t layer   = (buf[i + 1] >> 1) & 0x03;
-            if (version != 0x01 && layer != 0x00) {
-                return i;
-            }
-        }
-    }
-    return -1;
+    if (size < 4 || buf[0] != 0xFF || (buf[1] & 0xE0) != 0xE0) return 0;
+    uint8_t version = (buf[1] >> 3) & 0x03;
+    uint8_t layer   = (buf[1] >> 1) & 0x03;
+    uint8_t bitrate = buf[2] >> 4;
+    uint8_t rate    = (buf[2] >> 2) & 0x03;
+    return version != 0x01 && layer != 0x00 && bitrate != 0x0F && rate != 0x03;
+}
+
+/* Bytes taken by an ID3v2 tag at buf (header, data, footer), 0 if there is
+ * none, -1 if it claims more than the file holds. */
+static long id3v2_tag_bytes(const uint8_t *buf, long size)
+{
+    if (size < ID3V2_HEADER_SIZE || buf[0] != 'I' || buf[1] != 'D' || buf[2] != '3') return 0;
+    long bytes = ID3V2_HEADER_SIZE + (long)decode_syncsafe(buf + 6);
+    if (buf[5] & 0x10) bytes += ID3V2_HEADER_SIZE;     /* footer */
+    return bytes <= size ? bytes : -1;
 }
 
 /* ---- Write ID3v2.3 tag ---- */
@@ -555,29 +563,28 @@ static char *retag_core(const char *mp3_path, const char *album_artist,
     }
     if (disc[0]) override_text_frame(frames, &frame_count, MAX_FRAMES, "TPOS", disc);
 
-    /* Find audio data start */
-    long audio_start;
-    if (tag_total_size > 0) {
-        audio_start = (long)tag_total_size;
-    } else {
-        audio_start = 0;
-    }
-
-    /* Find MPEG sync to validate audio start */
-    long sync_pos = find_mpeg_sync(file_data + audio_start, file_size - audio_start);
-    if (sync_pos < 0) {
-        /* Try searching from the beginning */
-        sync_pos = find_mpeg_sync(file_data, file_size);
-        if (sync_pos >= 0) {
-            audio_start = sync_pos;
-        } else {
-            /* No MPEG sync found — not a valid MP3 */
-            for (int i = 0; i < frame_count; i++) free(frames[i].data);
-            free(file_data);
-            return NULL;
+    /* The audio starts after every ID3v2 tag (the frames above come from the
+     * first; stacked ones are dropped) and any zero padding, and must begin
+     * with an MPEG frame right there. Anything else (FLAC, AAC, WMA behind an
+     * ID3 tag) is refused and the input is left as it is: copying from a
+     * frame sync found further on would drop the bytes before it. */
+    long audio_start = 0;
+    for (int tags = 0; tags < 8; tags++) {
+        long bytes = id3v2_tag_bytes(file_data + audio_start, file_size - audio_start);
+        if (bytes <= 0) {
+            if (bytes == 0) break;
+            audio_start = -1;
+            break;
         }
-    } else {
-        audio_start += sync_pos;
+        audio_start += bytes;
+    }
+    if (audio_start > 0)
+        while (audio_start < file_size && file_data[audio_start] == 0)
+            audio_start++;
+    if (audio_start < 0 || !mpeg_frame_at(file_data + audio_start, file_size - audio_start)) {
+        for (int i = 0; i < frame_count; i++) free(frames[i].data);
+        free(file_data);
+        return NULL;
     }
 
     /* Calculate audio data size (exclude trailing ID3v1 if present) */
@@ -600,13 +607,21 @@ static char *retag_core(const char *mp3_path, const char *album_artist,
     if (out_path_override) {
         snprintf(output_path, sizeof(output_path), "%s", out_path_override);
     } else {
+        /* Unique within the process, like the transcode outputs. */
+        static unsigned sequence;
         const char *base = strrchr(mp3_path, '/');
         base = base ? base + 1 : mp3_path;
         const char *dot = strrchr(base, '.');
         size_t base_len = dot ? (size_t)(dot - base) : strlen(base);
-        snprintf(output_path, sizeof(output_path),
-                 "/tmp/zuuned_retag_%.*s_%d.mp3",
-                 (int)base_len, base, (int)getpid());
+        if (base_len > 160) {
+            base_len = 160;
+            while (base_len > 0 && ((unsigned char)base[base_len] & 0xC0) == 0x80) base_len--;
+        }
+        const char *dir = getenv("TMPDIR");
+        if (!dir || dir[0] != '/') dir = "/tmp";
+        snprintf(output_path, sizeof(output_path), "%s/zuuned_retag_%.*s_%d_%u.mp3", dir,
+                 (int)base_len, base, (int)getpid(),
+                 __atomic_add_fetch(&sequence, 1, __ATOMIC_RELAXED));
     }
 
     /* Write output file */

@@ -50,7 +50,7 @@ Offset  Type      Description
 0x0C    ...       Payload (totalSize - 12 bytes)
 ```
 
-Read in 64KB chunks. After payload is complete, drain residual data with a 512-byte read (100ms timeout, errors expected and ignored).
+Read in 64KB chunks. After the payload, read the device's 12-byte OK response: skip zero-length packets (sent when the payload ends on a 512-byte boundary) and allow up to a second (`src/zmdb_io.c`). The earlier single 100 ms drain could leave the response unread, which desyncs the next PTP transaction (Draco, 2026-10-19).
 
 ### Object ID
 

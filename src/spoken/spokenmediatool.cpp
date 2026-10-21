@@ -17,7 +17,9 @@ int main(int argc, char **argv)
     if (args.size() == 4 && args[1] == u"rss") {
         QFile file(args[2]);
         if (!file.open(QIODevice::ReadOnly) || file.size() > Podcasts::MaxFeedBytes) {
-            fprintf(stderr, "Cannot read RSS file within 8 MiB limit\n"); return 1;
+            fprintf(stderr, "Cannot read RSS file within %lld MiB limit\n",
+                    static_cast<long long>(Podcasts::MaxFeedBytes / (1024 * 1024)));
+            return 1;
         }
         PodcastFeed feed;
         if (!Podcasts::parseRss(file.read(Podcasts::MaxFeedBytes + 1), QUrl(args[3]), &feed, &error)) {

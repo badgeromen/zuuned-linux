@@ -1,5 +1,50 @@
 # ZuunedLinux Port Plan
 
+**2026-10-19 HD artwork integration:** the user accepted visible biography after
+the manual deletion/restart experiment; background, gallery and thumbnail have
+separate transport evidence. The private branch now adds a public libzune C API,
+shared native USB catalog transport, standalone example and Zuuned artist
+Customize/Sync integration. Local immutable artwork sets preserve portraits and
+files; delivery results distinguish complete, partial, conflict and unsafe
+sessions. Software tests cover persistence, staged Apply and worker policies.
+The new app's track-before-artist sync order still needs a hardware test, and
+existing-artist cache refresh remains limited. See
+[HD_NOW_PLAYING_ART.md](HD_NOW_PLAYING_ART.md) for the implementation boundary.
+
+**2026-10-18 title-font choice:** original Zuuned Sans joins Permanent Marker and
+Specimen Alien in onboarding and Appearance settings, preserving the default and
+saved choices. The real TTF passes coverage/shaping checks for 350 declared
+characters, settings persistence and production font-selection checks. Native
+app build passed; visual acceptance of the new face remains with the user.
+See [font source and coverage](../tools/font-studio/variants/zuuned-sans/README.md).
+
+**2026-10-17 HD artwork workstream:** the user activated HD Now Playing artist
+backgrounds after the spoken-media release. Private `feature/hd-now-playing-art`
+branches preserve the released baseline. Phase 1 is read-only protocol/identity
+investigation. The October 18 read-only HD probe and capture audit passed; phase 2
+has passed bidirectional native PPP/IP, DNS/HTTP and orderly tunnel closure.
+A backed-up in-place artist DA97 experiment reached ZMDB with existing track/
+album links intact, then was restored and verified. No catalog/image request
+arrived during the bounded tests. Artwork fetch triggering, image display,
+caching and app integration remain unproven.
+The native one-artist XML/JPEG responder now passes 961 checks. Full reference
+initialization was accepted on hardware; six minutes of observation still
+produced no DNS/HTTP request. The temporary artist binding was restored and
+verified. A later network-ready in-place update was also accepted; the user
+ended observation early to pursue direct push, and automatic restoration was
+verified. Offline HD firmware contains `nowPlayingBg.jpg`; cache writer/USB
+accessibility remains an offline lead. No direct background write is proven.
+The subsequent fresh-artist/fully tagged track experiment delivered two JPEGs
+over USB, including one acknowledged device background. This passes image
+retrieval for the isolated artist; screen rendering, persistence and safe
+existing-artist retrofit are still separate gates. The native responder required
+no external web server. See the library research for the exact cleanup boundary.
+See [HD_NOW_PLAYING_ART.md](HD_NOW_PLAYING_ART.md) for phases and hardware gates.
+The later full-album gate retained 16 Disturbed tracks with exact audio/cover
+readback, ordered references and confirmed reindex handoff. Three distinct
+artist JPEGs were acknowledged over USB. Visible rotation and cache persistence
+remain physical acceptance gates; no automatic app artwork action is shipped.
+
 **2026-10-13 Draco podcast correction:** second-generation readback, inventory
 and exact source matching now cover the observed native podcast schema. Draco
 audiobook inventory/lookup/send also pass an isolated two-part audio/art roundtrip.

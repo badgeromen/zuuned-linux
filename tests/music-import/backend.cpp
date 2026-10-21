@@ -19,6 +19,10 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 
+// libzune's util.c is linked on its own here. Its public calls clear the
+// thread-local error on entry; that buffer lives in device.c, not linked.
+extern "C" void zune_clear_error(void) {}
+
 static bool sql(sqlite3 *db, const char *query) {
     char *error = nullptr;
     const bool ok = sqlite3_exec(db, query, nullptr, nullptr, &error) == SQLITE_OK;

@@ -1,6 +1,7 @@
 // Exercise the real asynchronous Apply boundary against disposable local data.
 // run-backend.mjs supplies isolated XDG roots before this process starts.
 #include "LibraryService.h"
+#include "artwork/HdArtistArtStore.h"
 #include "DevicePlaylistState.h"
 #include "library/AlbumArtService.h"
 #include "library/ArtistImageService.h"
@@ -444,6 +445,23 @@ int main(int argc, char **argv) {
           {{"identityMode", "match"}, {"musicIdentity", QVariantMap{{"mbid", "invalid"}}}}, false, [&] {
         return row().album == "Matched album";
     }, "invalid music match fails before changing the library");
+    const auto hdBeforePortrait = service.customizeContext("artist", {{"name", "Matched owner"}});
+    const QVariantMap hdDraft{{"expectedRevision", ""}, {"background", selectedPath},
+        {"gallery", QVariantList{selectedPath}}, {"biography", "A fixture biography."}};
+    apply({{"kind", "artist"}, {"name", "Matched owner"}},
+          {{"identityMode", "keep"}, {"hdArtChanged", true}, {"hdArtistArt", hdDraft}}, true, [&] {
+        QString error;
+        const auto saved = service.customizeContext("artist", {{"name", "Matched owner"}});
+        const auto hd = service.hdArtistArtwork("Matched owner");
+        return !HdArtistArtStore::readSnapshot(hd, &error).isEmpty()
+            && saved.value("customArt") == hdBeforePortrait.value("customArt")
+            && row().albumartist == "Matched owner";
+    }, "HD artist Apply saves prepared originals and roles without changing desktop artwork or names");
+    const auto savedHd = service.hdArtistArtwork("Matched owner");
+    apply({{"kind", "artist"}, {"name", "Matched owner"}},
+          {{"identityMode", "keep"}, {"hdArtChanged", true}, {"hdArtistArt", hdDraft}}, false, [&] {
+        return service.hdArtistArtwork("Matched owner") == savedHd;
+    }, "stale HD Apply preserves the complete saved revision");
     const QString artistMbid = "22222222-2222-4222-8222-222222222222";
     MusicIdentityClient artistFixture([](const QUrl &, bool) {
         ArtworkHttp::Response response; response.status = 200;
@@ -458,6 +476,8 @@ int main(int argc, char **argv) {
         const auto album = service.customizeContext("album", {{"artist", "The composer"}, {"album", "Matched album"}});
         return row().albumartist == "The composer"
             && saved.value("musicIdentity").toMap().value("mbid") == artistMbid
+            && service.hdArtistArtwork("The composer") == savedHd
+            && service.hdArtistArtwork("Matched owner").isEmpty()
             && album.value("musicIdentity").toMap().value("mbid") == albumMbid
             && album.value("customArt").toBool();
     }, "artist matching preserves album identities and custom covers under their new owner");

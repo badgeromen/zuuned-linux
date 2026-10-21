@@ -17,13 +17,17 @@
  */
 
 #include "ptp.h"
+#include "bytes.h"
+#include "wiretap.h"
 
 #include <time.h>   /* clock_gettime — wire-throughput telemetry */
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 #include <stdint.h>
+#include <unistd.h>
 
 /* ===================================================================
  * Constants
@@ -42,39 +46,9 @@
 #define PTP_USB_TIMEOUT_MS       10000
 #define PTP_USB_DATA_TIMEOUT_MS  60000
 
-/* ===================================================================
- * Little-Endian Packing/Unpacking Helpers
- *
- * PTP over USB always uses little-endian byte order. These functions
- * handle the conversion regardless of host architecture.
- * =================================================================== */
+/* PTP over USB always uses little-endian byte order; the packing helpers
+ * (zune_le16, zune_put_le32, ...) come from bytes.h. */
 
-static void le16_pack(uint8_t *buf, uint16_t val)
-{
-    buf[0] = (uint8_t)(val & 0xFF);
-    buf[1] = (uint8_t)((val >> 8) & 0xFF);
-}
-
-static void le32_pack(uint8_t *buf, uint32_t val)
-{
-    buf[0] = (uint8_t)(val & 0xFF);
-    buf[1] = (uint8_t)((val >> 8) & 0xFF);
-    buf[2] = (uint8_t)((val >> 16) & 0xFF);
-    buf[3] = (uint8_t)((val >> 24) & 0xFF);
-}
-
-static uint16_t le16_unpack(const uint8_t *buf)
-{
-    return (uint16_t)buf[0] | ((uint16_t)buf[1] << 8);
-}
-
-static uint32_t le32_unpack(const uint8_t *buf)
-{
-    return (uint32_t)buf[0]
-        | ((uint32_t)buf[1] << 8)
-        | ((uint32_t)buf[2] << 16)
-        | ((uint32_t)buf[3] << 24);
-}
 
 /* ===================================================================
  * USB I/O Helpers
@@ -95,11 +69,11 @@ static int ptp_usb_write_timeout(ptp_session_t *s, const uint8_t *data,
         s->usb, s->usb->bulk_out_ep, data, len, &actual, timeout_ms);
 
     if (ret != ZUNE_USB_OK) {
-        fprintf(stderr, "[ptp] bulk_write failed: requested %u bytes\n", len);
+        ZLOG(ZUNE_CHATTER_SCREAM, "ptp", "bulk_write failed: requested %u bytes", len);
         return -1;
     }
     if (actual != len) {
-        fprintf(stderr, "[ptp] bulk_write short: wrote %u of %u bytes\n",
+        ZLOG(ZUNE_CHATTER_SCREAM, "ptp", "bulk_write short: wrote %u of %u bytes",
                 actual, len);
         return -1;
     }
@@ -127,7 +101,7 @@ static int ptp_usb_read_timeout(ptp_session_t *s, uint8_t *data, uint32_t len,
         s->usb, s->usb->bulk_in_ep, data, len, &actual, timeout_ms);
 
     if (ret != ZUNE_USB_OK) {
-        fprintf(stderr, "[ptp] bulk_read failed: requested %u bytes (timeout %u ms)\n",
+        ZLOG(ZUNE_CHATTER_SCREAM, "ptp", "bulk_read failed: requested %u bytes (timeout %u ms)",
                 len, timeout_ms);
         if (actual_out) *actual_out = 0;
         return -1;
@@ -140,6 +114,65 @@ static int ptp_usb_read(ptp_session_t *s, uint8_t *data, uint32_t len,
                          uint32_t *actual_out)
 {
     return ptp_usb_read_timeout(s, data, len, actual_out, PTP_USB_TIMEOUT_MS);
+}
+
+/* ---- Transaction cancellation ---- */
+
+/* The host stopped a data phase partway (zune_abort). The device still waits
+ * for, or still sends, the rest of the declared length, and would take the
+ * next command as payload: the session wedges until a USB reset. Cancel the
+ * transaction the PTP-over-USB way: Cancel Request (0x64; code 0x4001 and the
+ * transaction ID), then Get Device Status (0x67) until the device is ready,
+ * clearing any stalled endpoints it lists, then discard data it had already
+ * queued. A Zune HD reports busy for about 0.4 s, then OK, and drops the
+ * partly sent object. Records TransactionCancelled on success. */
+static int ptp_cancel_transaction(ptp_session_t *s)
+{
+    const zune_usb_backend_t *be = s->usb->backend;
+    s->last_response = PTP_ERROR_IO;
+    if (!be->class_request) {
+        ZLOG(ZUNE_CHATTER_SHOUT, "ptp", "cannot cancel transaction %u on this platform",
+             s->transaction_id);
+        return -1;
+    }
+    uint8_t cancel[6] = { 0x01, 0x40 };           /* CancellationCode 0x4001 */
+    zune_put_le32(cancel + 2, s->transaction_id);
+    if (be->class_request(s->usb, 0x21, 0x64, cancel, sizeof(cancel), 2000) < 0) {
+        ZLOG(ZUNE_CHATTER_SHOUT, "ptp", "cancel request for transaction %u failed",
+             s->transaction_id);
+        return -1;
+    }
+    /* At most 100 polls 100 ms apart, and at most 10 s in all: a status
+     * request can itself wait 1 s for an answer, so the count alone would
+     * allow almost two minutes. */
+    struct timespec start, now;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    for (int poll = 0; poll < 100; poll++) {
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        if ((now.tv_sec - start.tv_sec) * 1000 + (now.tv_nsec - start.tv_nsec) / 1000000 >= 10000)
+            break;
+        uint8_t status[32] = { 0 };
+        int n = be->class_request(s->usb, 0xA1, 0x67, status, sizeof(status), 1000);
+        if (n >= 4) {
+            uint32_t length = zune_le16(status);
+            for (uint32_t k = 4; k + 4 <= length && k + 4 <= (uint32_t)n; k += 4)
+                be->clear_halt(s->usb, status[k]);
+            if (zune_le16(status + 2) == PTP_RC_OK) {
+                uint8_t sink[16384];
+                uint32_t got = 0;
+                for (int reads = 0; reads < 256; reads++)
+                    if (be->bulk_read(s->usb, s->usb->bulk_in_ep, sink, sizeof(sink), &got, 200) != 0)
+                        break;
+                s->last_response = PTP_RC_TransactionCancelled;
+                ZLOG(ZUNE_CHATTER_TALK, "ptp", "transaction %u cancelled", s->transaction_id);
+                return 0;
+            }
+        }
+        usleep(100000);
+    }
+    ZLOG(ZUNE_CHATTER_SHOUT, "ptp", "device still busy after cancelling transaction %u",
+         s->transaction_id);
+    return -1;
 }
 
 /* ===================================================================
@@ -166,7 +199,7 @@ static int ptp_send_command(ptp_session_t *s, uint16_t opcode,
 
     if (nparams < 0) nparams = 0;
     if (nparams > PTP_MAX_PARAMS) {
-        fprintf(stderr, "[ptp] too many params: %d (max %d)\n",
+        ZLOG(ZUNE_CHATTER_SCREAM, "ptp", "too many params: %d (max %d)",
                 nparams, PTP_MAX_PARAMS);
         return -1;
     }
@@ -174,22 +207,24 @@ static int ptp_send_command(ptp_session_t *s, uint16_t opcode,
     length = PTP_CONTAINER_HDR_SIZE + (uint32_t)(nparams * 4);
 
     /* Pack header */
-    le32_pack(buf + 0, length);
-    le16_pack(buf + 4, PTP_CT_COMMAND);
-    le16_pack(buf + 6, opcode);
-    le32_pack(buf + 8, s->transaction_id);
+    zune_put_le32(buf + 0, length);
+    zune_put_le16(buf + 4, PTP_CT_COMMAND);
+    zune_put_le16(buf + 6, opcode);
+    zune_put_le32(buf + 8, s->transaction_id);
 
     /* Pack parameters */
     for (int i = 0; i < nparams; i++) {
-        le32_pack(buf + PTP_CONTAINER_HDR_SIZE + i * 4,
+        zune_put_le32(buf + PTP_CONTAINER_HDR_SIZE + i * 4,
                   params ? params[i] : 0);
     }
 
     /* Debug: dump command container — disabled (very noisy). Re-enable for protocol debugging. */
 #if 0
-    fprintf(stderr, "[ptp] CMD: ");
-    for (uint32_t i = 0; i < length; i++) fprintf(stderr, "%02x", buf[i]);
-    fprintf(stderr, " (%u bytes)\n", length);
+    {
+        char hex[2 * sizeof(buf) + 1];
+        for (uint32_t i = 0; i < length; i++) snprintf(hex + 2 * i, 3, "%02x", buf[i]);
+        ZLOG(ZUNE_CHATTER_WHISPER, "ptp", "CMD: %s (%u bytes)", hex, length);
+    }
 #endif
 
     return ptp_usb_write(s, buf, length);
@@ -198,6 +233,33 @@ static int ptp_send_command(ptp_session_t *s, uint16_t opcode,
 /* ===================================================================
  * Data Phase — Send data to device
  * =================================================================== */
+
+/* Payload of a send data phase: a buffer, or a file streamed chunk by chunk
+ * so that a multi-GiB upload never needs a file-sized allocation. */
+typedef struct {
+    const uint8_t *data;    /* buffer source, or NULL for a file */
+    int fd;                 /* file source when data is NULL (-1: none) */
+    uint8_t *chunk;         /* CONTEXT_BLOCK_SIZE staging buffer for file reads */
+} ptp_source_t;
+
+/* Payload bytes [offset, offset + len), or NULL if they cannot be read. */
+static const uint8_t *ptp_source_bytes(ptp_source_t *src, uint64_t offset, uint32_t len)
+{
+    if (src->data) return src->data + offset;
+    if (src->fd < 0 || !src->chunk || len > CONTEXT_BLOCK_SIZE) return NULL;
+    uint32_t done = 0;
+    while (done < len) {
+        ssize_t n = pread(src->fd, src->chunk + done, len - done, (off_t)(offset + done));
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) {
+            ZLOG(ZUNE_CHATTER_SCREAM, "ptp", "send_data: cannot read the payload at offset %llu (%s)",
+                 (unsigned long long)(offset + done), n < 0 ? strerror(errno) : "file ended early");
+            return NULL;
+        }
+        done += (uint32_t)n;
+    }
+    return src->chunk;
+}
 
 /*
  * ptp_send_data — Send a data container to the device.
@@ -213,7 +275,7 @@ static int ptp_send_command(ptp_session_t *s, uint16_t opcode,
  * Returns 0 on success, -1 on failure.
  */
 static int ptp_send_data(ptp_session_t *s, uint16_t opcode,
-                          const uint8_t *data, uint64_t data_len)
+                          ptp_source_t *src, uint64_t data_len)
 {
     uint8_t *first_chunk;
     uint64_t total_container_len = PTP_CONTAINER_HDR_SIZE + data_len;
@@ -230,15 +292,18 @@ static int ptp_send_data(ptp_session_t *s, uint16_t opcode,
     if (s->split_header_data) {
         /* Send header only (12 bytes) */
         uint8_t hdr[PTP_CONTAINER_HDR_SIZE];
-        le32_pack(hdr + 0, (uint32_t)total_container_len);
-        le16_pack(hdr + 4, PTP_CT_DATA);
-        le16_pack(hdr + 6, opcode);
-        le32_pack(hdr + 8, s->transaction_id);
+        zune_put_le32(hdr + 0, (uint32_t)total_container_len);
+        zune_put_le16(hdr + 4, PTP_CT_DATA);
+        zune_put_le16(hdr + 6, opcode);
+        zune_put_le32(hdr + 8, s->transaction_id);
 
 #if 0
-        fprintf(stderr, "[ptp] DATA hdr (split): ");
-        for (int i = 0; i < PTP_CONTAINER_HDR_SIZE; i++) fprintf(stderr, "%02x", hdr[i]);
-        fprintf(stderr, " (total %llu bytes)\n", (unsigned long long)total_container_len);
+        {
+            char hex[2 * PTP_CONTAINER_HDR_SIZE + 1];
+            for (int i = 0; i < PTP_CONTAINER_HDR_SIZE; i++) snprintf(hex + 2 * i, 3, "%02x", hdr[i]);
+            ZLOG(ZUNE_CHATTER_WHISPER, "ptp", "DATA hdr (split): %s (total %llu bytes)",
+                 hex, (unsigned long long)total_container_len);
+        }
 #endif
 
         if (ptp_usb_write(s, hdr, PTP_CONTAINER_HDR_SIZE) < 0)
@@ -255,9 +320,10 @@ static int ptp_send_data(ptp_session_t *s, uint16_t opcode,
         clock_gettime(CLOCK_MONOTONIC, &xfer_t0);
 
         while (remaining > 0) {
-            if (s->abort_flag && *s->abort_flag) {
-                fprintf(stderr, "[ptp] send_data: aborted at offset %llu of %llu\n",
+            if (s->abort_flag && ZUNE_FLAG_GET(*s->abort_flag)) {
+                ZLOG(ZUNE_CHATTER_TALK, "ptp", "send_data: aborted at offset %llu of %llu",
                         (unsigned long long)offset, (unsigned long long)data_len);
+                ptp_cancel_transaction(s);
                 return -1;
             }
             uint32_t chunk = CONTEXT_BLOCK_SIZE;
@@ -267,8 +333,13 @@ static int ptp_send_data(ptp_session_t *s, uint16_t opcode,
             if (maxpkt > 0 && chunk > maxpkt && chunk % maxpkt != 0)
                 chunk -= chunk % maxpkt;
 
-            if (ptp_usb_write_timeout(s, data + offset, chunk, PTP_USB_DATA_TIMEOUT_MS) < 0)
+            const uint8_t *bytes = ptp_source_bytes(src, offset, chunk);
+            /* A data phase the host cannot finish leaves the device waiting
+             * for the rest: cancel it, as for an abort. */
+            if (!bytes || ptp_usb_write_timeout(s, bytes, chunk, PTP_USB_DATA_TIMEOUT_MS) < 0) {
+                ptp_cancel_transaction(s);
                 return -1;
+            }
             offset += chunk;
             remaining -= chunk;
         }
@@ -279,7 +350,7 @@ static int ptp_send_data(ptp_session_t *s, uint16_t opcode,
             double secs = (double)(t1.tv_sec - xfer_t0.tv_sec)
                 + (double)(t1.tv_nsec - xfer_t0.tv_nsec) / 1e9;
             if (secs > 0.001)
-                fprintf(stderr, "[ptp] sent %llu MB in %.1fs (%.1f MB/s)\n",
+                ZLOG(ZUNE_CHATTER_TALK, "ptp", "sent %llu MB in %.1fs (%.1f MB/s)",
                         (unsigned long long)(data_len / 1000000), secs,
                         (double)data_len / 1e6 / secs);
         }
@@ -322,27 +393,36 @@ static int ptp_send_data(ptp_session_t *s, uint16_t opcode,
 
     first_chunk = (uint8_t *)malloc(first_write_len);
     if (!first_chunk) {
-        fprintf(stderr, "[ptp] malloc failed for data container\n");
+        ZLOG(ZUNE_CHATTER_SCREAM, "ptp", "malloc failed for data container");
         return -1;
     }
 
     /* Pack data container header */
-    le32_pack(first_chunk + 0, (uint32_t)total_container_len);
-    le16_pack(first_chunk + 4, PTP_CT_DATA);
-    le16_pack(first_chunk + 6, opcode);
-    le32_pack(first_chunk + 8, s->transaction_id);
+    zune_put_le32(first_chunk + 0, (uint32_t)total_container_len);
+    zune_put_le16(first_chunk + 4, PTP_CT_DATA);
+    zune_put_le16(first_chunk + 6, opcode);
+    zune_put_le32(first_chunk + 8, s->transaction_id);
 
     /* Copy as much data as fits in the first chunk */
     uint32_t first_data_len = first_write_len - PTP_CONTAINER_HDR_SIZE;
-    if (first_data_len > 0 && data)
-        memcpy(first_chunk + PTP_CONTAINER_HDR_SIZE, data, first_data_len);
+    if (first_data_len > 0) {
+        const uint8_t *bytes = ptp_source_bytes(src, 0, first_data_len);
+        if (!bytes) {
+            free(first_chunk);
+            return -1;
+        }
+        memcpy(first_chunk + PTP_CONTAINER_HDR_SIZE, bytes, first_data_len);
+    }
 
     /* Debug: dump data container header — disabled (very noisy). */
 #if 0
-    fprintf(stderr, "[ptp] DATA hdr: ");
-    for (uint32_t i = 0; i < (PTP_CONTAINER_HDR_SIZE < first_write_len ? PTP_CONTAINER_HDR_SIZE : first_write_len); i++)
-        fprintf(stderr, "%02x", first_chunk[i]);
-    fprintf(stderr, " (total %llu bytes)\n", (unsigned long long)total_container_len);
+    {
+        char hex[2 * PTP_CONTAINER_HDR_SIZE + 1] = "";
+        for (uint32_t i = 0; i < (PTP_CONTAINER_HDR_SIZE < first_write_len ? PTP_CONTAINER_HDR_SIZE : first_write_len); i++)
+            snprintf(hex + 2 * i, 3, "%02x", first_chunk[i]);
+        ZLOG(ZUNE_CHATTER_WHISPER, "ptp", "DATA hdr: %s (total %llu bytes)",
+             hex, (unsigned long long)total_container_len);
+    }
 #endif
 
     /* Send first chunk */
@@ -357,9 +437,10 @@ static int ptp_send_data(ptp_session_t *s, uint16_t opcode,
     bytes_remaining = data_len - first_data_len;
 
     while (bytes_remaining > 0) {
-        if (s->abort_flag && *s->abort_flag) {
-            fprintf(stderr, "[ptp] send_data: aborted at offset %llu of %llu\n",
+        if (s->abort_flag && ZUNE_FLAG_GET(*s->abort_flag)) {
+            ZLOG(ZUNE_CHATTER_TALK, "ptp", "send_data: aborted at offset %llu of %llu",
                     (unsigned long long)data_offset, (unsigned long long)data_len);
+            ptp_cancel_transaction(s);
             return -1;
         }
         uint32_t chunk_len = CONTEXT_BLOCK_SIZE;
@@ -372,8 +453,11 @@ static int ptp_send_data(ptp_session_t *s, uint16_t opcode,
             }
         }
 
-        if (ptp_usb_write_timeout(s, data + data_offset, chunk_len, PTP_USB_DATA_TIMEOUT_MS) < 0)
+        const uint8_t *bytes = ptp_source_bytes(src, data_offset, chunk_len);
+        if (!bytes || ptp_usb_write_timeout(s, bytes, chunk_len, PTP_USB_DATA_TIMEOUT_MS) < 0) {
+            ptp_cancel_transaction(s);
             return -1;
+        }
 
         data_offset += chunk_len;
         bytes_remaining -= chunk_len;
@@ -409,7 +493,8 @@ static int ptp_send_data(ptp_session_t *s, uint16_t opcode,
  * Returns 0 on success, -1 on failure.
  */
 static int ptp_recv_data(ptp_session_t *s, uint8_t **out_data,
-                          uint32_t *out_len)
+                          uint32_t *out_len, int optional, uint16_t opcode,
+                          uint32_t *resp_params, int *resp_nparams)
 {
     uint8_t *first_buf = NULL;
     uint32_t first_actual = 0;
@@ -433,30 +518,63 @@ static int ptp_recv_data(ptp_session_t *s, uint8_t **out_data,
     }
 
     if (first_actual < PTP_CONTAINER_HDR_SIZE) {
-        fprintf(stderr, "[ptp] recv_data: short read (%u bytes, need %d)\n",
+        ZLOG(ZUNE_CHATTER_SCREAM, "ptp", "recv_data: short read (%u bytes, need %d)",
                 first_actual, PTP_CONTAINER_HDR_SIZE);
         free(first_buf);
         return -1;
     }
 
     /* Parse data container header */
-    container_len  = le32_unpack(first_buf + 0);
-    container_type = le16_unpack(first_buf + 4);
+    container_len  = zune_le32(first_buf + 0);
+    container_type = zune_le16(first_buf + 4);
 
     /* Auto-detect split header/data mode (Zune/WMP compatibility).
      * If the device sends the 12-byte header in a separate USB transfer
      * from the payload, we must mirror this behavior when sending data. */
-    if (first_actual == PTP_CONTAINER_HDR_SIZE && container_len > PTP_CONTAINER_HDR_SIZE) {
+    if (!optional && first_actual == PTP_CONTAINER_HDR_SIZE && container_len > PTP_CONTAINER_HDR_SIZE) {
         if (!s->split_header_data) {
-            fprintf(stderr, "[ptp] detected split header/data mode (Zune/WMP)\n");
+            ZLOG(ZUNE_CHATTER_WHISPER, "ptp", "detected split header/data mode (Zune/WMP)");
             s->split_header_data = 1;
         }
     }
 
+    /* Optional polling is a separate, bounded receive contract. Do not let
+     * an idle response be mistaken for failed DATA, or accept stale traffic. */
+    if (optional && (container_len < PTP_CONTAINER_HDR_SIZE ||
+        first_actual > container_len ||
+        zune_le32(first_buf + 8) != s->transaction_id ||
+        (container_type == PTP_CT_DATA &&
+         (zune_le16(first_buf + 6) != opcode || container_len > 65536u + 12u)))) {
+        free(first_buf); s->last_response = PTP_ERROR_IO; return -1;
+    }
     if (container_type == PTP_CT_RESPONSE) {
-        uint16_t resp_code = le16_unpack(first_buf + 6);
-        fprintf(stderr, "[ptp] recv_data: got RESPONSE (0x%04X) instead of DATA "
-                "(operation may not be supported)\n", resp_code);
+        uint16_t resp_code = zune_le16(first_buf + 6);
+        if (optional) {
+            if (container_len > 12u + PTP_MAX_PARAMS * 4u ||
+                (container_len - 12u) % 4u) {
+                free(first_buf); s->last_response = PTP_ERROR_IO; return -1;
+            }
+            if (first_actual == 12u && container_len > 12u) {
+                uint32_t actual = 0;
+                if (ptp_usb_read(s, first_buf + 12u, container_len - 12u, &actual) < 0 ||
+                    actual != container_len - 12u) {
+                    free(first_buf); s->last_response = PTP_ERROR_IO; return -1;
+                }
+                first_actual += actual;
+            }
+            if (first_actual != container_len) {
+                free(first_buf); s->last_response = PTP_ERROR_IO; return -1;
+            }
+            int count = (int)(container_len - 12u) / 4;
+            if (resp_params) for (int i = 0; i < count; ++i)
+                resp_params[i] = zune_le32(first_buf + 12u + 4u*i);
+            if (resp_nparams) *resp_nparams = count;
+            s->last_response = resp_code;
+            free(first_buf);
+            return -2; /* Complete response consumed, including parameters. */
+        }
+        ZLOG(ZUNE_CHATTER_SHOUT, "ptp", "recv_data: got RESPONSE (0x%04X) instead of DATA "
+                "(operation may not be supported)", resp_code);
         s->last_response = resp_code;
         if (out_data) *out_data = NULL;
         if (out_len) *out_len = 0;
@@ -465,21 +583,26 @@ static int ptp_recv_data(ptp_session_t *s, uint8_t **out_data,
     }
 
     if (container_type != PTP_CT_DATA) {
-        fprintf(stderr, "[ptp] recv_data: expected DATA container (0x%04X), "
-                "got type 0x%04X code 0x%04X\n",
-                PTP_CT_DATA, container_type, le16_unpack(first_buf + 6));
+        ZLOG(ZUNE_CHATTER_SCREAM, "ptp", "recv_data: expected DATA container (0x%04X), "
+                "got type 0x%04X code 0x%04X",
+                PTP_CT_DATA, container_type, zune_le16(first_buf + 6));
         free(first_buf);
         return -1;
     }
 
     if (container_len < PTP_CONTAINER_HDR_SIZE) {
-        fprintf(stderr, "[ptp] recv_data: invalid container length %u\n",
+        ZLOG(ZUNE_CHATTER_SCREAM, "ptp", "recv_data: invalid container length %u",
                 container_len);
         free(first_buf);
         return -1;
     }
 
     /* Total payload = container length minus header */
+    /* Research polling must validate type, opcode, transaction and size before
+     * letting a DATA header change the session's outbound framing mode. */
+    if (optional && first_actual == PTP_CONTAINER_HDR_SIZE &&
+        container_len > PTP_CONTAINER_HDR_SIZE)
+        s->split_header_data = 1;
     data_total = container_len - PTP_CONTAINER_HDR_SIZE;
 
     if (data_total == 0) {
@@ -490,7 +613,7 @@ static int ptp_recv_data(ptp_session_t *s, uint8_t **out_data,
     /* Allocate receive buffer for the full payload */
     payload = (uint8_t *)malloc(data_total);
     if (!payload) {
-        fprintf(stderr, "[ptp] malloc failed for %u bytes recv buffer\n",
+        ZLOG(ZUNE_CHATTER_SCREAM, "ptp", "malloc failed for %u bytes recv buffer",
                 data_total);
         free(first_buf);
         return -1;
@@ -508,10 +631,11 @@ static int ptp_recv_data(ptp_session_t *s, uint8_t **out_data,
 
     /* Read remaining data in chunks */
     while (payload_received < data_total) {
-        if (s->abort_flag && *s->abort_flag) {
-            fprintf(stderr, "[ptp] recv_data: aborted at offset %u of %u\n",
+        if (s->abort_flag && ZUNE_FLAG_GET(*s->abort_flag)) {
+            ZLOG(ZUNE_CHATTER_TALK, "ptp", "recv_data: aborted at offset %u of %u",
                     payload_received, data_total);
             free(payload);
+            ptp_cancel_transaction(s);
             return -1;
         }
         uint32_t want = data_total - payload_received;
@@ -521,12 +645,13 @@ static int ptp_recv_data(ptp_session_t *s, uint8_t **out_data,
         uint32_t actual = 0;
         if (ptp_usb_read(s, payload + payload_received, want, &actual) < 0) {
             free(payload);
+            ptp_cancel_transaction(s);     /* the device may still be sending */
             return -1;
         }
 
         if (actual == 0) {
-            fprintf(stderr, "[ptp] recv_data: zero-length read at offset %u "
-                    "(expected %u total)\n", payload_received, data_total);
+            ZLOG(ZUNE_CHATTER_SCREAM, "ptp", "recv_data: zero-length read at offset %u "
+                    "(expected %u total)", payload_received, data_total);
             free(payload);
             return -1;
         }
@@ -561,7 +686,7 @@ static int ptp_recv_data(ptp_session_t *s, uint8_t **out_data,
  */
 static int ptp_recv_response_timeout(ptp_session_t *s, uint16_t *out_code,
                                      uint32_t *out_params, int *out_nparams,
-                                     uint32_t timeout_ms)
+                                     uint32_t timeout_ms, int strict)
 {
     uint8_t buf[PTP_CONTAINER_HDR_SIZE + PTP_MAX_PARAMS * 4];
     uint32_t actual = 0;
@@ -586,8 +711,8 @@ static int ptp_recv_response_timeout(ptp_session_t *s, uint16_t *out_code,
      * pipe whenever the handle count lands on the 512-multiple
      * boundary (deterministic Pavo breach freeze, 2026-08-31). */
     if (actual == 0) {
-        fprintf(stderr,
-                "[ptp] recv_response: swallowed device ZLP, re-reading\n");
+        ZLOG(ZUNE_CHATTER_WHISPER, "ptp",
+                "recv_response: swallowed device ZLP, re-reading");
         if (ptp_usb_read_timeout(s, buf, sizeof(buf), &actual, timeout_ms) < 0) {
             if (out_code) *out_code = PTP_ERROR_IO;
             s->last_response = PTP_ERROR_IO;
@@ -597,26 +722,36 @@ static int ptp_recv_response_timeout(ptp_session_t *s, uint16_t *out_code,
 
     /* Debug: dump response bytes — disabled (very noisy). */
 #if 0
-    fprintf(stderr, "[ptp] RESP: ");
-    for (uint32_t i = 0; i < actual && i < 20; i++) fprintf(stderr, "%02x", buf[i]);
-    fprintf(stderr, " (%u bytes)\n", actual);
+    {
+        char hex[2 * 20 + 1] = "";
+        for (uint32_t i = 0; i < actual && i < 20; i++) snprintf(hex + 2 * i, 3, "%02x", buf[i]);
+        ZLOG(ZUNE_CHATTER_WHISPER, "ptp", "RESP: %s (%u bytes)", hex, actual);
+    }
 #endif
 
     if (actual < PTP_CONTAINER_HDR_SIZE) {
-        fprintf(stderr, "[ptp] recv_response: short read (%u bytes)\n", actual);
+        ZLOG(ZUNE_CHATTER_SCREAM, "ptp", "recv_response: short read (%u bytes)", actual);
         if (out_code) *out_code = PTP_ERROR_IO;
         s->last_response = PTP_ERROR_IO;
         return -1;
     }
 
-    container_len  = le32_unpack(buf + 0);
-    container_type = le16_unpack(buf + 4);
-    code           = le16_unpack(buf + 6);
+    container_len  = zune_le32(buf + 0);
+    container_type = zune_le16(buf + 4);
+    code           = zune_le16(buf + 6);
 
     if (container_type != PTP_CT_RESPONSE) {
-        fprintf(stderr, "[ptp] recv_response: expected RESPONSE container "
-                "(0x%04X), got type 0x%04X code 0x%04X\n",
+        ZLOG(ZUNE_CHATTER_SCREAM, "ptp", "recv_response: expected RESPONSE container "
+                "(0x%04X), got type 0x%04X code 0x%04X",
                 PTP_CT_RESPONSE, container_type, code);
+        if (out_code) *out_code = PTP_ERROR_IO;
+        s->last_response = PTP_ERROR_IO;
+        return -1;
+    }
+
+    if (strict && (container_len != actual || container_len < 12u ||
+        container_len > sizeof(buf) || (container_len - 12u) % 4u ||
+        zune_le32(buf + 8) != s->transaction_id)) {
         if (out_code) *out_code = PTP_ERROR_IO;
         s->last_response = PTP_ERROR_IO;
         return -1;
@@ -627,7 +762,7 @@ static int ptp_recv_response_timeout(ptp_session_t *s, uint16_t *out_code,
         int nparam = (int)(container_len - PTP_CONTAINER_HDR_SIZE) / 4;
         if (nparam > PTP_MAX_PARAMS) nparam = PTP_MAX_PARAMS;
         for (int i = 0; i < nparam; i++) {
-            out_params[i] = le32_unpack(buf + PTP_CONTAINER_HDR_SIZE + i * 4);
+            out_params[i] = zune_le32(buf + PTP_CONTAINER_HDR_SIZE + i * 4);
         }
         *out_nparams = nparam;
     }
@@ -636,7 +771,7 @@ static int ptp_recv_response_timeout(ptp_session_t *s, uint16_t *out_code,
     s->last_response = code;
 
     if (code != PTP_RC_OK) {
-        fprintf(stderr, "[ptp] response code 0x%04X for transaction %u\n",
+        ZLOG(ZUNE_CHATTER_SHOUT, "ptp", "response code 0x%04X for transaction %u",
                 code, s->transaction_id);
         return -1;
     }
@@ -648,7 +783,7 @@ static int ptp_recv_response(ptp_session_t *s, uint16_t *out_code,
                              uint32_t *out_params, int *out_nparams)
 {
     return ptp_recv_response_timeout(s, out_code, out_params, out_nparams,
-                                     PTP_USB_TIMEOUT_MS);
+                                     PTP_USB_TIMEOUT_MS, 0);
 }
 
 /* ===================================================================
@@ -694,7 +829,7 @@ int ptp_open_session(ptp_session_t *s)
 
     /* Send OpenSession command — param1 is the session ID */
     if (ptp_send_command(s, PTP_OC_OpenSession, &param, 1) < 0) {
-        fprintf(stderr, "[ptp] open_session: failed to send command\n");
+        ZLOG(ZUNE_CHATTER_SCREAM, "ptp", "open_session: failed to send command");
         return -1;
     }
 
@@ -706,12 +841,12 @@ int ptp_open_session(ptp_session_t *s)
     if (ret < 0) {
         /* SessionAlreadyOpened is acceptable — the device has a stale session */
         if (response_code == PTP_RC_SessionAlreadyOpened) {
-            fprintf(stderr, "[ptp] session already open, reusing\n");
+            ZLOG(ZUNE_CHATTER_TALK, "ptp", "session already open, reusing");
             return 0;
         }
         /* InvalidParameter (0x201D) — try closing stale session, then retry */
         if (response_code == 0x201D) {
-            fprintf(stderr, "[ptp] InvalidParameter — closing stale session and retrying\n");
+            ZLOG(ZUNE_CHATTER_SHOUT, "ptp", "InvalidParameter — closing stale session and retrying");
             s->transaction_id++;
             ptp_send_command(s, PTP_OC_CloseSession, NULL, 0);
             ptp_recv_response(s, NULL, NULL, NULL); /* ignore response */
@@ -724,11 +859,11 @@ int ptp_open_session(ptp_session_t *s)
                 return -1;
             ret = ptp_recv_response(s, &response_code, NULL, NULL);
             if (ret == 0 || response_code == PTP_RC_SessionAlreadyOpened) {
-                fprintf(stderr, "[ptp] session opened on retry\n");
+                ZLOG(ZUNE_CHATTER_TALK, "ptp", "session opened on retry");
                 return 0;
             }
         }
-        fprintf(stderr, "[ptp] open_session: failed with response 0x%04X\n",
+        ZLOG(ZUNE_CHATTER_SCREAM, "ptp", "open_session: failed with response 0x%04X",
                 response_code);
         return -1;
     }
@@ -752,13 +887,13 @@ int ptp_close_session(ptp_session_t *s)
     s->transaction_id++;
 
     if (ptp_send_command(s, PTP_OC_CloseSession, NULL, 0) < 0) {
-        fprintf(stderr, "[ptp] close_session: failed to send command\n");
+        ZLOG(ZUNE_CHATTER_SCREAM, "ptp", "close_session: failed to send command");
         return -1;
     }
 
     ret = ptp_recv_response(s, &response_code, NULL, NULL);
     if (ret < 0) {
-        fprintf(stderr, "[ptp] close_session: failed with response 0x%04X\n",
+        ZLOG(ZUNE_CHATTER_SCREAM, "ptp", "close_session: failed with response 0x%04X",
                 response_code);
         return -1;
     }
@@ -783,7 +918,8 @@ int ptp_close_session(ptp_session_t *s)
  *   opcode        — PTP/MTP operation code
  *   params        — array of command parameters (NULL if nparams==0)
  *   nparams       — number of parameters (0..5)
- *   flags         — PTP_DP_NODATA, PTP_DP_SENDDATA, or PTP_DP_GETDATA
+ *   flags         — PTP_DP_NODATA, PTP_DP_SENDDATA, PTP_DP_GETDATA,
+ *                   or PTP_DP_GETDATA_OPTIONAL (bounded polling reads)
  *   send_data     — data payload to send (for PTP_DP_SENDDATA)
  *   send_len      — length of send_data
  *   recv_data     — [out] received data (for PTP_DP_GETDATA), caller frees
@@ -792,14 +928,14 @@ int ptp_close_session(ptp_session_t *s)
  *
  * Returns 0 on success (PTP_RC_OK), -1 on transport or protocol error.
  */
-int ptp_transaction(ptp_session_t *s,
-                    uint16_t opcode,
-                    uint32_t *params, int nparams,
-                    uint16_t flags,
-                    uint8_t *send_data, uint64_t send_len,
-                    uint8_t **recv_data, uint32_t *recv_len,
-                    uint16_t *response_code,
-                    uint32_t *resp_params, int *resp_nparams)
+static int ptp_transaction_with(ptp_session_t *s,
+                                uint16_t opcode,
+                                uint32_t *params, int nparams,
+                                uint16_t flags,
+                                ptp_source_t *src, uint64_t send_len,
+                                uint8_t **recv_data, uint32_t *recv_len,
+                                uint16_t *response_code,
+                                uint32_t *resp_params, int *resp_nparams)
 {
     uint16_t resp_code = 0;
     int ret;
@@ -816,27 +952,28 @@ int ptp_transaction(ptp_session_t *s,
 
     /* ---- Phase 1: Command ---- */
     if (ptp_send_command(s, opcode, params, nparams) < 0) {
-        fprintf(stderr, "[ptp] transaction 0x%04X: command phase failed\n",
+        ZLOG(ZUNE_CHATTER_SCREAM, "ptp", "transaction 0x%04X: command phase failed",
                 opcode);
         return -1;
     }
 
     /* ---- Phase 2: Data (optional) ---- */
     if (flags & PTP_DP_SENDDATA) {
-        if (ptp_send_data(s, opcode, send_data, send_len) < 0) {
-            fprintf(stderr, "[ptp] transaction 0x%04X: send data phase failed\n",
+        if (ptp_send_data(s, opcode, src, send_len) < 0) {
+            ZLOG(ZUNE_CHATTER_SCREAM, "ptp", "transaction 0x%04X: send data phase failed",
                     opcode);
             return -1;
         }
     }
 
-    int skip_response = 0;
+    const int optional = flags == PTP_DP_GETDATA_OPTIONAL;
 
     if (flags & PTP_DP_GETDATA) {
         uint8_t *data = NULL;
         uint32_t len = 0;
 
-        int recv_ret = ptp_recv_data(s, &data, &len);
+        int recv_ret = ptp_recv_data(s, &data, &len, optional, opcode,
+                                     resp_params, resp_nparams);
         if (recv_ret == -2) {
             /* Device sent RESPONSE instead of DATA — data phase was skipped.
              * The response was already consumed by recv_data (which recorded
@@ -845,9 +982,9 @@ int ptp_transaction(ptp_session_t *s,
             if (response_code)
                 *response_code = s->last_response ? s->last_response
                                                   : PTP_RC_GeneralError;
-            return -1;
+            return optional && s->last_response == PTP_RC_OK ? 0 : -1;
         } else if (recv_ret < 0) {
-            fprintf(stderr, "[ptp] transaction 0x%04X: recv data phase failed\n",
+            ZLOG(ZUNE_CHATTER_SCREAM, "ptp", "transaction 0x%04X: recv data phase failed",
                     opcode);
             return -1;
         }
@@ -866,7 +1003,7 @@ int ptp_transaction(ptp_session_t *s,
     ret = ptp_recv_response_timeout(s, &resp_code, resp_params, resp_nparams,
                                     (flags & PTP_DP_SENDDATA)
                                         ? PTP_USB_DATA_TIMEOUT_MS
-                                        : PTP_USB_TIMEOUT_MS);
+                                        : PTP_USB_TIMEOUT_MS, optional);
     if (response_code) *response_code = resp_code;
 
     if (ret < 0 && resp_code != PTP_RC_OK) {
@@ -874,6 +1011,37 @@ int ptp_transaction(ptp_session_t *s,
     }
 
     return 0;
+}
+
+int ptp_transaction(ptp_session_t *s,
+                    uint16_t opcode,
+                    uint32_t *params, int nparams,
+                    uint16_t flags,
+                    uint8_t *send_data, uint64_t send_len,
+                    uint8_t **recv_data, uint32_t *recv_len,
+                    uint16_t *response_code,
+                    uint32_t *resp_params, int *resp_nparams)
+{
+    ptp_source_t src = { .data = send_data, .fd = -1 };
+    return ptp_transaction_with(s, opcode, params, nparams, flags, &src, send_len,
+                                recv_data, recv_len, response_code, resp_params, resp_nparams);
+}
+
+int ptp_transaction_file(ptp_session_t *s, uint16_t opcode,
+                         uint32_t *params, int nparams,
+                         int fd, uint64_t send_len,
+                         uint16_t *response_code)
+{
+    ptp_source_t src = { .data = NULL, .fd = fd, .chunk = malloc(CONTEXT_BLOCK_SIZE) };
+    if (!src.chunk) {
+        ZLOG(ZUNE_CHATTER_SCREAM, "ptp", "cannot allocate the upload buffer");
+        if (response_code) *response_code = 0;
+        return -1;
+    }
+    int ret = ptp_transaction_with(s, opcode, params, nparams, PTP_DP_SENDDATA, &src, send_len,
+                                   NULL, NULL, response_code, NULL, NULL);
+    free(src.chunk);
+    return ret;
 }
 
 /* ===================================================================
@@ -904,8 +1072,15 @@ int ptp_get_device_prop_value(ptp_session_t *s, uint16_t propcode,
                           &resp, NULL, NULL);
 
     if (ret < 0) {
-        fprintf(stderr, "[ptp] get_device_prop_value 0x%04X: "
-                "failed with response 0x%04X\n", propcode, resp);
+        ZLOG(ZUNE_CHATTER_SCREAM, "ptp", "get_device_prop_value 0x%04X: "
+                "failed with response 0x%04X", propcode, resp);
+        /* A data phase that completed before the failed response: release
+         * it, so a failure never hands the caller a buffer. */
+        if (data) {
+            free(*data);
+            *data = NULL;
+        }
+        if (len) *len = 0;
     }
     return ret;
 }
@@ -933,8 +1108,8 @@ int ptp_set_device_prop_value(ptp_session_t *s, uint16_t propcode,
                           &resp, NULL, NULL);
 
     if (ret < 0) {
-        fprintf(stderr, "[ptp] set_device_prop_value 0x%04X: "
-                "failed with response 0x%04X\n", propcode, resp);
+        ZLOG(ZUNE_CHATTER_SCREAM, "ptp", "set_device_prop_value 0x%04X: "
+                "failed with response 0x%04X", propcode, resp);
     }
     return ret;
 }

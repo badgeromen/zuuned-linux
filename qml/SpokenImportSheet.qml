@@ -43,7 +43,12 @@ Popup {
             ColumnLayout { Layout.fillWidth: true
                 Text { text: SpokenMediaService.preview.title ?? ""; color: Theme.textPrimary; font.pixelSize: Theme.spokenTitle; Layout.fillWidth: true; elide: Text.ElideRight }
                 Text { text: SpokenMediaService.preview.author ?? ""; color: Theme.textSecondary; font.pixelSize: Theme.spokenBody }
-                Text { text: (SpokenMediaService.preview.episodes ?? []).length + " episodes · manual downloads"; color: Theme.textDim; font.pixelSize: Theme.spokenCaption }
+                Text {
+                    readonly property string episodes: Number(SpokenMediaService.preview.episodeCount ?? 0).toLocaleString(Qt.locale(), "f", 0)
+                    text: SpokenMediaService.preview.hasOlder ? episodes + " newest episodes · older pages load after you subscribe · manual downloads"
+                                                             : episodes + " episodes · manual downloads"
+                    color: Theme.textDim; font.pixelSize: Theme.spokenCaption
+                }
             }
         }
         ColumnLayout {

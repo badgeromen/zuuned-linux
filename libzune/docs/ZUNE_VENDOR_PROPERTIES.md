@@ -140,6 +140,29 @@ for the sanitized probe, and [the integration guide](SPOKEN_MEDIA.md) for usage.
 | 0xDC84 | Rep. Sample Width | UINT32 | READ ONLY | Art width (max 240) |
 | 0xDAB9 | ArtistId | UINT32 | GET/SET | Handle of linked Artist object |
 
+### Artwork limits (Zune 30 descriptors, 2026-10-20)
+
+GetObjectPropDesc on a Zune 30 (Keel) gives the same answer for MP3, WMA,
+AbstractAudioAlbum, podcast series (0xBA0B) and WMV objects:
+
+| Code | Name | Type | Access | Form |
+|------|------|------|--------|------|
+| 0xDC81 | Representative Sample Format | UINT16 | GET/SET | Enumeration: 0x3801 (JPEG) only |
+| 0xDC83 | Representative Sample Height | UINT32 | GET | Range 0..240, step 1 |
+| 0xDC84 | Representative Sample Width | UINT32 | GET | Range 0..240, step 1 |
+| 0xDC86 | Representative Sample Data | AUINT8 | GET/SET | Byte array, at most 1,048,576 bytes |
+
+MP4 objects declare no pixel range (form none) and the same 1 MiB data limit.
+0xDC82 (size) and 0xDC85 (duration) are not supported (0xA801). The device
+does not fill in 0xDC83/0xDC84: they read 0 on every object, including 200x200
+album art. `zune_get_brand_limits` reads these descriptors for an item's format.
+
+The firmware stores larger images byte for byte, up to 1 MiB, but does not
+show them reliably. On October 19 a Zune 80 showed none of its 1600x1600
+(615 KB) audiobook covers, and a Zune HD loaded them slowly. Zuuned now fits
+covers to the declared limits; see the October 20 section of
+[spoken-media research](SPOKEN_MEDIA_RESEARCH.md).
+
 ### Audio Codec Properties (READ ONLY — set by device from file analysis)
 
 | Code | Name | Type | MP3 Values | WMA Values |

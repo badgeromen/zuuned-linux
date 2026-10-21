@@ -14,11 +14,11 @@ foreach(component ArtworkImage ArtworkStyleSettings GradientText Theme)
     set_source_files_properties("${repo}/qml/${component}.qml" PROPERTIES QT_RESOURCE_ALIAS "${component}.qml")
 endforeach()
 set_source_files_properties("${repo}/qml/Theme.qml" PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
-foreach(font PermanentMarker-Regular.ttf SpecimenAlien-Regular.ttf)
+foreach(font PermanentMarker-Regular.ttf SpecimenAlien-Regular.ttf ZuunedSans-Regular.ttf)
     set_source_files_properties("${repo}/qml/fonts/${font}" PROPERTIES QT_RESOURCE_ALIAS "fonts/${font}")
 endforeach()
 qt_add_qml_module(artwork-display URI Zuuned VERSION 1.0
     SOURCES "${repo}/src/AppSettings.h" "${repo}/src/artwork/ArtworkRequest.h"
     QML_FILES "${repo}/qml/ArtworkImage.qml" "${repo}/qml/ArtworkStyleSettings.qml"
         "${repo}/qml/GradientText.qml" "${repo}/qml/Theme.qml"
-    RESOURCES "${repo}/qml/fonts/PermanentMarker-Regular.ttf" "${repo}/qml/fonts/SpecimenAlien-Regular.ttf")
+    RESOURCES "${repo}/qml/fonts/PermanentMarker-Regular.ttf" "${repo}/qml/fonts/SpecimenAlien-Regular.ttf" "${repo}/qml/fonts/ZuunedSans-Regular.ttf")

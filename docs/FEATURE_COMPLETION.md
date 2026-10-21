@@ -94,6 +94,45 @@ Gate: available/unavailable encoder fixtures, fallback/cancel/error paths,
 ffprobe output contracts and quality/performance comparisons; then actual
 playback on a compatible Zune. Classic WMV software encoding stays supported.
 
+## Backlog: device video imports and duplicate counts
+
+Confirmed 2026-10-21 during Zune HD Save to Library testing. Importing four
+episodes already present as local source videos creates four additional cards;
+both local copies receive the device badge, so the season reports eight on-device
+entries despite only four actual device objects. Extraction and playback passed.
+This is a non-blocking tester-release UI issue, not duplicate device uploads.
+
+- Group equivalent local video representations without deleting files or losing
+  saved playback state, custom artwork, metadata or source paths. Preserve
+  distinct edits/versions; title-only matching is insufficient.
+- Count unique matched device objects rather than badged local rows.
+- Verify repeated imports, multiple source folders, separate versions and device
+  reconnects, then repeat the HD four-episode pull through the GUI.
+
+## Backlog: automatic application updates
+
+Requested 2026-10-18. Planned only; no updater is implemented by this entry.
+Let users receive new published Zuuned builds through the application, with
+update preferences available in Settings. Update released binaries, including
+their bundled libzune, rather than pulling development source into installations.
+
+1. Define release discovery and version/channel rules for
+   `badgeromen/zuuned-linux`, selecting the correct platform and architecture
+   (including Linux x86_64 and aarch64). Show the available version and release
+   notes; offer manual checks and configurable automatic checks/downloads.
+2. Design verified downloads and installation for AppImage first. Authenticate
+   update metadata/artifacts, stage downloads safely and retain the previous
+   working build. Account for read-only locations and package-manager-owned
+   installations, where the appropriate update path may differ.
+3. Apply updates at a safe restart boundary. Never interrupt device sync or
+   other active device work. Preserve profiles, libraries and pending queues;
+   define database migration/backup compatibility before promising rollback.
+
+Gate: correct architecture/channel selection, offline and rate-limit handling,
+invalid or interrupted downloads, insufficient disk space, installation failure,
+safe restart deferral during sync, profile preservation and recovery to a
+compatible previous build. Choose the specific update mechanism during design.
+
 ## Completion tracking
 
 | Phase | State | Gate evidence |
@@ -102,6 +141,7 @@ playback on a compatible Zune. Classic WMV software encoding stays supported.
 | 2 Disc-aware dedup | Implemented; software gates passed, device roundtrip pending | 27 identity, 13 migration, 21 sync/import and 37 recovery checks; 197 audio checks normally and under sanitizers. [Cleanup evidence](CODEBASE_CLEANUP.md) |
 | 3 Device editing | Planned | Protocol capability matrix first |
 | 4 Hardware encoding | Planned | Encoder/profile compatibility audit first |
+| Automatic application updates | Backlog, requested 2026-10-18 | Release discovery, verified AppImage updates and safe restart/recovery design first |
 
 Do not mark a phase complete based on compilation alone. Record software and
 hardware gates separately. Prepare local changes before any push; every push

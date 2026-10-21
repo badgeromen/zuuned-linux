@@ -43,8 +43,10 @@ int main(int argc, char **argv)
     check(parse(start + a + item("different-ID", "second.mp3") + finish) && feed.episodes.size() == 2,
           "identical titles with different IDs remain separate");
     check(parse(start + a + a + finish) && feed.episodes.size() == 1, "identical repeated episode collapsed");
-    check(!parse(start + a + item("Opaque-ID", "different.mp3") + finish) && feed.episodes.isEmpty() && !error.isEmpty(),
-          "conflicting duplicate GUID fails atomically");
+    // A 9,392-episode feed reused one GUID for two items: keep the first.
+    check(parse(start + a + item("Opaque-ID", "different.mp3") + finish) && feed.episodes.size() == 1 &&
+          feed.episodes[0].enclosureUrl.path() == u"/feed/episode.mp3" && feed.skippedItems == 1,
+          "a repeated GUID with different content keeps the first item and counts the other skipped");
     check(parse(start + item("", "/no-guid.mp3") + finish) && feed.episodes[0].identity == u"url:https://example.test/no-guid.mp3",
           "missing GUID uses complete enclosure identity");
     check(parse(start + item("Opaque-ID", "/changed.mp3") + finish) && feed.episodes[0].identity == u"guid:Opaque-ID",
@@ -56,6 +58,13 @@ int main(int argc, char **argv)
     check(!parse(start + a + finish + "<extra/>"), "extra document root rejected");
     check(!parse("<feed xmlns=\"http://www.w3.org/2005/Atom\"/>"), "unsupported feed format reported");
     check(!parse(QByteArray(Podcasts::MaxFeedBytes + 1, 'x')), "input size bounded");
+    QByteArray catalogue = start;
+    for (int i = 0; i < 3104; ++i)
+        catalogue += item("episode-" + QByteArray::number(i), "/e" + QByteArray::number(i) + ".mp3",
+                          "<description>" + QByteArray(4096, 'n') + "</description>");
+    catalogue += finish;
+    check(catalogue.size() > 12 * 1024 * 1024 && parse(catalogue) && feed.episodes.size() == 3104,
+          "a 3,104-episode back catalogue over 12 MiB parses");
     check(!parse(start + "<description>" + QByteArray(65537, 'x') + "</description>" + finish), "text size bounded");
     QByteArray nesting;
     for (int i = 0; i < 33; ++i) nesting += "<x>";
@@ -78,7 +87,36 @@ int main(int argc, char **argv)
           feed.episodes[0].published.toString(Qt::ISODate) == u"2025-10-07T17:00:00Z", "numeric publication timezone converted to UTC");
     QByteArray many = start;
     for (int i = 0; i <= Podcasts::MaxEpisodes; ++i) many += "<item/>";
-    check(!parse(many + finish), "episode count bounded including skipped items");
+    check(!parse(many + finish) && error.contains("50,000"), "episode count bounded including skipped items");
+    // RFC 5005: paged feeds link their next (older) page, archived feeds their previous archive.
+    const QByteArray atom = " xmlns:atom=\"http://www.w3.org/2005/Atom\"";
+    const auto link = [&](const QByteArray &rel, const QByteArray &href) {
+        return "<atom:link" + atom + " rel=\"" + rel + "\" href=\"" + href + "\"/>";
+    };
+    check(parse(start + link("self", "/feed/index.xml") + link("next", "?page=2") + a + finish) &&
+          feed.nextPage == QUrl("https://example.test/feed/index.xml?page=2"),
+          "next page link resolved against the response URL; self link ignored");
+    check(parse(start + a + link("prev-archive", "archive-2019.xml") + finish) &&
+          feed.nextPage == QUrl("https://example.test/feed/archive-2019.xml"),
+          "an archived feed continues through its previous archive");
+    check(parse(start + link("prev-archive", "old.xml") + link("next", "https://cdn.example.test/p2.xml") + a + finish) &&
+          feed.nextPage == QUrl("https://cdn.example.test/p2.xml"), "a next page wins over a previous archive");
+    check(parse(start + link("next", "file:///etc/passwd") + a + finish) && feed.nextPage.isEmpty() &&
+          parse(start + "<link rel=\"next\">https://example.test/p2</link>" + a + finish) && feed.nextPage.isEmpty(),
+          "only HTTP(S) Atom links continue a feed");
+    check(parse(start + a + finish) && feed.nextPage.isEmpty(), "a single-document feed has no next page");
+    QByteArray longest = start;
+    for (int i = 0; i < 24258; ++i)
+        longest += item("long-" + QByteArray::number(i), "/l" + QByteArray::number(i) + ".mp3");
+    check(parse(longest + finish) && feed.episodes.size() == 24258,
+          "the longest single document measured (24,258 episodes) parses");
+    QByteArray heavy = start;
+    for (int i = 0; i < 10000; ++i)
+        heavy += item("heavy-" + QByteArray::number(i), "/h" + QByteArray::number(i) + ".mp3",
+                      "<description>" + QByteArray(7000, 'h') + "</description>");
+    heavy += finish;
+    check(heavy.size() > 64 * 1024 * 1024 && parse(heavy) && feed.episodes.size() == 10000,
+          "a 10,000-episode document over 64 MiB parses");
 
     if (argc != 4) return 2;
     AudiobookPart book;

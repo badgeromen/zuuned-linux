@@ -7,23 +7,6 @@
 #include "zune_internal.h"
 
 /*
- * Helper: read a UTF-8 string from an MTP object property.
- * Returns malloc'd string (caller frees), or NULL on failure.
- */
-static char *read_string_prop(ptp_session_t *ptp, uint32_t handle, uint16_t prop) {
-    uint8_t *data = NULL;
-    uint32_t len = 0;
-    if (mtp_get_object_prop_value(ptp, handle, prop, &data, &len) == 0
-        && data && len > 0) {
-        char *str = mtp_ucs2_to_string(data, len);
-        free(data);
-        return str;
-    }
-    free(data);
-    return NULL;
-}
-
-/*
  * Helper: read a uint32 from an MTP object property.
  * Returns the value, or default_val on failure.
  */
@@ -33,8 +16,7 @@ static uint32_t read_u32_prop(ptp_session_t *ptp, uint32_t handle,
     uint32_t len = 0;
     if (mtp_get_object_prop_value(ptp, handle, prop, &data, &len) == 0
         && data && len >= 4) {
-        uint32_t val;
-        memcpy(&val, data, 4);
+        uint32_t val = zune_le32(data);
         free(data);
         return val;
     }
@@ -52,8 +34,7 @@ static uint16_t read_u16_prop(ptp_session_t *ptp, uint32_t handle,
     uint32_t len = 0;
     if (mtp_get_object_prop_value(ptp, handle, prop, &data, &len) == 0
         && data && len >= 2) {
-        uint16_t val;
-        memcpy(&val, data, 2);
+        uint16_t val = zune_le16(data);
         free(data);
         return val;
     }
@@ -64,6 +45,7 @@ static uint16_t read_u16_prop(ptp_session_t *ptp, uint32_t handle,
 /* ---- Get all tracks ---- */
 
 ZuneTrack *zune_get_tracks(ZuneDevice *dev, int *count) {
+    zune_clear_error();
     if (!dev || !count) {
         zune_set_error("Invalid device or count pointer");
         if (count) *count = 0;
@@ -72,22 +54,27 @@ ZuneTrack *zune_get_tracks(ZuneDevice *dev, int *count) {
 
     *count = 0;
 
-    if (dev->disconnecting) {
+    if (ZUNE_FLAG_GET(dev->disconnecting)) {
         zune_set_error("Device is disconnecting");
         return NULL;
     }
 
-    /* Get handles for MP3 tracks */
+    /* Get handles for MP3 and WMA tracks. A failed query is an error, not
+     * an empty library: callers use this list to decide what exists. */
     uint32_t *mp3_handles = NULL;
     int mp3_count = 0;
-    mtp_get_object_handles(&dev->ptp, dev->storage_id, MTP_OFC_MP3,
-                            0x00000000, &mp3_handles, &mp3_count);
-
-    /* Get handles for WMA tracks */
     uint32_t *wma_handles = NULL;
     int wma_count = 0;
-    mtp_get_object_handles(&dev->ptp, dev->storage_id, MTP_OFC_WMA,
-                            0x00000000, &wma_handles, &wma_count);
+    if (mtp_get_object_handles(&dev->ptp, dev->storage_id, MTP_OFC_MP3,
+                               0x00000000, &mp3_handles, &mp3_count) < 0
+        || mtp_get_object_handles(&dev->ptp, dev->storage_id, MTP_OFC_WMA,
+                                  0x00000000, &wma_handles, &wma_count) < 0) {
+        free(mp3_handles);
+        free(wma_handles);
+        zune_set_error("Could not list device tracks (%s 0x%04X)",
+                       zune_autopsy_name(dev->ptp.last_response), dev->ptp.last_response);
+        return NULL;
+    }
 
     int n = mp3_count + wma_count;
     if (n == 0) {
@@ -108,7 +95,7 @@ ZuneTrack *zune_get_tracks(ZuneDevice *dev, int *count) {
 
     /* Process MP3 handles */
     for (int i = 0; i < mp3_count && idx < n; i++) {
-        if (dev->disconnecting) break;
+        if (ZUNE_FLAG_GET(dev->disconnecting)) break;
 
         uint32_t h = mp3_handles[i];
         mtp_object_info_t info;
@@ -120,16 +107,16 @@ ZuneTrack *zune_get_tracks(ZuneDevice *dev, int *count) {
         tracks[idx].filesize = info.object_compressed_size;
 
         /* Read metadata properties */
-        char *title = read_string_prop(&dev->ptp, h, MTP_OPC_Name);
+        char *title = mtp_read_string_prop(&dev->ptp, h, MTP_OPC_Name);
         tracks[idx].title = title ? title : strdup(info.filename ? info.filename : "Unknown");
 
-        char *artist = read_string_prop(&dev->ptp, h, MTP_OPC_Artist);
+        char *artist = mtp_read_string_prop(&dev->ptp, h, MTP_OPC_Artist);
         tracks[idx].artist = artist ? artist : strdup("Unknown Artist");
 
-        char *album = read_string_prop(&dev->ptp, h, MTP_OPC_AlbumName);
+        char *album = mtp_read_string_prop(&dev->ptp, h, MTP_OPC_AlbumName);
         tracks[idx].album = album ? album : strdup("Unknown Album");
 
-        char *genre = read_string_prop(&dev->ptp, h, MTP_OPC_Genre);
+        char *genre = mtp_read_string_prop(&dev->ptp, h, MTP_OPC_Genre);
         tracks[idx].genre = genre ? genre : strdup("Unknown");
 
         tracks[idx].duration_ms = read_u32_prop(&dev->ptp, h, MTP_OPC_Duration, 0);
@@ -141,7 +128,7 @@ ZuneTrack *zune_get_tracks(ZuneDevice *dev, int *count) {
 
     /* Process WMA handles */
     for (int i = 0; i < wma_count && idx < n; i++) {
-        if (dev->disconnecting) break;
+        if (ZUNE_FLAG_GET(dev->disconnecting)) break;
 
         uint32_t h = wma_handles[i];
         mtp_object_info_t info;
@@ -152,16 +139,16 @@ ZuneTrack *zune_get_tracks(ZuneDevice *dev, int *count) {
         tracks[idx].item_id = h;
         tracks[idx].filesize = info.object_compressed_size;
 
-        char *title = read_string_prop(&dev->ptp, h, MTP_OPC_Name);
+        char *title = mtp_read_string_prop(&dev->ptp, h, MTP_OPC_Name);
         tracks[idx].title = title ? title : strdup(info.filename ? info.filename : "Unknown");
 
-        char *artist = read_string_prop(&dev->ptp, h, MTP_OPC_Artist);
+        char *artist = mtp_read_string_prop(&dev->ptp, h, MTP_OPC_Artist);
         tracks[idx].artist = artist ? artist : strdup("Unknown Artist");
 
-        char *album = read_string_prop(&dev->ptp, h, MTP_OPC_AlbumName);
+        char *album = mtp_read_string_prop(&dev->ptp, h, MTP_OPC_AlbumName);
         tracks[idx].album = album ? album : strdup("Unknown Album");
 
-        char *genre = read_string_prop(&dev->ptp, h, MTP_OPC_Genre);
+        char *genre = mtp_read_string_prop(&dev->ptp, h, MTP_OPC_Genre);
         tracks[idx].genre = genre ? genre : strdup("Unknown");
 
         tracks[idx].duration_ms = read_u32_prop(&dev->ptp, h, MTP_OPC_Duration, 0);
@@ -204,27 +191,6 @@ static uint64_t get_file_size(const char *path) {
 }
 
 /*
- * Helper: extract filename without path and extension.
- * Returns malloc'd string. Caller frees.
- */
-static char *filename_no_ext(const char *path) {
-    const char *base = strrchr(path, '/');
-    base = base ? base + 1 : path;
-
-    const char *dot = strrchr(base, '.');
-    if (dot && dot > base) {
-        size_t len = (size_t)(dot - base);
-        char *result = malloc(len + 1);
-        if (result) {
-            memcpy(result, base, len);
-            result[len] = '\0';
-        }
-        return result;
-    }
-    return strdup(base);
-}
-
-/*
  * Helper: determine MTP format code from file extension.
  */
 static uint16_t format_from_ext(const char *filepath) {
@@ -252,6 +218,9 @@ static int send_track_internal(ZuneDevice *dev, const char *filepath,
                                 const char *album, const char *genre,
                                 uint16_t tracknumber, uint32_t duration_ms,
                                 uint32_t *out_item_id) {
+    /* AlbumName is read-only after creation on the Zune (0x200F); album
+     * display comes from album objects, so the album is not sent here. */
+    (void)album;
     uint64_t fsize = get_file_size(filepath);
     if (fsize == 0) {
         zune_set_error("Cannot stat file: %s", filepath);
@@ -268,7 +237,7 @@ static int send_track_internal(ZuneDevice *dev, const char *filepath,
     uint16_t format = format_from_ext(filepath);
     const char *fname = basename_of(filepath);
 
-    /* Step 1: SendObjectInfo */
+    /* The object's ObjectInfo dataset; the engine creates and fills it. */
     mtp_object_info_t info;
     memset(&info, 0, sizeof(info));
     info.storage_id = dev->storage_id;
@@ -277,68 +246,15 @@ static int send_track_internal(ZuneDevice *dev, const char *filepath,
     info.parent_object = 0;
     info.filename = strdup(fname);
 
+    zune_upload_t up = { .kind = "track", .path = filepath, .size = (uint32_t)fsize,
+                         .parent = 0, .info = &info };
     uint32_t item_id = 0;
-    int ret = -1;
-
-    for (int attempt = 1; attempt <= 3; attempt++) {
-        item_id = 0;
-
-        if (zune_is_aborted(dev)) {
-            free(info.filename);
-            zune_set_error("Aborted: %s", filepath);
-            return -1;
-        }
-
-        ret = mtp_send_object_info(&dev->ptp, dev->storage_id, 0, &info, &item_id);
-        if (ret != 0) {
-            fprintf(stderr, "[libzune] send_object_info attempt %d/3 failed for: %s (%s 0x%04X)\n",
-                    attempt, filepath,
-                    zune_autopsy_name(dev->ptp.last_response),
-                    dev->ptp.last_response);
-            if (zune_wound_is_mortal(dev->ptp.last_response))
-                break;  /* device said no on purpose — retrying won't help */
-            if (attempt < 3) {
-                zune_unjam(dev);
-                usleep(500000);
-            }
-            continue;
-        }
-
-        /* Step 2: SendObject (file data) */
-        ret = mtp_send_object_from_file(&dev->ptp, filepath, (uint32_t)fsize);
-        if (ret == 0)
-            break;
-
-        fprintf(stderr, "[libzune] send_object attempt %d/3 failed for: %s (%s 0x%04X)\n",
-                attempt, filepath,
-                zune_autopsy_name(dev->ptp.last_response),
-                dev->ptp.last_response);
-
-        /* Clean up orphan handle if object was partially created */
-        if (item_id != 0) {
-            mtp_delete_object(&dev->ptp, item_id);
-            item_id = 0;
-        }
-
-        if (zune_wound_is_mortal(dev->ptp.last_response))
-            break;
-
-        if (attempt < 3) {
-            zune_unjam(dev);
-            usleep(500000);
-        }
-    }
-
+    int status = zune_smuggle_core(dev, &up, &item_id);
     free(info.filename);
+    if (status != ZUNE_UPLOAD_SENT)
+        return -1;          /* error set and zune_autopsy kept by the engine */
 
-    if (ret != 0) {
-        uint16_t rc = dev->ptp.last_response;
-        zune_set_error("Failed to send track (%s 0x%04X): %s",
-                       zune_autopsy_name(rc), rc, filepath);
-        return -1;
-    }
-
-    /* Step 3: Set metadata properties
+    /* Then set metadata properties
      * Note: AlbumName (0xDC9A) and AlbumArtist (0xDC9B) are read-only
      * post-creation on the Zune (0x200F Access Denied). The Zune gets
      * album/artist display from album objects, not track properties.
@@ -356,7 +272,7 @@ static int send_track_internal(ZuneDevice *dev, const char *filepath,
     if (duration_ms > 0)
         prop_fails += mtp_set_object_prop_value_u32(&dev->ptp, item_id, MTP_OPC_Duration, duration_ms) != 0;
     if (prop_fails > 0)
-        fprintf(stderr, "[libzune] track %u: %d metadata propert%s failed to set\n",
+        ZLOG(ZUNE_CHATTER_SHOUT, "libzune", "track %u: %d metadata propert%s failed to set",
                 item_id, prop_fails, prop_fails == 1 ? "y" : "ies");
 
     if (out_item_id) *out_item_id = item_id;
@@ -365,12 +281,13 @@ static int send_track_internal(ZuneDevice *dev, const char *filepath,
 
 int zune_smuggle_track(ZuneDevice *dev, const char *filepath,
                     uint32_t *out_item_id) {
+    zune_clear_error();
     if (!dev || !filepath) {
         zune_set_error("Invalid device or filepath");
-        return -1;
+        return ZUNE_BLOWN;
     }
 
-    char *fallback_title = filename_no_ext(filepath);
+    char *fallback_title = zune_filename_no_ext(filepath);
     int ret = send_track_internal(dev, filepath,
                                    fallback_title ? fallback_title : "Unknown",
                                    "Unknown Artist", "Unknown Album", "",
@@ -386,9 +303,10 @@ int zune_smuggle_track_tagged(ZuneDevice *dev, const char *filepath,
                                const char *album, const char *genre,
                                uint16_t tracknumber, uint32_t duration_ms,
                                uint32_t *out_item_id) {
+    zune_clear_error();
     if (!dev || !filepath) {
         zune_set_error("Invalid device or filepath");
-        return -1;
+        return ZUNE_BLOWN;
     }
 
     return send_track_internal(dev, filepath,
@@ -407,19 +325,16 @@ int zune_smuggle_track_ex(ZuneDevice *dev, const char *filepath,
                         uint16_t tracknumber, uint32_t duration_ms,
                         zune_progress_fn progress, void *userdata,
                         uint32_t *out_item_id) {
+    zune_clear_error();
     if (!dev || !filepath) {
         zune_set_error("Invalid device or filepath");
-        return -1;
+        return ZUNE_BLOWN;
     }
 
     /*
-     * The native MTP stack's mtp_send_object_from_file reads the entire file
-     * into memory and sends it in one bulk transfer. Progress callbacks at the
-     * MTP object level are not currently supported — the transfer is atomic.
-     *
-     * Call the progress callback at start (0%) and end (100%) so callers
-     * can still update their UI. When per-chunk progress is added to
-     * mtp_send_object_from_file, this will be wired through.
+     * The upload engine streams the file in transport-sized chunks, but no
+     * per-chunk progress callback reaches this level yet. Report 0% at the
+     * start and 100% at the end so callers can still update their UI.
      */
     uint64_t fsize = get_file_size(filepath);
     if (progress && fsize > 0)
@@ -441,34 +356,36 @@ int zune_smuggle_track_ex(ZuneDevice *dev, const char *filepath,
 /* ---- Delete track ---- */
 
 int zune_purge_track(ZuneDevice *dev, uint32_t item_id) {
+    zune_clear_error();
     if (!dev) {
         zune_set_error("Invalid device");
-        return -1;
+        return ZUNE_BLOWN;
     }
 
     int ret = mtp_delete_object(&dev->ptp, item_id);
     if (ret != 0) {
         zune_set_error("Failed to delete track %u", item_id);
-        return -1;
+        return ZUNE_BLOWN;
     }
-    return 0;
+    return ZUNE_OK;
 }
 
 /* ---- Download track ---- */
 
 int zune_extract_track(ZuneDevice *dev, uint32_t item_id,
                          const char *dest_path) {
+    zune_clear_error();
     if (!dev || !dest_path) {
         zune_set_error("Invalid device or destination path");
-        return -1;
+        return ZUNE_BLOWN;
     }
 
     int ret = mtp_get_object_to_file(&dev->ptp, item_id, dest_path);
     if (ret != 0) {
         zune_set_error("Failed to download track %u to %s", item_id, dest_path);
-        return -1;
+        return ZUNE_BLOWN;
     }
-    return 0;
+    return ZUNE_OK;
 }
 
 /* ---- Track verification after upload ---- */
@@ -476,9 +393,10 @@ int zune_extract_track(ZuneDevice *dev, uint32_t item_id,
 int zune_verify(ZuneDevice *dev, uint32_t item_id,
                  const char *expected_title, const char *expected_artist,
                  uint64_t expected_size) {
+    zune_clear_error();
     if (!dev || item_id == 0) {
         zune_set_error("Invalid device or item_id for verification");
-        return -1;
+        return ZUNE_BLOWN;
     }
 
     int mismatches = 0;
@@ -489,15 +407,15 @@ int zune_verify(ZuneDevice *dev, uint32_t item_id,
         memset(&info, 0, sizeof(info));
         if (mtp_get_object_info(&dev->ptp, item_id, &info) == 0) {
             if ((uint64_t)info.object_compressed_size != expected_size) {
-                fprintf(stderr, "[libzune] verify: size mismatch for %u: "
-                        "expected %llu, got %u\n", item_id,
+                ZLOG(ZUNE_CHATTER_SHOUT, "libzune", "verify: size mismatch for %u: "
+                        "expected %llu, got %u", item_id,
                         (unsigned long long)expected_size,
                         info.object_compressed_size);
                 mismatches++;
             }
             mtp_free_object_info(&info);
         } else {
-            fprintf(stderr, "[libzune] verify: GetObjectInfo failed for %u\n",
+            ZLOG(ZUNE_CHATTER_SCREAM, "libzune", "verify: GetObjectInfo failed for %u",
                     item_id);
             mismatches++;
         }
@@ -505,10 +423,10 @@ int zune_verify(ZuneDevice *dev, uint32_t item_id,
 
     /* Verify title */
     if (expected_title) {
-        char *actual = read_string_prop(&dev->ptp, item_id, MTP_OPC_Name);
+        char *actual = mtp_read_string_prop(&dev->ptp, item_id, MTP_OPC_Name);
         if (!actual || strcmp(actual, expected_title) != 0) {
-            fprintf(stderr, "[libzune] verify: title mismatch for %u: "
-                    "expected '%s', got '%s'\n", item_id,
+            ZLOG(ZUNE_CHATTER_SHOUT, "libzune", "verify: title mismatch for %u: "
+                    "expected '%s', got '%s'", item_id,
                     expected_title, actual ? actual : "(null)");
             mismatches++;
         }
@@ -517,10 +435,10 @@ int zune_verify(ZuneDevice *dev, uint32_t item_id,
 
     /* Verify artist */
     if (expected_artist) {
-        char *actual = read_string_prop(&dev->ptp, item_id, MTP_OPC_Artist);
+        char *actual = mtp_read_string_prop(&dev->ptp, item_id, MTP_OPC_Artist);
         if (!actual || strcmp(actual, expected_artist) != 0) {
-            fprintf(stderr, "[libzune] verify: artist mismatch for %u: "
-                    "expected '%s', got '%s'\n", item_id,
+            ZLOG(ZUNE_CHATTER_SHOUT, "libzune", "verify: artist mismatch for %u: "
+                    "expected '%s', got '%s'", item_id,
                     expected_artist, actual ? actual : "(null)");
             mismatches++;
         }
@@ -530,10 +448,10 @@ int zune_verify(ZuneDevice *dev, uint32_t item_id,
     if (mismatches > 0) {
         zune_set_error("Verification failed: %d mismatches for item %u",
                        mismatches, item_id);
-        return -1;
+        return ZUNE_BLOWN;
     }
 
-    return 0;
+    return ZUNE_OK;
 }
 
 /* ---- Track user state (playcount / rating) ---- */
@@ -541,9 +459,10 @@ int zune_verify(ZuneDevice *dev, uint32_t item_id,
 int zune_get_track_state(ZuneDevice *dev, uint32_t item_id,
                           uint16_t *out_playcount, uint8_t *out_rating,
                           uint32_t *out_skip_count) {
+    zune_clear_error();
     if (!dev || item_id == 0) {
         zune_set_error("Invalid device or item_id");
-        return -1;
+        return ZUNE_BLOWN;
     }
 
     int ok = 0;
@@ -553,7 +472,7 @@ int zune_get_track_state(ZuneDevice *dev, uint32_t item_id,
         uint32_t len = 0;
         if (mtp_get_object_prop_value(&dev->ptp, item_id, MTP_OPC_UseCount,
                                        &data, &len) == 0 && data && len >= 4) {
-            *out_playcount = (uint16_t)(data[0] | (data[1] << 8));
+            *out_playcount = zune_le16(data);
             ok = 1;
         } else {
             *out_playcount = 0;
@@ -577,32 +496,33 @@ int zune_get_track_state(ZuneDevice *dev, uint32_t item_id,
     /* Skip count is ZMDB-only — no standard MTP property for it */
     if (out_skip_count) *out_skip_count = 0;
 
-    return ok ? 0 : -1;
+    return ok ? ZUNE_OK : ZUNE_BLOWN;
 }
 
 int zune_set_track_state(ZuneDevice *dev, uint32_t item_id,
                           uint16_t playcount, uint8_t rating) {
+    zune_clear_error();
     if (!dev || item_id == 0) {
         zune_set_error("Invalid device or item_id");
-        return -1;
+        return ZUNE_BLOWN;
     }
 
-    int ret = 0;
+    int ret = ZUNE_OK;
 
     if (mtp_set_object_prop_value_u32(&dev->ptp, item_id,
                                        MTP_OPC_UseCount,
                                        (uint32_t)playcount) != 0) {
-        fprintf(stderr, "[libzune] set UseCount failed for %u (may be read-only)\n",
+        ZLOG(ZUNE_CHATTER_SHOUT, "libzune", "set UseCount failed for %u (may be read-only)",
                 item_id);
-        ret = -1;
+        ret = ZUNE_BLOWN;
     }
 
     if (mtp_set_object_prop_value_u16(&dev->ptp, item_id,
                                        MTP_OPC_Rating,
                                        (uint16_t)rating) != 0) {
-        fprintf(stderr, "[libzune] set Rating failed for %u (may be read-only)\n",
+        ZLOG(ZUNE_CHATTER_SHOUT, "libzune", "set Rating failed for %u (may be read-only)",
                 item_id);
-        ret = -1;
+        ret = ZUNE_BLOWN;
     }
 
     return ret;
@@ -619,6 +539,7 @@ int zune_set_track_state(ZuneDevice *dev, uint32_t item_id,
  */
 int zune_probe_object(ZuneDevice *dev, uint32_t item_id,
                       uint64_t *out_size, uint16_t *out_format) {
+    zune_clear_error();
     return zune_probe_object_named(dev, item_id, out_size, out_format, NULL);
 }
 
@@ -627,17 +548,18 @@ int zune_probe_object(ZuneDevice *dev, uint32_t item_id,
 int zune_probe_object_named(ZuneDevice *dev, uint32_t item_id,
                             uint64_t *out_size, uint16_t *out_format,
                             char **out_name) {
-    if (!dev) return -1;
+    zune_clear_error();
+    if (!dev) return ZUNE_BLOWN;
     mtp_object_info_t info;
     if (mtp_get_object_info(&dev->ptp, item_id, &info) != 0)
-        return -1;
+        return ZUNE_BLOWN;
     if (out_size)   *out_size   = info.object_compressed_size;
     if (out_format) *out_format = info.object_format;
     if (out_name) {
         *out_name = info.filename ? strdup(info.filename) : NULL;
     }
     mtp_free_object_info(&info);
-    return 0;
+    return ZUNE_OK;
 }
 
 /*
@@ -647,7 +569,8 @@ int zune_probe_object_named(ZuneDevice *dev, uint32_t item_id,
  */
 int zune_get_item_refs(ZuneDevice *dev, uint32_t item_id,
                        uint32_t **out_refs, int *out_count) {
-    if (!dev || !out_refs || !out_count) return -1;
+    zune_clear_error();
+    if (!dev || !out_refs || !out_count) return ZUNE_BLOWN;
     *out_refs = NULL;
     *out_count = 0;
     return mtp_get_object_references(&dev->ptp, item_id, out_refs, out_count);

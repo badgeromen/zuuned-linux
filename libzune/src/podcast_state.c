@@ -9,10 +9,6 @@
 #define STATE_MAX_BYTES (64u * 1024u * 1024u)
 #define STATE_MAX_RECORDS 1000000u
 
-static uint16_t state_u16(const uint8_t *p)
-{ return (uint16_t)(p[0] | (uint16_t)p[1] << 8); }
-static uint32_t state_u32(const uint8_t *p)
-{ return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24; }
 
 typedef struct { uint32_t id, offset, size; } StateRecord;
 static int state_by_id(const void *a, const void *b)
@@ -62,7 +58,7 @@ int zune_parse_podcast_states(const uint8_t *data, size_t length,
             "Invalid podcast snapshot arguments or size");
     REQUIRE(!memcmp(data, "ZMDB", 4) && !memcmp(data + 0x20, "ZMed", 4),
             "Invalid podcast snapshot magic");
-    uint16_t version = state_u16(data + 0x24);
+    uint16_t version = zune_le16(data + 0x24);
     REQUIRE(version == 2 || version == 5, "Unsupported podcast snapshot version");
     size_t descriptor = 0x30;
     while (descriptor < 0x100 && descriptor + 4 <= length &&
@@ -76,9 +72,9 @@ int zune_parse_podcast_states(const uint8_t *data, size_t length,
                 "Truncated or excessive podcast snapshot descriptors");
         descriptor_end += 20;
     }
-    REQUIRE(state_u16(data + descriptor + 6) == 8, "Invalid podcast index entry size");
-    uint32_t entries = state_u32(data + descriptor + 8);
-    size_t index = state_u32(data + descriptor + 16);
+    REQUIRE(zune_le16(data + descriptor + 6) == 8, "Invalid podcast index entry size");
+    uint32_t entries = zune_le32(data + descriptor + 8);
+    size_t index = zune_le32(data + descriptor + 16);
     REQUIRE(entries <= STATE_MAX_RECORDS && index >= descriptor_end && index <= length &&
             entries <= (length - index) / 8, "Invalid podcast index bounds");
     size_t index_end = index + (size_t)entries * 8;
@@ -88,12 +84,12 @@ int zune_parse_podcast_states(const uint8_t *data, size_t length,
     unsigned podcasts = 0;
     for (uint32_t i = 0; i < entries; ++i) {
         StateRecord *r = &records[i];
-        r->id = state_u32(data + index + (size_t)i * 8);
-        r->offset = state_u32(data + index + (size_t)i * 8 + 4);
+        r->id = zune_le32(data + index + (size_t)i * 8);
+        r->offset = zune_le32(data + index + (size_t)i * 8 + 4);
         REQUIRE(r->id && r->id != UINT32_MAX, "Invalid podcast snapshot atom ID");
         REQUIRE(r->offset >= descriptor_end + 4 && r->offset <= length,
                 "Invalid podcast snapshot record offset");
-        uint32_t header = state_u32(data + r->offset - 4);
+        uint32_t header = zune_le32(data + r->offset - 4);
         r->size = header & 0xffffff;
         REQUIRE(!(header & 0x80000000) && r->size <= length - r->offset,
                 "Invalid podcast snapshot record size or flag");
@@ -123,11 +119,11 @@ int zune_parse_podcast_states(const uint8_t *data, size_t length,
                 "Invalid or unterminated podcast state title");
         ZunePodcastState *out = &result[written++];
         out->item_id = r->id;
-        out->series_id = state_u32(p + 4);
+        out->series_id = zune_le32(p + 4);
         REQUIRE((out->series_id >> 24) == 0x0f, "Invalid podcast state series identity");
-        out->duration_ms = state_u32(p + 8);
-        out->bookmark_ms = state_u32(p + 12);
-        out->raw_flags = state_u32(p + title_offset - 4);
+        out->duration_ms = zune_le32(p + 8);
+        out->bookmark_ms = zune_le32(p + 12);
+        out->raw_flags = zune_le32(p + title_offset - 4);
         out->marked_played = (out->raw_flags & 0x200) != 0;
         size_t title_bytes = (size_t)(end - p - title_offset);
         out->title = malloc(title_bytes + 1);
@@ -154,25 +150,26 @@ void zune_free_podcast_states(ZunePodcastState *states, int count)
 
 int zune_get_podcast_states(ZuneDeviceHandle dev, ZunePodcastState **states, int *count)
 {
+    zune_clear_error();
     if (states) *states = NULL;
     if (count) *count = 0;
     if (!states || !count || !dev || !dev->mtpz_authenticated ||
-        dev->disconnecting || dev->cancel_requested ||
+        ZUNE_FLAG_GET(dev->disconnecting) || ZUNE_FLAG_GET(dev->cancel_requested) ||
         (dev->device_family != ZUNE_FAMILY_KEEL && dev->device_family != ZUNE_FAMILY_DRACO &&
          dev->device_family != ZUNE_FAMILY_PAVO)) {
         zune_set_error("Podcast state requires an authenticated active Zune 30, 80/120 or HD");
-        return -1;
+        return ZUNE_BLOWN;
     }
     uint8_t *payload = NULL;
     uint32_t length = 0;
-    if (zune_zmdb_read_payload(&dev->usb, &payload, &length)) return -1;
+    if (zune_zmdb_read_payload(&dev->usb, &payload, &length)) return ZUNE_BLOWN;
     /* Keel and Draco share Classic v2; Pavo uses HD v5. Never infer a
      * layout for an unknown model or parse a mismatched database as empty. */
-    if (dev->disconnecting || dev->cancel_requested || length < 0x26 ||
-        state_u16(payload + 0x24) != (dev->device_family == ZUNE_FAMILY_PAVO ? 5 : 2)) {
+    if (ZUNE_FLAG_GET(dev->disconnecting) || ZUNE_FLAG_GET(dev->cancel_requested) || length < 0x26 ||
+        zune_le16(payload + 0x24) != (dev->device_family == ZUNE_FAMILY_PAVO ? 5 : 2)) {
         free(payload);
         zune_set_error("Podcast state canceled or model/layout mismatch");
-        return -1;
+        return ZUNE_BLOWN;
     }
     int result = zune_parse_podcast_states(payload, length, states, count);
     free(payload);

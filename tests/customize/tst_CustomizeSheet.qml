@@ -67,6 +67,36 @@ Item {
             resize(1440, 1000)
         }
 
+        function test_hdArtistChoicesAreStagedAndIndependent() {
+            open({kind:"artist", name:"Artist", title:"Artist", poster:"", hdArtistArt:{
+                revision:"saved-revision", background:{original:"/tmp/old #art.png"},
+                gallery:[], biography:"old bio"}})
+            sheet.showTab("hd")
+            const editor = findChild(sheet.contentItem, "hdArtistArtEditor")
+            verify(editor)
+            compare(sheet.hdArtDraft.background, "file:///tmp/old%20%23art.png")
+            editor.change("biography", "new bio")
+            verify(sheet.dirty)
+            compare(sheet.identityMode, "keep")
+            compare(sheet.selectedArt, "")
+            compare(backend.applications.length, 0)
+            sheet.discard()
+            tryCompare(sheet, "visible", false)
+            compare(backend.applications.length, 0)
+            open({kind:"artist", name:"Artist", title:"Artist", poster:""})
+            compare(sheet.hdArtChanged, false)
+            compare(sheet.hdArtDraft.biography, "")
+            editor.change("background", "file:///tmp/new.png")
+            editor.change("biography", "saved bio")
+            sheet.applyDraft()
+            const call = lastRequest(backend.applications)
+            compare(call.draft.identityMode, "keep")
+            compare(call.draft.artUrl, "")
+            compare(call.draft.hdArtChanged, true)
+            compare(call.draft.hdArtistArt.background, "file:///tmp/new.png")
+            compare(call.draft.hdArtistArt.biography, "saved bio")
+        }
+
         function test_albumFollowsPlayerStyleWithinArtworkColumn() {
             Prefs.playerStyle = "disc"
             open(album())

@@ -3,8 +3,10 @@
 `bash tests/device-spoken/run-qml.sh` exercises the production device page with
 recording services and a disposable profile. It checks distinct same-name
 collections, chapter order, real selection/confirmation mouse clicks, stale
-selection removal, error state and disconnect/device-swap/sync deletion guards.
-It never opens USB or modifies the user's library.
+selection removal, error state and disconnect/device-swap/sync deletion guards,
+and (October 20) that the show grid and episode list keep their place through
+an inventory refresh and keep a usable list in a short narrow window. It never
+opens USB or modifies the user's library.
 
 After building the app, `node tests/device-spoken/run-backend.mjs` links its actual
 native objects and exercises DeviceService admission/completion with a disabled

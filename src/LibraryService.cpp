@@ -4,6 +4,7 @@
 #include "library/OnlineAlbumArtService.h"
 #include "library/ArtistImageService.h"
 #include "library/ArtworkHttp.h"
+#include "artwork/HdArtistArtStore.h"
 #include "library/LibraryDb.h"
 #include "library/LibraryScanner.h"
 #include "library/LocalTrackModel.h"
@@ -2475,6 +2476,11 @@ void LibraryService::searchCustomizeIdentity(const QString &requestId,
     }));
 }
 
+QVariantMap LibraryService::hdArtistArtwork(const QString &artist) const {
+    return m_db->collectionCustomization(QStringLiteral("artist"), ArtistImageService::cacheKey(artist))
+        .value(QStringLiteral("identity")).toMap().value(QStringLiteral("_hdArtistArt")).toMap();
+}
+
 QVariantMap LibraryService::customizeContext(const QString &kind,
                                              const QVariantMap &context) const {
     QVariantMap out = context;
@@ -2536,6 +2542,7 @@ QVariantMap LibraryService::customizeContext(const QString &kind,
         const auto saved = m_db->collectionCustomization(kind, key);
         const auto identity = saved.value(QStringLiteral("identity")).toMap();
         out.insert(QStringLiteral("musicIdentity"), identity);
+        if (kind == QLatin1String("artist")) out.insert(QStringLiteral("hdArtistArt"), identity.value("_hdArtistArt"));
         out.insert(QStringLiteral("artworkMatch"), identity.value("_artworkMatch"));
         out.insert(QStringLiteral("artworkDiscovery"), kind == QLatin1String("album")
             ? m_albumArtworkStatus.value(artKey(context.value("artist").toString(), context.value("album").toString()))
@@ -2860,6 +2867,21 @@ void LibraryService::applyCustomization(const QString &requestId, const QString 
                 out.error = QStringLiteral("Could not load that match. Your changes have not been saved."); return out;
             }
         }
+        // Immutable source/derivative preparation stays outside the write
+        // transaction. Only the manifest is published by the shared Apply.
+        const bool hdChanged = kind == QLatin1String("artist") && draft.value("hdArtChanged").toBool();
+        QVariantMap previousHd, preparedHd;
+        if (hdChanged) {
+            LibraryDb reader;
+            if (!reader.open(dbPath)) {
+                out.error = QStringLiteral("Could not read saved HD artist artwork."); return out;
+            }
+            previousHd = reader.collectionCustomization("artist", ArtistImageService::cacheKey(context.value("name").toString()))
+                .value("identity").toMap().value("_hdArtistArt").toMap();
+            preparedHd = HdArtistArtStore::prepare(QFileInfo(dbPath).absolutePath() + "/hd-artist-art",
+                                                   draft.value("hdArtistArt").toMap(), previousHd, &out.error);
+            if (!out.error.isEmpty()) return out;
+        }
         LibraryDb db;
         if (!db.open(dbPath) || !db.begin()) {
             out.error = QStringLiteral("Could not open the library for saving: %1").arg(db.lastError()); return out;
@@ -2982,6 +3004,15 @@ void LibraryService::applyCustomization(const QString &requestId, const QString 
                 }
                 if (manual) musicIdentity = {{QStringLiteral("provider"), QStringLiteral("manual")}, {QStringLiteral("overview"), fields.value(QStringLiteral("overview"))}};
                 else if (!match) musicIdentity = saved.value(QStringLiteral("identity")).toMap();
+                if (kind == QLatin1String("artist")) {
+                    const auto savedHd = saved.value("identity").toMap().value("_hdArtistArt").toMap();
+                    if (hdChanged && savedHd.value("revision") != previousHd.value("revision")) {
+                        db.rollback(); out.error = QStringLiteral("HD artist artwork changed. Reopen Customize before saving."); return out;
+                    }
+                    const auto hd = hdChanged ? preparedHd : savedHd;
+                    if (hd.isEmpty()) musicIdentity.remove("_hdArtistArt");
+                    else musicIdentity.insert("_hdArtistArt", hd);
+                }
                 // An artwork-only match is a separate staged choice. It never
                 // changes canonical names, tags or the collection's identity.
                 if (!artworkMatch.isEmpty()) {

@@ -102,6 +102,7 @@ extern "C" {
 #define PTP_RC_SpecificationByFormatUnsupported 0x2014
 #define PTP_RC_InvalidObjectPropCode            0x2016
 #define PTP_RC_SessionAlreadyOpened             0x201E
+#define PTP_RC_TransactionCancelled             0x201F
 #define PTP_RC_MTP_ObjectPropNotSupported       0xA801
 
 /* ===================================================================
@@ -120,6 +121,9 @@ extern "C" {
 #define PTP_DP_NODATA                   0x0000
 #define PTP_DP_SENDDATA                 0x0001
 #define PTP_DP_GETDATA                  0x0002
+/* Research polling operations may return only RESPONSE when idle. Opt-in;
+ * standard GETDATA still requires DATA. Limits received DATA to 64 KiB. */
+#define PTP_DP_GETDATA_OPTIONAL         0x0006
 
 /* ===================================================================
  * PTP Data Type Codes
@@ -134,6 +138,7 @@ extern "C" {
 #define PTP_DTC_UINT32                  0x0006
 #define PTP_DTC_INT64                   0x0007
 #define PTP_DTC_UINT64                  0x0008
+#define PTP_DTC_AUINT8                  0x4002  /* array of uint8 */
 #define PTP_DTC_AUINT16                 0x4004  /* array of uint16 */
 #define PTP_DTC_AUINT32                 0x4006  /* array of uint32 */
 #define PTP_DTC_STR                     0xFFFF
@@ -222,9 +227,14 @@ typedef struct ptp_session {
 
     /* Borrowed pointer to the owning device's cancel flag (may be NULL).
      * Checked between data-phase chunks so zune_abort() can actually stop
-     * a multi-hundred-MB transfer mid-flight. */
-    volatile int *abort_flag;
+     * a multi-hundred-MB transfer mid-flight. Read with ZUNE_FLAG_GET. */
+    int *abort_flag;
 } ptp_session_t;
+
+/* Cross-thread flags (cancel, disconnect). C99 has no atomics, so these use
+ * the GCC/Clang builtins; never read or write such a flag directly. */
+#define ZUNE_FLAG_GET(flag)        __atomic_load_n(&(flag), __ATOMIC_SEQ_CST)
+#define ZUNE_FLAG_SET(flag, value) __atomic_store_n(&(flag), (value), __ATOMIC_SEQ_CST)
 
 /* ===================================================================
  * Function Declarations
@@ -264,7 +274,9 @@ int ptp_close_session(ptp_session_t *s);
  *   opcode:         PTP_OC_* or MTP_OC_* operation code
  *   params:         array of up to PTP_MAX_PARAMS uint32 parameters (may be NULL)
  *   nparams:        number of parameters (0..5)
- *   flags:          PTP_DP_NODATA, PTP_DP_SENDDATA, or PTP_DP_GETDATA
+ *   flags:          PTP_DP_NODATA, PTP_DP_SENDDATA, PTP_DP_GETDATA,
+ *                   or PTP_DP_GETDATA_OPTIONAL (idle RESPONSE allowed;
+ *                   DATA payload limited to 64 KiB, correlated headers)
  *   send_data:      data to send (PTP_DP_SENDDATA), NULL otherwise
  *   send_len:       length of send_data in bytes
  *   recv_data:      [out] received data (PTP_DP_GETDATA), caller must free()
@@ -309,6 +321,17 @@ int ptp_get_device_prop_value(ptp_session_t *s, uint16_t propcode,
  */
 int ptp_set_device_prop_value(ptp_session_t *s, uint16_t propcode,
                               uint8_t *data, uint32_t len);
+
+/*
+ * ptp_transaction_file — A transaction whose data phase sends send_len
+ * bytes read from fd (from offset 0) in CONTEXT_BLOCK_SIZE chunks, so the
+ * whole payload is never in memory. Same framing, ZLP rule, abort handling
+ * and response handling as ptp_transaction with PTP_DP_SENDDATA.
+ */
+int ptp_transaction_file(ptp_session_t *s, uint16_t opcode,
+                         uint32_t *params, int nparams,
+                         int fd, uint64_t send_len,
+                         uint16_t *response_code);
 
 #ifdef __cplusplus
 }

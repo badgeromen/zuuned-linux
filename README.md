@@ -29,7 +29,8 @@ customize artwork and metadata, and transfer media to your Zune over USB.
   Libraries, resume local playback and queue whole books. Chaptered sources are
   prepared as ordered device parts while the original files stay intact.
 - **Make it yours:** edit local metadata and artwork, and choose your preferred
-  appearance.
+  appearance. Title fonts include Permanent Marker, Specimen Alien and the
+  clean, original Zuuned Sans, selectable during setup or in Settings → Appearance.
 - **Organize photos:** browse folders and create custom albums with nested
   subalbums.
 
@@ -59,15 +60,14 @@ wallpaper shown belong to the example library and are not supplied media.
 
 Application source and Linux releases live together at
 [badgeromen/zuuned-linux](https://github.com/badgeromen/zuuned-linux).
-**[Download Zuuned Linux 0.2.0](https://github.com/badgeromen/zuuned-linux/releases/tag/v0.2.0)**
-for 64-bit Linux with glibc 2.41 or newer, X11/XWayland and OpenGL. Choose
-`x86_64` for Intel/AMD PCs or experimental `aarch64` for ARM64 desktops, and
-verify the matching checksum. ARM requires a 64-bit Debian 13/Trixie-compatible
-system; this is not a 32-bit or Debian 12/Bookworm build. [Older releases](https://github.com/badgeromen/zuuned-linux/releases)
-remain available. Source archives are for building, not ready-to-run installers.
-Use each release's checksum and compatibility notes. A migrated download keeps
-its original version and binary contents; it does not automatically include
-changes in the current source tree.
+**[Download Zuuned Linux 0.2.1](https://github.com/badgeromen/zuuned-linux/releases/tag/v0.2.1)**
+for x86_64 Linux with glibc 2.41 or newer, X11/XWayland and OpenGL.
+This update bundles libzune 0.3.0. Verify the release checksum before running.
+The previous experimental ARM64 build remains in
+[0.2.0](https://github.com/badgeromen/zuuned-linux/releases/tag/v0.2.0);
+it does not include this update. Source archives are for building, not installers.
+See the [0.2.1 release notes](docs/releases/RELEASE_0.2.1.md) for changes,
+validation and known limitations.
 
 Follow the [tester guide](packaging/TESTER_README.md) for launch and USB setup.
 For a problem, open **Settings → Health → export debug report**, review the saved

@@ -128,3 +128,11 @@ successful sends, including a cover failure. Its current return value is best
 effort and cannot certify firmware reindexing. Disconnect normally and check the
 device. Hardware success, chapter transitions, playback and resume are separate
 from compiling or running software fixtures. See [supported behavior and evidence](../docs/SPOKEN_MEDIA.md).
+
+## HD artist content
+
+`hd_artwork` is a public-header-only client for backgrounds, thumbnail, gallery
+and biography delivery. `--validate` is entirely offline; explicit `--serve`
+opens hardware and may create a fresh artist. See the [integration guide](../docs/HD_ARTWORK_API.md)
+for exact arguments, ownership, callback ordering and partial/cache results.
+It is also available as `zunetool hd-art-publish`. It never deletes or retries.

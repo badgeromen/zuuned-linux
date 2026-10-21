@@ -205,9 +205,16 @@ public:
     bool spokenMediaLoading() const { return m_spokenMediaLoading; }
     bool podcastInventoryReady() const { return m_connected && !m_spokenMediaLoading &&
         m_spokenMediaError.isEmpty() && m_podcastMembershipKnown; }
+    // An inventory was read this session, even if some sources are unknown.
+    bool podcastInventoryRead() const { return m_connected && m_spokenMediaRead && !m_spokenMediaLoading &&
+        m_spokenMediaError.isEmpty(); }
     quint64 spokenGeneration() const { return m_spokenGeneration; }
     void applyPodcastCleanup(quint64 generation, const QString &serial, const QVariantList &rows);
     Q_INVOKABLE QVariantMap podcastDeviceStatus(const QString &feedUrl, const QString &sourceUrl) const;
+    // Audio URLs of this feed's episodes on the Zune (every feed when empty);
+    // played: only those it reports played. The library filters its episode
+    // pages in SQLite with these.
+    Q_INVOKABLE QStringList podcastDeviceSources(const QString &feedUrl, bool played = false) const;
     void notePodcastOnDevice(quint64 generation, const QString &serial,
                              const QVariantMap &episode, quint32 itemId);
     QString spokenMediaError() const { return m_spokenMediaError; }
@@ -220,6 +227,9 @@ public:
     QString connectionStage() const { return m_connectionStage; }
     double connectionProgress() const { return m_connectionProgress; }
     QString connectionError() const { return m_connectionError; }
+    // Non-empty while connected to a Zune whose library could not be read;
+    // nothing about its contents is known, so sync must not run.
+    QString libraryError() const { return m_libraryError; }
     QColor moodColor() const { return m_moodColor; }
 
     Q_INVOKABLE void breach();   // connect + MTPZ auth + library scan
@@ -405,7 +415,7 @@ private:
     QVariantList m_photoAlbumsList;
     QVariantList m_podcastEpisodesList, m_audiobookPartsList;
     QHash<QPair<QString, QString>, QVariantMap> m_podcastDeviceStatus;
-    bool m_podcastMembershipKnown = false;
+    bool m_podcastMembershipKnown = false, m_spokenMediaRead = false;
     QString m_podcastStatusWarning;
     void rebuildPodcastDeviceStatus();
     void prunePodcastDeviceStatus(const QSet<quint32> &ids);
@@ -429,6 +439,7 @@ private:
     QString m_connectionStage;
     double m_connectionProgress = 0;
     QString m_connectionError;
+    QString m_libraryError;
     QColor m_moodColor; // invalid/transparent when disconnected
     bool m_awaitingDisconnect = false;
     bool m_ejecting = false;

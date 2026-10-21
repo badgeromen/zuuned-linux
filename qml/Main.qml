@@ -958,13 +958,16 @@ ApplicationWindow {
     }
     Connections {
         target: SyncEngine
+        function onSyncNotice(message) { toastHost.show(message) }
         function onCapacityRejected(rejectedItems, addedCount, queuedGB, freeGB) {
             capacitySheet.openWith(rejectedItems, addedCount, queuedGB, freeGB)
         }
         function onSyncSummary(elapsedMs, tracks, videos, photos, skipped, failed, podcasts, audiobooks) {
             syncCompleteSheet.openWith(elapsedMs, tracks, videos, photos,
                                        skipped, failed, podcasts, audiobooks,
-                                       SyncEngine.lastSync.podcastsRemoved, SyncEngine.lastSync.podcastCleanupWarning)
+                                       SyncEngine.lastSync.podcastsRemoved,
+                                       [SyncEngine.lastSync.podcastCleanupWarning, SyncEngine.lastSync.hdArtworkWarning].filter(Boolean).join("\n"),
+                                       SyncEngine.lastSync.hdArtworkDelivered)
         }
     }
     SyncCompleteSheet { id: syncCompleteSheet }

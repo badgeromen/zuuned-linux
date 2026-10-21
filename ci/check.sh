@@ -41,6 +41,7 @@ run spoken-organization bash tests/spoken-organization/run-qml.sh
 run spoken-settings bash tests/spoken-organization/run-settings.sh
 run queue-actions env PHOTO_TEST_INPUT=tests/queue bash tests/actions/photo-run.sh
 run spoken-sync node tests/spoken-sync/run-backend.mjs
+run spoken-covers node tests/spoken-cover-worker/run.mjs
 run device-spoken-qml bash tests/device-spoken/run-qml.sh
 run device-spoken-backend node tests/device-spoken/run-backend.mjs
 run spoken-inventory bash libzune/tests/run-spoken-inventory.sh
@@ -51,6 +52,7 @@ run podcast-cleanup-worker node tests/podcast-cleanup-worker/run.mjs
 run audiobook-protocol bash libzune/tests/run-audiobook-gate.sh
 run audiobook-transfer-protocol bash libzune/tests/run-audiobook-protocol.sh
 run media-capabilities bash libzune/tests/run-media-capabilities.sh
+run brand-limits bash libzune/tests/run-brand-limits.sh
 run video-protocol bash libzune/tests/run-video-named.sh
 run identity bash tests/music-dedup/run-identity.sh
 run migration bash tests/music-dedup/run-migration.sh

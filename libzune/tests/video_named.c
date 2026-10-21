@@ -63,7 +63,7 @@ static int string_equals(uint16_t code, const char *expected) {
 static int number_equals(uint16_t code, uint32_t expected, uint32_t bytes) {
     Property *p = property(code);
     if (!p || p->len != bytes) return 0;
-    return (bytes == 2 ? rd16(p->data) : rd32(p->data)) == expected;
+    return (bytes == 2 ? zune_le16(p->data) : zune_le32(p->data)) == expected;
 }
 
 static void reset_transport(void) {
@@ -166,6 +166,7 @@ void zune_set_error(const char *fmt, ...) {
     vsnprintf(last_error, sizeof(last_error), fmt, args);
     va_end(args);
 }
+void zune_clear_error(void) { last_error[0] = 0; }
 const char *zune_get_error(void) { return last_error; }
 
 static int send_named(ZuneDevice *dev, const char *path, uint16_t genre,
@@ -221,9 +222,9 @@ int main(void) {
           "episode matches captured Windows Name/FileName/series property split");
     Property *description = property(MTP_OPC_Description);
     Property *art = property(MTP_OPC_RepresentativeSampleData);
-    check(description && rd32(description->data) == strlen("A description")
+    check(description && zune_le32(description->data) == strlen("A description")
           && description->len == 4 + 2 * strlen("A description")
-          && art && rd32(art->data) == sizeof(poster)
+          && art && zune_le32(art->data) == sizeof(poster)
           && memcmp(art->data + 4, poster, sizeof(poster)) == 0,
           "description remains AUINT16 and poster remains AUINT8");
 
@@ -307,6 +308,9 @@ int main(void) {
     check(ret == -1 && id == 0 && creates == 0,
           "invalid empty title fails before touching transport and clears stale output ID");
 
+    /* The deprecated helpers keep their contracts until they are removed. */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
     reset_transport();
     ret = zune_smuggle_movie(&dev, path, "Legacy.wmv", NULL, NULL, 0, &id);
     check(ret == 0 && string_equals(MTP_OPC_Name, "Legacy.wmv")
@@ -318,6 +322,7 @@ int main(void) {
     check(ret == 0 && string_equals(MTP_OPC_Name, "Legacy Series - S02E05")
           && string_equals(MTP_OPC_ObjectFileName, "Legacy.wmv"),
           "legacy episode API remains compatible while the named API opts into clean titles");
+#pragma GCC diagnostic pop
 
     uint8_t record[128] = {0};
     record[0] = 1; record[16] = sizeof(payload); record[38] = 4;

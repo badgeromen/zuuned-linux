@@ -73,3 +73,20 @@ Existing evidence: [photo candidate](releases/TESTER_PHOTOS_2026-09-28.md),
 [identity audit](audits/DISC_IDENTITY_2026-09-27.md),
 [recovery fixtures](../tests/recovery/README.md), and
 [identity/migration fixtures](../tests/music-dedup/README.md).
+
+## October 19 hardware matrix findings
+
+The libzune 0.3.0 format matrix on a Zune 80 (libzune
+`docs/HARDENING_0.3.0.md`, Appendix C) ran this app's `transcodetool` paths
+beside libzune's. Sync passthrough previously used `sniffIsMpeg`, which
+accepts any `ID3` prefix or 0xFFE frame sync, so raw ADTS AAC, MP2 and
+ID3-fronted FLAC would have been retagged and sent unconverted as MP3. Sync now
+uses `SyncEngine::sniffIsMp3` (Layer III after any ID3v2 tags; 15 fixtures in
+`tests/music-sync/`). `sniffIsMpeg` still guards in-place ID3 edits, where those
+streams tolerate a tag. After the fix, both files transcoded, uploaded and read
+back byte-identical on the device.
+
+Open: `transcode/libav_transcode.c` names prepared files
+`/tmp/zuuned_<kind>_<stem>_<pid>.<ext>`, predictable paths in a shared
+directory (libzune moved to `mkstemps` under `$TMPDIR` in T1.3). Chapter
+ranges already use `mkstemps`.

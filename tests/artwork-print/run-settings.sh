@@ -21,6 +21,7 @@ ${CXX:-c++} -std=c++20 -O1 -g -Wall -Wextra -fPIC -Isrc \
     "${settings_flags[@]}" -o "$settings_root/settings-test"
 "$settings_root/settings-test"
 "$settings_root/settings-test" --restore
+"$settings_root/settings-test" --sans-restore
 
 for settings_component in ArtworkStyleSettings Theme; do
     ln -s "$settings_repo/qml/$settings_component.qml" "$settings_root/imports/Zuuned/$settings_component.qml"

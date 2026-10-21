@@ -1,6 +1,7 @@
 #include "player/PlayerService.h"
 #include "spoken/SpokenMediaService.h"
 #include "spoken/SpokenStore.h"
+#include "spoken/PodcastFeed.h"
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
@@ -8,6 +9,7 @@
 #include <QSet>
 #include <QGuiApplication>
 #include <QImage>
+#include <QJSValue>
 #include <QQmlApplicationEngine>
 #include <QQuickItem>
 #include <QQuickWindow>
@@ -16,7 +18,10 @@
 #include <QTcpSocket>
 #include <QTemporaryDir>
 #include <QTest>
+#include <QTimeZone>
+#include <QUrlQuery>
 #include <functional>
+#include <memory>
 #include <algorithm>
 #include <sqlite3.h>
 
@@ -90,6 +95,11 @@ int main(int argc, char **argv) {
     check(server.listen(QHostAddress::LocalHost, 0), "loopback fixture server listens");
     QString base = QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort());
     int audioRequests = 0;
+    // Paged back catalogues (RFC 5005), newest first.
+    int pagedCount = 8, cappedCount = 6, repeatCount = 12;
+    bool stuckNoNext = false;
+    QSet<int> flakyFailing;
+    QHash<QString, int> pagedRequests;
     QList<QTcpSocket *> held;
     QObject::connect(&server, &QTcpServer::newConnection, &server, [&] {
         while (server.hasPendingConnections()) {
@@ -133,13 +143,92 @@ int main(int argc, char **argv) {
                     body = f.readAll();
                 } else if (path == "/bad")
                     body = "<rss>broken";
+                else if (path == "/large") {
+                    // A long back catalogue, past the former 8 MiB cap.
+                    body = "<rss version=\"2.0\"><channel><title>Back catalogue</title>";
+                    for (int i = 0; i < 3104; ++i)
+                        body += "<item><guid>c" + QByteArray::number(i) + "</guid><title>Episode " +
+                                QByteArray::number(i) + "</title><description>" + QByteArray(4096, 'n') +
+                                "</description><enclosure url=\"" + base.toUtf8() + "/audio.mp3?c=" +
+                                QByteArray::number(i) + "\" type=\"audio/mpeg\"/></item>";
+                    body += "</channel></rss>";
+                } else if (path.startsWith("/paged") || path.startsWith("/flaky") || path.startsWith("/loop") ||
+                           path.startsWith("/capped") || path.startsWith("/repeat") || path.startsWith("/slow") ||
+                           path.startsWith("/dupe") || path.startsWith("/empty") || path.startsWith("/stuck")) {
+                    // Three per document (paged-big: 100). loop's second page links
+                    // back to its first; repeat's third page repeats its second;
+                    // slow answers after 400 ms; dupe's second page repeats the newest
+                    // GUID with stale content; empty's second page lists nothing.
+                    const QUrl url(base + QString::fromUtf8(path));
+                    const QString name = url.path().mid(1);
+                    const int requested = std::max(1, QUrlQuery(url).queryItemValue("page").toInt());
+                    ++pagedRequests[name + ":" + QString::number(requested)];
+                    const int number = name == "repeat" && requested >= 3 ? requested - 1 : requested;
+                    const int total = name == "paged-big" ? 250 : name == "loop" ? 6 : name == "flaky" ? 8
+                                    : name == "capped" ? cappedCount : name == "repeat" ? repeatCount
+                                    : name.startsWith("slow") ? 9 : name == "dupe" ? 6 : name == "empty" ? 9
+                                    : name == "stuck" ? 9 : pagedCount;
+                    const int per = name == "paged-big" ? 100 : 3;
+                    if ((name == "flaky" && flakyFailing.contains(number)) || (name == "stuck" && number == 3)) {
+                        status = 503;
+                        body = "Unavailable";
+                    } else {
+                        body = "<rss version=\"2.0\" xmlns:atom=\"http://www.w3.org/2005/Atom\"><channel><title>" +
+                               name.toUtf8() + " show</title>";
+                        if (name == "loop")
+                            body += "<atom:link rel=\"next\" href=\"" + base.toUtf8() +
+                                    (number == 1 ? "/loop?page=2" : "/loop") + "\"/>";
+                        else if (number * per < total && !(name == "stuck" && number == 1 && stuckNoNext))
+                            body += "<atom:link rel=\"next\" href=\"/" + name.toUtf8() + "?page=" +
+                                    QByteArray::number(requested + 1) + "\"/>";
+                        if (name == "dupe" && number == 2)
+                            body += "<item><guid>dupe-6</guid><title>stale copy</title><pubDate>Mon, 01 Jan 2001 12:00:00 +0000</pubDate>"
+                                    "<enclosure url=\"" + base.toUtf8() + "/audio.mp3?dupe=stale\" type=\"audio/mpeg\"/></item>";
+                        for (int i = (number - 1) * per; i < std::min(total, number * per); ++i) {
+                            if (name == "empty" && number == 2)
+                                break;
+                            const int n = total - i;
+                            const auto date = QDateTime(QDate(2020, 1, 1).addDays(n), QTime(12, 0), QTimeZone::UTC);
+                            body += "<item><guid>" + name.toUtf8() + "-" + QByteArray::number(n) + "</guid><title>" +
+                                    name.toUtf8() + " episode " + QByteArray::number(n) + "</title><pubDate>" +
+                                    date.toString(Qt::RFC2822Date).toUtf8() + "</pubDate><enclosure url=\"" +
+                                    base.toUtf8() + "/audio.mp3?" + name.toUtf8() + "=" + QByteArray::number(n) +
+                                    "\" type=\"audio/mpeg\"/></item>";
+                        }
+                        body += "</channel></rss>";
+                    }
+                } else if (path == "/ratio") {
+                    QFile f(root + "/ratio.xml.gz");
+                    const auto gz = f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray();
+                    socket->write("HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: " +
+                                  QByteArray::number(gz.size()) + "\r\nConnection: close\r\n\r\n" + gz);
+                    socket->disconnectFromHost();
+                    return;
+                } else if (path == "/huge-declared") {
+                    socket->write("HTTP/1.1 200 OK\r\nContent-Length: " +
+                                  QByteArray::number(qint64(Podcasts::MaxFeedBytes) + 1) +
+                                  "\r\nConnection: close\r\n\r\n");
+                    socket->disconnectFromHost();
+                    return;
+                } else if (path == "/huge-stream") {
+                    // No length: the body itself has to be cut off.
+                    socket->write("HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n");
+                    socket->write(QByteArray(Podcasts::MaxFeedBytes + 1024 * 1024, 'x'));
+                    socket->disconnectFromHost();
+                    return;
+                }
                 else {
                     status = 404;
                     body = "Not found";
                 }
-                socket->write("HTTP/1.1 " + QByteArray::number(status) +
-                              " OK\r\nContent-Length: " + QByteArray::number(body.size()) +
-                              "\r\nConnection: close\r\n\r\n" + body);
+                const auto reply = "HTTP/1.1 " + QByteArray::number(status) +
+                                   " OK\r\nContent-Length: " + QByteArray::number(body.size()) +
+                                   "\r\nConnection: close\r\n\r\n" + body;
+                if (path.startsWith("/slow")) {
+                    QTimer::singleShot(400, socket, [socket, reply] { socket->write(reply); socket->disconnectFromHost(); });
+                    return;
+                }
+                socket->write(reply);
                 socket->disconnectFromHost();
             });
         }
@@ -171,6 +260,19 @@ int main(int argc, char **argv) {
                      });
     auto settle = [&] { return until([&] { return !service->busy(); }, 15000); };
     check(settle(), "service loads its isolated collection");
+    service->previewFeed(QUrl(base + "/large"));
+    check(settle() && lastOk && service->preview().value("episodeCount").toInt() == 3104 &&
+              !service->preview().contains("episodes"),
+          "a 3,104-episode feed over 12 MiB previews, keeping its episodes out of QML");
+    service->previewFeed(QUrl(base + "/ratio"));
+    check(settle() && lastOk && service->preview().value("episodeCount").toInt() == 3000,
+          "a gzip feed compressed far past Qt's bomb ratio previews (our own byte limit applies)");
+    service->previewFeed(QUrl(base + "/huge-declared"));
+    check(settle() && !lastOk && lastError.contains("128 MiB") && service->preview().isEmpty(),
+          "a response declaring more than 128 MiB is refused, naming the limit");
+    service->previewFeed(QUrl(base + "/huge-stream"));
+    check(settle() && !lastOk && lastError.contains("128 MiB") && service->preview().isEmpty(),
+          "an undeclared response past 128 MiB is cut off, naming the limit");
     service->previewFeed(QUrl(base + "/redirect"));
     check(settle() && lastOk && service->preview().value("title") == "Fixture show",
           "RSS preview follows validated redirect");
@@ -859,8 +961,10 @@ int main(int argc, char **argv) {
         [&](const QString &token, const QString &serial, const QVariantList &accepted, const QString &error) {
             playedToken = token; playedSerial = serial; playedRows = accepted; playedError = error; ++playedAcks;
         });
+    // Candidates are read for the device audio URLs that matter (on the Zune or queued).
     auto candidateFor = [&](const QString &id) {
-        for (const auto &v : service->podcastCleanupCandidates())
+        const auto source = service->podcastDeviceIdentity(id).value("sourceUrl").toString();
+        for (const auto &v : service->podcastCleanupCandidates({source}))
             if (v.toMap().value("spokenId") == id) return v.toMap();
         return QVariantMap();
     };
@@ -873,6 +977,15 @@ int main(int argc, char **argv) {
           candidate.value("posterPath").toString() == QUrl(service->cover(ep)).toLocalFile() &&
           QFileInfo(candidate.value("posterPath").toString()).isFile() &&
           !otherCandidate.isEmpty(), "cleanup candidates retain exact identities and local show artwork for display");
+    {
+        const auto only = service->podcastCleanupCandidates({candidate.value("sourceUrl").toString()});
+        check(only.size() == 1 && only.first().toMap().value("spokenId") == ep &&
+              service->podcastCleanupCandidates({}).isEmpty(),
+              "cleanup candidates are read only for the device audio URLs asked for");
+        const auto all = service->podcastCleanupCandidates({}, true);
+        check(all.size() == 2 && std::any_of(all.begin(), all.end(), [&](const QVariant &v) { return v.toMap().value("spokenId") == ep; }),
+              "before the Zune's inventory is read, every episode Zuuned sent is a candidate");
+    }
     const auto deviceIdentity = service->podcastDeviceIdentity(ep);
     check(deviceIdentity.size() == 2 && deviceIdentity.value("feedUrl") == firstTransfer.value("feedUrl") &&
           deviceIdentity.value("sourceUrl") == firstTransfer.value("sourceUrl"),
@@ -1070,6 +1183,299 @@ int main(int argc, char **argv) {
               selector.selectPodcastEpisodes(selectionShowId, "newest", 5001).isEmpty() &&
               selector.selectPodcastEpisodes(selectionShowId, "random", 3).isEmpty(),
               "range preview rejects invalid orders and out-of-range counts");
+    }
+    // Paged back catalogues: older pages load in the background, one at a time.
+    {
+        auto walked = [&] { return until([&] { return !service->busy() && !service->loadingOlder(); }, 30000); };
+        auto showFor = [&](const QString &title) {
+            for (const auto &v : service->collections("show"))
+                if (v.toMap().value("title") == title) return v.toMap();
+            return QVariantMap();
+        };
+        auto titlesOf = [](const QVariantMap &page) {
+            QStringList titles;
+            for (const auto &v : page.value("rows").toList()) titles << v.toMap().value("title").toString();
+            return titles;
+        };
+        service->previewFeed(QUrl(base + "/paged"));
+        check(settle() && lastOk && service->preview().value("episodeCount").toInt() == 3 &&
+                  service->preview().value("hasOlder").toBool(),
+              "a paged feed previews its newest document and reports older pages");
+        service->subscribePreview();
+        check(settle() && lastOk && walked(), "subscribing reads the older pages in the background");
+        auto paged = showFor("paged show");
+        const QString pagedId = paged.value("id").toString();
+        check(paged.value("count").toInt() == 8 && service->showSummary(pagedId).value("olderState") == "complete" &&
+                  pagedRequests.value("paged:2") == 1 && pagedRequests.value("paged:3") == 1,
+              "all eight episodes across three documents are saved and the walk completes");
+        const auto first = service->episodePage(pagedId, {{"pageSize", 3}});
+        const auto firstRow = first.value("rows").toList().value(0).toMap();
+        check(first.value("total").toInt() == 8 && first.value("pages").toInt() == 3 &&
+                  titlesOf(first) == QStringList{"paged episode 8", "paged episode 7", "paged episode 6"} &&
+                  !firstRow.contains("description") && firstRow.value("feedUrl") == paged.value("identity") &&
+                  firstRow.value("deviceSource") == firstRow.value("sourceUrl"),
+              "episode pages come newest first, without show notes, carrying the device identity");
+        const auto beyond = service->episodePage(pagedId, {{"pageSize", 3}, {"page", 7}});
+        check(beyond.value("page").toInt() == 2 && titlesOf(beyond) == QStringList{"paged episode 2", "paged episode 1"},
+              "a page past the end shows the last page");
+        check(titlesOf(service->episodePage(pagedId, {{"search", "EPISODE 1"}})) == QStringList{"paged episode 1"} &&
+                  service->episodePage(pagedId, {{"filter", "downloaded"}}).value("total").toInt() == 0 &&
+                  service->episodePage(pagedId, {{"filter", "unplayed"}, {"playedSources", QStringList{firstRow.value("deviceSource").toString()}}})
+                          .value("total").toInt() == 7,
+              "search folds case; downloaded and unplayed filters page in SQLite, device-played episodes excluded");
+        service->setFavorite(firstRow.value("id").toString(), true);
+        check(settle() && titlesOf(service->episodePage({}, {{"starred", true}})).contains("paged episode 8") &&
+                  service->episodePage(pagedId, {{"filter", "starred"}}).value("total").toInt() == 1 &&
+                  service->showOnDevice(pagedId, {firstRow.value("sourceUrl").toString()}) &&
+                  !service->showOnDevice(pagedId, {base + "/nowhere.mp3"}) && service->resumeEpisode(pagedId).isEmpty(),
+              "starred episodes page across shows; on-device and resume lookups query SQLite");
+        service->refreshFeed(pagedId);
+        check(settle() && lastOk && walked() && pagedRequests.value("paged:2") == 1 &&
+                  service->showSummary(pagedId).value("count").toInt() == 8,
+              "refreshing a complete show with nothing new reads no older page");
+        pagedCount = 12;
+        service->refreshFeed(pagedId);
+        check(settle() && lastOk && walked() && service->showSummary(pagedId).value("count").toInt() == 12 &&
+                  pagedRequests.value("paged:2") == 2 && pagedRequests.value("paged:3") == 2 &&
+                  pagedRequests.value("paged:4") == 0,
+              "new episodes are caught up page by page, stopping at a page with nothing new");
+        flakyFailing = {2};
+        service->previewFeed(QUrl(base + "/flaky"));
+        settle();
+        service->subscribePreview();
+        check(settle() && walked(), "a feed whose second page fails still subscribes");
+        auto flaky = showFor("flaky show");
+        const QString flakyId = flaky.value("id").toString();
+        check(flaky.value("count").toInt() == 3 && flaky.value("olderState") == "incomplete" &&
+                  flaky.value("olderPage") == base + "/flaky?page=2" && !flaky.value("olderError").toString().isEmpty(),
+              "a failed older page leaves the show incomplete, its cursor on that page");
+        flakyFailing.clear();
+        service->refreshFeed(flakyId);
+        check(settle() && lastOk && walked() && showFor("flaky show").value("count").toInt() == 8 &&
+                  showFor("flaky show").value("olderState") == "complete" &&
+                  showFor("flaky show").value("olderPage").toString().isEmpty(),
+              "the next refresh resumes from the failed page and completes");
+        {
+            sqlite3 *db = nullptr;
+            const auto dbPath = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/spoken/spoken.db";
+            const auto cursor = (base + "/flaky?page=3").toUtf8();
+            bool prepared = sqlite3_open(QFile::encodeName(dbPath).constData(), &db) == SQLITE_OK;
+            sqlite3_stmt *stmt = nullptr;
+            prepared = prepared && sqlite3_prepare_v2(db, "UPDATE items SET payload=json_set(payload,'$.olderState','loading','$.olderPage',?) WHERE id=?", -1, &stmt, nullptr) == SQLITE_OK;
+            if (prepared) {
+                sqlite3_bind_text(stmt, 1, cursor.constData(), cursor.size(), SQLITE_TRANSIENT);
+                const auto id = flakyId.toUtf8();
+                sqlite3_bind_text(stmt, 2, id.constData(), id.size(), SQLITE_TRANSIENT);
+                prepared = sqlite3_step(stmt) == SQLITE_DONE;
+            }
+            sqlite3_finalize(stmt);
+            prepared = prepared && sqlite3_exec(db, "DELETE FROM items WHERE kind='episode' AND identity IN ('guid:flaky-1','guid:flaky-2')", nullptr, nullptr, nullptr) == SQLITE_OK;
+            if (db) sqlite3_close(db);
+            check(prepared, "fixture: a walk interrupted two episodes short of its last page");
+            SpokenMediaService reopened;
+            check(until([&] { return !reopened.busy() && !reopened.loadingOlder() &&
+                                     reopened.showSummary(flakyId).value("count").toInt() == 8; }, 30000) &&
+                      reopened.showSummary(flakyId).value("olderState") == "complete",
+                  "an interrupted walk resumes when the library loads, from its saved page");
+        }
+        service->previewFeed(QUrl(base + "/loop"));
+        settle();
+        service->subscribePreview();
+        check(settle() && walked() && showFor("loop show").value("olderState") == "complete" &&
+                  showFor("loop show").value("count").toInt() == 6 && pagedRequests.value("loop:2") == 1 &&
+                  pagedRequests.value("loop:1") == 1,
+              "a page linking back to the feed ends the chain as complete");
+        // A walk stopped before reading its first older page, and a chain that repeats a page:
+        // the next refresh reads to the end, never stopping where catching up would.
+        service->previewFeed(QUrl(base + "/repeat"));
+        settle();
+        service->subscribePreview();
+        check(settle() && walked() && showFor("repeat show").value("count").toInt() == 12 &&
+                  showFor("repeat show").value("olderState") == "complete",
+              "a chain repeating one page still reads to its last page");
+        const QString repeatId = showFor("repeat show").value("id").toString();
+        auto sql = [&](const QByteArray &statement) {
+            sqlite3 *db = nullptr;
+            const auto dbPath = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/spoken/spoken.db";
+            bool ok = sqlite3_open(QFile::encodeName(dbPath).constData(), &db) == SQLITE_OK &&
+                      sqlite3_exec(db, statement.constData(), nullptr, nullptr, nullptr) == SQLITE_OK;
+            if (db) sqlite3_close(db);
+            return ok;
+        };
+        check(sql("UPDATE items SET payload=json_set(payload,'$.olderState','loading','$.olderPage','" + base.toUtf8() +
+                  "/repeat?page=2') WHERE id='" + repeatId.toUtf8() + "'; DELETE FROM items WHERE kind='episode' AND parent='" +
+                  repeatId.toUtf8() + "' AND CAST(substr(identity,13) AS INTEGER)<=9"),
+              "fixture: a walk that never read its first older page");
+        repeatCount = 13;
+        service->refreshFeed(repeatId);
+        check(settle() && walked() && service->showSummary(repeatId).value("count").toInt() == 13 &&
+                  service->showSummary(repeatId).value("olderState") == "complete" && pagedRequests.value("repeat:6") >= 1,
+              "a refresh with new episodes reads the never-read chain to its end");
+        // Cancelling other work leaves the walk going; quitting resumes it at the next start.
+        service->previewFeed(QUrl(base + "/slow"));
+        settle();
+        service->subscribePreview();
+        check(settle() && until([&] { return pagedRequests.value("slow:2") == 1; }), "a slow walk is under way");
+        service->cancelWork();
+        check(walked() && showFor("slow show").value("count").toInt() == 9 &&
+                  showFor("slow show").value("olderState") == "complete",
+              "cancelling a task does not stop the walk through older pages");
+        {
+            auto quitting = std::make_unique<SpokenMediaService>();
+            until([&] { return !quitting->busy(); });
+            quitting->previewFeed(QUrl(base + "/slow2"));
+            until([&] { return !quitting->busy(); });
+            quitting->subscribePreview();
+            check(until([&] { return pagedRequests.value("slow2:2") == 1; }), "fixture: a walk in flight when Zuuned quits");
+            quitting.reset();
+        }
+        {
+            SpokenMediaService resumed;
+            QString slowId;
+            until([&] {
+                for (const auto &v : resumed.collections("show"))
+                    if (v.toMap().value("title") == "slow2 show") slowId = v.toMap().value("id").toString();
+                return !slowId.isEmpty() && !resumed.busy() && !resumed.loadingOlder() &&
+                       resumed.showSummary(slowId).value("count").toInt() == 9;
+            }, 30000);
+            check(resumed.showSummary(slowId).value("count").toInt() == 9 &&
+                      resumed.showSummary(slowId).value("olderState") == "complete" && pagedRequests.value("slow2:2") == 2,
+                  "a walk interrupted by quitting resumes at the next start");
+        }
+        // Older pages only add episodes: a stale copy of the newest GUID changes nothing.
+        service->previewFeed(QUrl(base + "/dupe"));
+        settle();
+        service->subscribePreview();
+        check(settle() && walked() && showFor("dupe show").value("count").toInt() == 6 &&
+                  titlesOf(service->episodePage(showFor("dupe show").value("id").toString(), {{"pageSize", 1}})) ==
+                      QStringList{"dupe episode 6"},
+              "an older page repeating the newest GUID cannot overwrite it");
+        service->previewFeed(QUrl(base + "/empty"));
+        settle();
+        service->subscribePreview();
+        check(settle() && walked() && showFor("empty show").value("count").toInt() == 3 &&
+                  showFor("empty show").value("olderState") == "complete" && pagedRequests.value("empty:3") == 0,
+              "an empty page ends the chain even with a next link");
+        // A page that always fails: the cursor is retried, then the walk starts again from the
+        // first older page, and after three failures only a refresh the user asks for retries.
+        service->previewFeed(QUrl(base + "/stuck"));
+        settle();
+        service->subscribePreview();
+        check(settle() && walked() && showFor("stuck show").value("count").toInt() == 6 &&
+                  showFor("stuck show").value("olderState") == "incomplete" &&
+                  showFor("stuck show").value("olderPage") == base + "/stuck?page=3" &&
+                  showFor("stuck show").value("olderFailures").toInt() == 1,
+              "a deep page failing leaves the show incomplete with its cursor on that page");
+        const QString stuckId = showFor("stuck show").value("id").toString();
+        service->refreshFeed(stuckId);
+        check(settle() && walked() && pagedRequests.value("stuck:3") == 2 && pagedRequests.value("stuck:2") == 1 &&
+                  showFor("stuck show").value("olderFailures").toInt() == 2,
+              "the next refresh retries only the page that failed");
+        service->refreshFeed(stuckId);
+        check(settle() && walked() && pagedRequests.value("stuck:2") == 2 && pagedRequests.value("stuck:3") == 3 &&
+                  showFor("stuck show").value("olderFailures").toInt() == 3,
+              "after two failures the walk starts again from the first older page");
+        bool quietDone = false;
+        service->refreshFeedForQueue(stuckId, [&](bool) { quietDone = true; });
+        check(until([&] { return quietDone; }) && settle() && walked() && pagedRequests.value("stuck:3") == 3 &&
+                  pagedRequests.value("stuck:2") == 2,
+              "after three failures automatic refreshes stop retrying the walk");
+        stuckNoNext = true;
+        service->refreshFeed(stuckId);
+        check(settle() && walked() && pagedRequests.value("stuck:3") == 4 &&
+                  showFor("stuck show").value("olderState") == "incomplete" &&
+                  showFor("stuck show").value("count").toInt() == 6,
+              "a refresh the user asks for retries; a response without a next link leaves the walk unfinished");
+        check(service->podcastCleanupCandidates({}, true).size() == 2,
+              "without the Zune's inventory, cleanup candidates are the sent episodes, not the whole library");
+        // A show keeps at most 100,000 episodes; newer ones past that are left out and reported.
+        service->previewFeed(QUrl(base + "/capped"));
+        settle();
+        service->subscribePreview();
+        check(settle() && walked() && showFor("capped show").value("count").toInt() == 6, "a capped fixture show subscribes");
+        const QString cappedId = showFor("capped show").value("id").toString();
+        {
+            sqlite3 *db = nullptr;
+            const auto dbPath = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/spoken/spoken.db";
+            bool filled = sqlite3_open(QFile::encodeName(dbPath).constData(), &db) == SQLITE_OK;
+            sqlite3_stmt *stmt = nullptr;
+            filled = filled && sqlite3_prepare_v2(db,
+                "WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<99993) "
+                "INSERT INTO items(id,kind,parent,identity,payload) SELECT 'cap-'||x,'episode',?1,'guid:filler-'||x,"
+                "json_object('id','cap-'||x,'kind','episode','parent',?1,'identity','guid:filler-'||x,'title','Filler '||x,"
+                "'sourceUrl','https://example.test/filler/'||x,'published','2001-01-01T00:00:00Z') FROM n", -1, &stmt, nullptr) == SQLITE_OK;
+            if (filled) {
+                const auto id = cappedId.toUtf8();
+                sqlite3_bind_text(stmt, 1, id.constData(), id.size(), SQLITE_TRANSIENT);
+                filled = sqlite3_step(stmt) == SQLITE_DONE;
+            }
+            sqlite3_finalize(stmt);
+            if (db) sqlite3_close(db);
+            check(filled, "fixture: the show holds 99,999 episodes");
+        }
+        cappedCount = 9;
+        service->refreshFeed(cappedId);
+        check(settle() && walked() && service->showSummary(cappedId).value("count").toInt() == 100000 &&
+                  service->showSummary(cappedId).value("olderState") == "limited" &&
+                  service->showSummary(cappedId).value("olderError").toString().contains("100,000"),
+              "a show stops at 100,000 episodes and says so");
+        // The actual show page: one list, 25 more as it scrolls, a newest/oldest toggle.
+        service->previewFeed(QUrl(base + "/paged-big"));
+        settle();
+        service->subscribePreview();
+        check(settle() && walked() && showFor("paged-big show").value("count").toInt() == 250,
+              "a 250-episode show in three documents is saved");
+        const QString bigId = showFor("paged-big show").value("id").toString();
+        page->setProperty("books", false);
+        QMetaObject::invokeMethod(page, "openCollection", Q_ARG(QVariant, bigId));
+        QTest::qWait(300);
+        auto *episodeList = page->findChild<QQuickItem *>("spokenEpisodeList");
+        auto count = [&] { return episodeList->property("count").toInt(); };
+        auto firstTitle = [&] {
+            QJSValue row;
+            QMetaObject::invokeMethod(episodeList->property("model").value<QObject *>(), "get", Q_RETURN_ARG(QJSValue, row), Q_ARG(int, 0));
+            return row.property("row").property("title").toString();
+        };
+        auto pressItem = [&](const char *name) {
+            auto *button = page->findChild<QQuickItem *>(name);
+            if (!button || !button->isVisible() || !button->isEnabled()) return false;
+            QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier,
+                button->mapToScene(QPointF(button->width() / 2, button->height() / 2)).toPoint());
+            QTest::qWait(150);
+            return true;
+        };
+        auto toEnd = [&] {
+            episodeList->setProperty("contentY", episodeList->property("contentHeight").toDouble() - episodeList->height());
+            QTest::qWait(100);
+        };
+        check(count() > 0 && count() < 250 && count() % 25 == 0 && firstTitle() == "paged-big episode 250" &&
+                  !page->findChild<QQuickItem *>("spokenEpisodePager"),
+              "the show page lists the newest episodes 25 at a time, without page buttons");
+        const int loaded = count();
+        toEnd();
+        check(until([&] { return count() > loaded; }), "scrolling towards the end loads the next 25");
+        for (int i = 0; i < 20 && count() < 250; ++i) toEnd();
+        check(count() == 250, "scrolling reaches the oldest episode");
+        episodeList->setProperty("contentY", 300.0);
+        QTest::qWait(100);
+        const double place = episodeList->property("contentY").toDouble();
+        service->setFavorite(showFor("paged-big show").value("id").toString(), true);
+        check(settle() && qAbs(episodeList->property("contentY").toDouble() - place) < 1 && count() == 250,
+              "a library change keeps the list where it was");
+        check(pressItem("spokenEpisodeOrder") && until([&] { return firstTitle() == "paged-big episode 1"; }) &&
+                  count() > 0 && count() < 250 &&
+                  until([&] { return qAbs(episodeList->property("contentY").toDouble() -
+                                          episodeList->property("originY").toDouble()) < 1; }),
+              "the toggle lists the oldest first, seen from the top");
+        check(pressItem("spokenSelectAll") && page->property("checks").toMap().size() == 250,
+              "select all covers the whole show, not just the loaded rows");
+        pressItem("spokenSelectAll");
+        auto *episodeSearch = page->findChild<QQuickItem *>("spokenEpisodeSearch");
+        episodeSearch->setProperty("text", "Episode 7");
+        // Episode 7 and 70 to 79: none of them among the first rows loaded.
+        check(until([&] { return count() == 11; }), "searching a show's episodes finds them anywhere in the show");
+        check(window->grabWindow().save(root + "/native-podcast-pages.png"), "podcast episode list captured");
+        QMetaObject::invokeMethod(page, "openCollection", Q_ARG(QVariant, QString()));
     }
     for (const auto &e : qmlErrors)
         fprintf(stderr, "[native-qml] %s\n", qPrintable(e));

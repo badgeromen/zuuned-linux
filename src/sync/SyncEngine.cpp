@@ -269,22 +269,55 @@ qint64 SyncEngine::estimateTrackBytes(int durationMs, qint64 sourceBytes) {
     return qint64(durationMs / 1000.0 * 40000.0) + 1000 * 1000;
 }
 
-bool SyncEngine::sniffIsMpeg(const QString &path) {
+namespace {
+// After any ID3v2 tags (synchsafe size, plus a footer when flagged) and the
+// zero padding that may follow them, the audio must start with an MPEG frame
+// header: 11 sync bits, a valid version, layer, bitrate and sample rate.
+// ADTS AAC, FLAC and others can carry ID3 tags too, so the tag alone proves
+// nothing. Untagged audio must start with the frame: scanning arbitrary data
+// (PCM, FLAC) would find false syncs.
+bool sniffMpegFrame(const QString &path, bool layer3Only) {
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly))
         return false;
-    const QByteArray h = f.read(16);
-    if (h.size() < 4)
+    qint64 offset = 0;
+    for (int tags = 0; tags < 4; ++tags) {
+        if (!f.seek(offset))
+            return false;
+        const QByteArray h = f.read(10);
+        if (h.size() < 10 || !h.startsWith("ID3"))
+            break;
+        offset += 10 + ((qint64(uchar(h[6]) & 0x7F) << 21) | ((uchar(h[7]) & 0x7F) << 14)
+                        | ((uchar(h[8]) & 0x7F) << 7) | (uchar(h[9]) & 0x7F));
+        if (uchar(h[5]) & 0x10)
+            offset += 10;
+    }
+    if (!f.seek(offset))
         return false;
-    // ID3v2 container — MPEG family, the retagger handles it natively.
-    if (h.startsWith("ID3"))
-        return true;
-    // Bare MPEG frame sync: 11 set bits.
-    const uchar b0 = uchar(h[0]), b1 = uchar(h[1]);
-    if (b0 == 0xFF && (b1 & 0xE0) == 0xE0)
-        return true;
-    // ASF GUID (WMA/WMV — 30 26 B2 75 …) and everything else: transcode.
-    return false;
+    const QByteArray w = f.read(64 * 1024);
+    int i = 0;
+    if (offset > 0)
+        while (i < w.size() && w[i] == '\0')
+            ++i;
+    if (i + 3 > w.size())
+        return false;
+    const uchar b1 = uchar(w[i + 1]), b2 = uchar(w[i + 2]);
+    if (uchar(w[i]) != 0xFF || (b1 & 0xE0) != 0xE0)
+        return false;
+    // Layer bits 01 = Layer III, 10/11 = Layer II/I, 00 = ADTS AAC (or a FLAC
+    // frame). Reject reserved version, bitrate and sample-rate fields.
+    const int layer = (b1 >> 1) & 3;
+    return (layer3Only ? layer == 1 : layer != 0) && ((b1 >> 3) & 3) != 1
+        && (b2 >> 4) != 0xF && (b2 >> 4) != 0 && ((b2 >> 2) & 3) != 3;
+}
+} // namespace
+
+bool SyncEngine::sniffIsMpeg(const QString &path) {
+    return sniffMpegFrame(path, false);
+}
+
+bool SyncEngine::sniffIsMp3(const QString &path) {
+    return sniffMpegFrame(path, true);
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -656,6 +689,18 @@ void SyncEngine::retainFailedInflight(quint32 itemId) {
     emit interruptedSendChanged();
 }
 
+void SyncEngine::adoptInflightVideo() {
+    QFile marker(inflightPath());
+    if (!marker.open(QIODevice::ReadOnly)) return;
+    const QJsonObject object = QJsonDocument::fromJson(marker.readAll()).object();
+    if (object.value(QStringLiteral("type")).toString() != QLatin1String("video")) return;
+    m_interruptedVideoFile = object.value(QStringLiteral("filename")).toString();
+    m_interruptedSend = object.value(QStringLiteral("title")).toString();
+    if (m_interruptedSend.isEmpty()) m_interruptedSend = m_interruptedVideoFile;
+    m_interruptedRecoveryStatus = QStringLiteral("Transfer failed. Review recovery before sending more media.");
+    emit interruptedSendChanged();
+}
+
 void SyncEngine::markInflightVideo(const QString &filename, const QString &title) {
     QSaveFile file(inflightPath());
     if (file.open(QIODevice::WriteOnly)) {
@@ -990,9 +1035,28 @@ void SyncEngine::removeGroup(const QString &key) {
 QVariantList SyncEngine::podcastCleanupCandidatesForSession() const {
     QVariantList result;
     if (!m_cleanupCandidates) return result;
+    // Local history matters only for episodes the Zune holds or the queue
+    // would send; a library can hold far more episodes than that.
+    QStringList sources;
+    const bool read = m_device && m_device->podcastInventoryRead();
+    if (read) {
+        for (const auto &value : m_device->podcastEpisodesList()) {
+            const auto row = value.toMap();
+            if (row.value("sourceKnown").toBool()) sources.append(row.value("sourceUrl").toString());
+        }
+        sources += m_device->podcastDeviceSources(QString()); // includes episodes sent since
+    }
+    for (const auto &entry : m_queue.entries())
+        if (entry.type == "podcast") sources.append(entry.podcast.value("sourceUrl").toString());
+    for (const auto &entry : m_entries)
+        if (entry.value("type") == "podcast") sources.append(entry.value("sourceUrl").toString());
+    sources.removeAll(QString());
+    sources.removeDuplicates();
     const bool sameSession = m_device && m_cleanupPreviewSerial == m_device->deviceSerial()
         && m_cleanupPreviewGeneration == m_device->spokenGeneration();
-    for (const auto &value : m_cleanupCandidates())
+    // Before the inventory is read, every episode Zuuned has sent goes too;
+    // the worker correlates them with the live inventory either way.
+    for (const auto &value : m_cleanupCandidates(sources, !read))
         if (!sameSession || !m_cleanupSkippedEpisodes.contains(value.toMap().value("spokenId").toString()))
             result.append(value);
     return result;
@@ -1088,6 +1152,14 @@ void SyncEngine::startSync() {
 
     if (m_device->busy() || m_device->purging() || m_device->pulling()) {
         m_lastError = QStringLiteral("Wait for the current device operation to finish before syncing.");
+        emit syncStateChanged();
+        return;
+    }
+    if (!m_device->libraryError().isEmpty()) {
+        // Without the device library every queued item would look absent:
+        // duplicates, and albums rewired with only the new tracks.
+        m_lastError = QStringLiteral("The Zune's library could not be read, so Zuuned can't tell what is "
+                                     "already on it. Reconnect the Zune and try again.");
         emit syncStateChanged();
         return;
     }
@@ -1301,6 +1373,21 @@ void SyncEngine::startSync() {
     m_currentSendPath.clear();
     m_videoProfile = resolveVideoProfile();
     m_buckets.clear();
+    m_forgeRunToken = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    m_hdArtworkSnapshots.clear();
+    m_hdArtworkResults.clear();
+    m_hdArtworkWarnings.clear();
+    // Pin the saved revision, IDs and expected content hashes now. Immutable
+    // files are read/verified by the worker; edits during this sync apply next
+    // time and cannot change an in-flight catalog.
+    if (m_library) for (const auto &entry : std::as_const(m_entries)) {
+        if (entry.value("skip").toBool()
+            || entry.value("type", "track").toString() != QLatin1String("track")) continue;
+        QString artist = entry.value("albumartist").toString();
+        if (artist.isEmpty()) artist = entry.value("artist").toString();
+        if (artist.isEmpty() || m_hdArtworkSnapshots.contains(artist)) continue;
+        m_hdArtworkSnapshots.insert(artist, m_library->hdArtistArtwork(artist));
+    }
     m_lastError.clear();
     m_entryPos = -1;
     emit syncStateChanged();
@@ -1572,7 +1659,7 @@ void SyncEngine::prepareEntry(int idx) {
             }
             snapshot = sourceCopy->fileName(); inputPath = snapshot;
         }
-        const bool mpeg = !chapter && (podcast ? podcastMp3 : sniffIsMpeg(filepath));
+        const bool mpeg = !chapter && (podcast ? podcastMp3 : sniffIsMp3(filepath));
         // W2: MPEG retag is near-instant ("sending"); anything else
         // transcodes ("transcoding" — the slow, freeze-looking half).
         if (self)
@@ -1957,8 +2044,14 @@ void SyncEngine::beginForge() {
     fprintf(stderr, "[sync] creating %d album objects...\n",
             int(m_buckets.size()));
     QVariantList buckets;
-    for (const QVariantMap &b : std::as_const(m_buckets))
-        buckets.append(b);
+    for (const QVariantMap &b : std::as_const(m_buckets)) {
+        QVariantMap pinned = b;
+        pinned.insert("_forgeRunToken", m_forgeRunToken);
+        pinned.insert("_deviceSerial", m_sendDeviceSerial);
+        pinned.insert("_deviceGeneration", QVariant::fromValue(m_sendDeviceGeneration));
+        pinned.insert("hdArtistArt", m_hdArtworkSnapshots.value(b.value("albumartist").toString()));
+        buckets.append(pinned);
+    }
     emit workerForgeAlbums(buckets);
 }
 
@@ -1981,6 +2074,42 @@ void SyncEngine::onForgeDone(int okCount, int failCount) {
         return;
     }
     beginPhotoPhase();
+}
+
+void SyncEngine::onForgeBatchDone(const QString &runToken, int okCount, int failCount) {
+    if (!m_isSyncing || !m_forging || runToken != m_forgeRunToken) return;
+    onForgeDone(okCount, failCount);
+}
+
+void SyncEngine::onHdArtworkProgress(const QString &serial, quint64 generation,
+                                    const QString &runToken, const QString &artist,
+                                    int acknowledged, int total) {
+    if (!m_isSyncing || !m_forging || runToken != m_forgeRunToken
+        || serial != m_sendDeviceSerial || generation != m_sendDeviceGeneration) return;
+    m_syncPhase = QStringLiteral("artist artwork");
+    m_currentName = QStringLiteral("%1: %2/%3 artist items received")
+        .arg(artist).arg(acknowledged).arg(total);
+    emit progressChanged();
+}
+
+void SyncEngine::onHdArtworkDone(const QString &serial, quint64 generation,
+                                const QString &artist, const QVariantMap &result) {
+    if (!m_isSyncing || !m_forging || result.value("runToken").toString() != m_forgeRunToken
+        || serial != m_sendDeviceSerial || generation != m_sendDeviceGeneration) return;
+    auto row = result;
+    row.insert("artist", artist);
+    m_hdArtworkResults.append(row);
+    const QString message = result.value("message").toString();
+    if (!message.isEmpty()) {
+        const QString warning = QStringLiteral("%1: %2").arg(artist, message);
+        m_hdArtworkWarnings.append(warning);
+        emit syncNotice(warning);
+    }
+    if (result.value("reconnectRequired").toBool()) {
+        m_cancelled = true;
+        m_lastError = QStringLiteral("HD artwork stopped. Reconnect the Zune before continuing. %1").arg(message);
+        emit syncStateChanged();
+    }
 }
 
 // ════════════════════════════════════════════════════════════════════
@@ -2033,12 +2162,15 @@ void SyncEngine::advancePhoto() {
 }
 
 void SyncEngine::onPhotoSendDone(const QString &entryId, bool ok, quint32 itemId,
-                                 const QString &autopsyName) {
+                                 const QString &autopsyName, const QString &refusal) {
     if (!m_isSyncing || !m_inPhotoPhase)
         return;
     if (m_photoPos < 0 || m_photoPos >= m_photoEntries.size()
         || m_photoEntries[m_photoPos].value(QStringLiteral("entryId")).toString() != entryId) return;
-    if (ok) clearInflight();
+    // A photo libzune refused before any device write (not a JPEG and not
+    // convertible, unreadable source, unreadable album list) left nothing to
+    // recover: mark it and go on. Any other failure may have left an object.
+    if (ok || !refusal.isEmpty()) clearInflight();
     else { retainFailedInflight(itemId); m_cancelled = true; }
     m_completedCount++;
     if (ok) {
@@ -2047,6 +2179,10 @@ void SyncEngine::onPhotoSendDone(const QString &entryId, bool ok, quint32 itemId
         if (m_device && m_photoPos >= 0 && m_photoPos < m_photoEntries.size())
             m_device->noteSyncedPhoto(
                 m_photoEntries[m_photoPos].value(QStringLiteral("title")).toString());
+    } else if (!refusal.isEmpty()) {
+        m_queue.setStatus(entryId, QStringLiteral("failed"), refusal);
+        if (m_lastError.isEmpty())
+            m_lastError = QStringLiteral("photo not sent: %1").arg(refusal);
     } else {
         m_queue.setStatus(entryId, QStringLiteral("failed"), humanAutopsy(autopsyName));
         if (m_lastError.isEmpty())
@@ -2307,7 +2443,16 @@ void SyncEngine::onVideoPrepareFinished(const QString &entryId,
 
 void SyncEngine::onVideoSendDone(const QString &entryId, bool ok,
                                  quint32 itemId, const QString &autopsyName) {
-    clearInflight();   // B2: the wire object is complete
+    // libzune could not remove a partial video, or got no usable answer
+    // while creating one (its error says which): the Zune may hold a
+    // truncated object, which crashes the firmware on playback. Keep the
+    // marker for review, as after a killed send. Otherwise the wire object
+    // is complete or gone (B2). The worker passes the error as autopsyName.
+    const bool mayRemain = !ok
+        && (autopsyName.contains(QLatin1String("could not be removed"))
+            || autopsyName.contains(QLatin1String("may hold an incomplete object")));
+    if (mayRemain) adoptInflightVideo();
+    else clearInflight();
     if (entryId != m_currentEntryId || !m_isSyncing || !m_inVideoPhase
         || !m_videoSending)
         return;
@@ -2352,7 +2497,13 @@ void SyncEngine::onVideoSendDone(const QString &entryId, bool ok,
         }
     } else {
         m_lastError = autopsyName;
-        markEntryTerminal(entryId, QStringLiteral("failed"), humanAutopsy(autopsyName));
+        if (mayRemain) {
+            markEntryTerminal(entryId, QStringLiteral("failed"),
+                              QStringLiteral("may have left a partial video on the Zune; review it before syncing again"));
+            m_cancelled = true;     // like a failed track: nothing more until it is reviewed
+        } else {
+            markEntryTerminal(entryId, QStringLiteral("failed"), humanAutopsy(autopsyName));
+        }
     }
 
     if (m_cancelled) {
@@ -2578,6 +2729,12 @@ void SyncEngine::finishSync(bool completed) {
             last.insert(QStringLiteral("podcasts"), podcastsOk);
             last.insert(QStringLiteral("podcastsRemoved"), m_podcastsRemoved);
             last.insert(QStringLiteral("podcastCleanupWarning"), m_cleanupWarning);
+            last.insert(QStringLiteral("hdArtworkResults"), m_hdArtworkResults);
+            last.insert(QStringLiteral("hdArtworkWarning"), m_hdArtworkWarnings.join(QLatin1Char('\n')));
+            int hdDelivered = 0;
+            for (const auto &value : std::as_const(m_hdArtworkResults))
+                hdDelivered += value.toMap().value("delivered").toBool();
+            last.insert(QStringLiteral("hdArtworkDelivered"), hdDelivered);
             last.insert(QStringLiteral("audiobooks"), audiobooksOk);
             last.insert(QStringLiteral("skipped"), skipped);
             last.insert(QStringLiteral("failed"), failed);
@@ -2609,6 +2766,18 @@ void SyncEngine::finishSync(bool completed) {
     } else {
         m_syncCompleted = false;
         m_currentName.clear();
+        // Retain partial/uncertain artwork evidence even when sync was aborted.
+        if (!m_hdArtworkResults.isEmpty()) {
+            m_lastSync = {{"when", QDateTime::currentSecsSinceEpoch()}, {"partial", true},
+                {"device", currentDeviceIdent()}, {"hdArtworkResults", m_hdArtworkResults},
+                {"hdArtworkWarning", m_hdArtworkWarnings.join(QLatin1Char('\n'))}};
+            QSaveFile file(queueStorePath() + QStringLiteral(".lastsync"));
+            if (file.open(QIODevice::WriteOnly)) {
+                file.write(QJsonDocument(QJsonObject::fromVariantMap(m_lastSync)).toJson(QJsonDocument::Compact));
+                file.commit();
+            }
+            emit lastSyncChanged();
+        }
     }
     emit syncStateChanged();
     emit progressChanged();

@@ -21,6 +21,8 @@ extern "C" {
 #endif
 
 #include "ptp.h"  /* gets usb.h transitively */
+#include "bytes.h"
+#include <stdlib.h>
 
 /* ===================================================================
  * MTP Representative Sample Property Codes
@@ -207,16 +209,21 @@ int mtp_send_object(ptp_session_t *s, const uint8_t *data, uint32_t len);
 /*
  * mtp_send_object_from_file — Send object data from a file.
  *
- * Reads the file into memory and calls mtp_send_object.
- * Must be called immediately after a successful mtp_send_object_info().
+ * Streams the file in transport-sized chunks (no file-sized buffer).
+ * Must be called immediately after a successful object creation
+ * (mtp_send_object_info or mtp_send_object_prop_list).
  *
  *   path:  filesystem path to read from
- *   len:   expected file size in bytes (used for validation)
+ *   len:   the size declared at creation; a file of another size is refused
  *
  * Returns 0 on success, -1 on error.
  */
 int mtp_send_object_from_file(ptp_session_t *s, const char *path,
                               uint32_t len);
+
+/* As mtp_send_object_from_file, from an open descriptor (read from offset 0),
+ * for callers that keep the source open to guard against changes. */
+int mtp_send_object_from_fd(ptp_session_t *s, int fd, uint32_t len);
 
 /*
  * mtp_delete_object — Delete an object from the device.
@@ -580,6 +587,42 @@ uint8_t *mtp_string_to_ucs2(const char *utf8, uint32_t *out_len);
  * Returns allocated UTF-8 string (caller frees), or NULL on error.
  */
 char *mtp_ucs2_to_string(const uint8_t *data, uint32_t len);
+
+/*
+ * mtp_read_string_prop — Read a string object property as UTF-8.
+ *
+ * Returns a malloc'd string (caller frees), or NULL when the property cannot
+ * be read or is empty on the wire. Decoding is mtp_ucs2_to_string's.
+ */
+static inline char *mtp_read_string_prop(ptp_session_t *s, uint32_t handle,
+                                         uint16_t prop_code)
+{
+    uint8_t *data = NULL;
+    uint32_t len = 0;
+    char *value = NULL;
+    if (mtp_get_object_prop_value(s, handle, prop_code, &data, &len) == 0
+        && data && len > 0)
+        value = mtp_ucs2_to_string(data, len);
+    free(data);
+    return value;
+}
+
+/*
+ * mtp_prop_desc_writable — 1 when the device describes prop_code for objects
+ * of format as writable (GetSet = 1) with the given data type, else 0. Used
+ * as a preflight before creating an object with SendObjectPropList.
+ */
+static inline int mtp_prop_desc_writable(ptp_session_t *s, uint16_t prop_code,
+                                         uint16_t format, uint16_t data_type)
+{
+    uint8_t *data = NULL;
+    uint32_t len = 0;
+    int ok = mtp_get_prop_desc(s, prop_code, format, &data, &len) == 0 &&
+             data && len >= 5 && zune_le16(data) == prop_code &&
+             zune_le16(data + 2) == data_type && data[4] == 1;
+    free(data);
+    return ok;
+}
 
 #ifdef __cplusplus
 }

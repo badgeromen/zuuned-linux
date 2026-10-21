@@ -84,11 +84,11 @@ static int send_representative_sample(ptp_session_t *ptp,
                                               MTP_OFC_JPEG, 0, 0,
                                               jpeg_data, (uint32_t)jpeg_len);
     if (ret != 0) {
-        fprintf(stderr, "[libzune] send_representative_sample: failed for item %u\n",
+        ZLOG(ZUNE_CHATTER_SCREAM, "libzune", "send_representative_sample: failed for item %u",
                 item_id);
         return -1;
     }
-    fprintf(stderr, "[libzune] representative sample sent for item %u (%zu bytes)\n",
+    ZLOG(ZUNE_CHATTER_TALK, "libzune", "representative sample sent for item %u (%zu bytes)",
             item_id, jpeg_len);
     return 0;
 }
@@ -112,7 +112,7 @@ static int set_video_metadata(ptp_session_t *ptp, uint32_t item_id,
     int mr = mtp_set_object_prop_value_u16(ptp, item_id,
                                             MTP_OPC_MetaGenre, meta_genre);
     int failures = mr == 0 ? 0 : VIDEO_FAIL_CATEGORY;
-    fprintf(stderr, "[libzune] MetaGenre 0x%02X: %s\n",
+    ZLOG(ZUNE_CHATTER_WHISPER, "libzune", "MetaGenre 0x%02X: %s",
             meta_genre, mr == 0 ? "OK" : "FAILED");
 
     /* Description -- Zune requires UCS-2LE (AUINT16) for property 0xDC48.
@@ -124,7 +124,7 @@ static int set_video_metadata(ptp_session_t *ptp, uint32_t item_id,
             int dr = mtp_set_object_prop_value_ucs2(ptp, item_id,
                                                      MTP_OPC_Description,
                                                      ucs2, (uint32_t)len);
-            fprintf(stderr, "[libzune] Description (0xDC48): %s (%d chars)\n",
+            ZLOG(ZUNE_CHATTER_WHISPER, "libzune", "Description (0xDC48): %s (%d chars)",
                     dr == 0 ? "OK" : "FAILED", len);
             if (dr != 0) failures |= VIDEO_FAIL_DESCRIPTION;
         } else failures |= VIDEO_FAIL_DESCRIPTION;
@@ -135,7 +135,7 @@ static int set_video_metadata(ptp_session_t *ptp, uint32_t item_id,
     if (display_name && display_name[0]) {
         int nr = mtp_set_object_prop_value_str(ptp, item_id,
                                                 MTP_OPC_Name, display_name);
-        fprintf(stderr, "[libzune] Name '%s': %s\n",
+        ZLOG(ZUNE_CHATTER_WHISPER, "libzune", "Name '%s': %s",
                 display_name, nr == 0 ? "OK" : "FAILED");
         if (nr != 0) failures |= VIDEO_FAIL_TITLE;
     }
@@ -155,22 +155,10 @@ static int set_video_series(ptp_session_t *ptp, uint32_t item_id,
     if (sr != 0) failures |= VIDEO_FAIL_SERIES;
     if (snr != 0) failures |= VIDEO_FAIL_SEASON;
     if (enr != 0) failures |= VIDEO_FAIL_EPISODE;
-    fprintf(stderr, "[libzune] TV metadata '%s' S%02d E%02d: series=%s season=%s episode=%s\n",
+    ZLOG(ZUNE_CHATTER_WHISPER, "libzune", "TV metadata '%s' S%02d E%02d: series=%s season=%s episode=%s",
             series, season, episode, sr == 0 ? "OK" : "FAILED",
             snr == 0 ? "OK" : "FAILED", enr == 0 ? "OK" : "FAILED");
     return failures;
-}
-
-static char *read_video_string(ptp_session_t *ptp, uint32_t item_id,
-                               uint16_t prop) {
-    uint8_t *data = NULL;
-    uint32_t len = 0;
-    char *value = NULL;
-    if (mtp_get_object_prop_value(ptp, item_id, prop, &data, &len) == 0
-            && data && len > 0)
-        value = mtp_ucs2_to_string(data, len);
-    free(data);
-    return value;
 }
 
 /*
@@ -182,7 +170,7 @@ static int send_video_file(ZuneDevice *dev, const char *filepath,
                             uint32_t *out_item_id) {
     struct stat fst;
     if (stat(filepath, &fst) != 0) {
-        fprintf(stderr, "[libzune] send_video_file: stat failed: %s\n", filepath);
+        ZLOG(ZUNE_CHATTER_SCREAM, "libzune", "send_video_file: stat failed: %s", filepath);
         zune_set_error("Cannot read video file: %s", filepath);
         return -1;
     }
@@ -208,70 +196,35 @@ static int send_video_file(ZuneDevice *dev, const char *filepath,
         return -1;
     }
 
-    fprintf(stderr, "[libzune] sending video: %s (%lu bytes, format=0x%04X)\n",
+    ZLOG(ZUNE_CHATTER_TALK, "libzune", "sending video: %s (%lu bytes, format=0x%04X)",
             display_name ? display_name : filepath,
             (unsigned long)fst.st_size, (int)fmt);
 
-    int ret = -1;
+    zune_upload_t up = { .kind = "video", .path = filepath, .size = (uint32_t)fst.st_size,
+                         .parent = 0, .info = &info };
     uint32_t item_id = 0;
-    uint16_t failure_response = 0;
-    for (int attempt = 1; attempt <= 3; attempt++) {
-        uint32_t new_handle = 0;
-        if (zune_is_aborted(dev)) {
-            free(info.filename);
-            zune_set_error("Aborted: %s", filepath);
-            return -1;
-        }
-        ret = mtp_send_object_info(&dev->ptp, dev->storage_id, 0,
-                                    &info, &new_handle);
-        if (ret == 0) {
-            ret = mtp_send_object_from_file(&dev->ptp, filepath,
-                                             (uint32_t)fst.st_size);
-        }
-        if (ret == 0) {
-            item_id = new_handle;
-            break;
-        }
-        /* DeleteObject updates last_response too. Triage the failed send,
-         * not its successful cleanup, or a refusal is retried as though OK. */
-        failure_response = dev->ptp.last_response;
-        fprintf(stderr, "[libzune] video send attempt %d/3 failed for %s (%s 0x%04X)\n",
-                attempt, display_name ? display_name : filepath,
-                zune_autopsy_name(dev->ptp.last_response),
-                dev->ptp.last_response);
-        if (new_handle != 0) {
-            mtp_delete_object(&dev->ptp, new_handle);
-        }
-        if (zune_wound_is_mortal(failure_response))
-            break;
-        if (attempt < 3) {
-            zune_unjam(dev);
-            usleep(500000);
-        }
-    }
+    int status = zune_smuggle_core(dev, &up, &item_id);
     free(info.filename);
-
+    if (status != ZUNE_UPLOAD_SENT) {
+        if (out_item_id) *out_item_id = 0;
+        return -1;          /* error set and zune_autopsy kept by the engine */
+    }
     if (out_item_id) *out_item_id = item_id;
 
-    if (ret != 0) {
-        zune_set_error("Video upload failed: %s (0x%04X)",
-                       zune_autopsy_name(failure_response), failure_response);
-        return -1;
-    }
-
-    fprintf(stderr, "[libzune] video sent, item_id=%u\n", item_id);
+    ZLOG(ZUNE_CHATTER_TALK, "libzune", "video sent, item_id=%u", item_id);
     return 0;
 }
 
 /* ---- public API ---- */
 
 ZuneVideoFile *zune_get_videos(ZuneDevice *dev, int *count) {
+    zune_clear_error();
     if (!dev || !count) { if (count) *count = 0; return NULL; }
     *count = 0;
 
-    if (dev->disconnecting) return NULL;
+    if (ZUNE_FLAG_GET(dev->disconnecting)) return NULL;
 
-    fprintf(stderr, "[libzune] zune_get_videos: fetching object handles...\n");
+    ZLOG(ZUNE_CHATTER_WHISPER, "libzune", "zune_get_videos: fetching object handles...");
 
     /* Get all object handles (all formats, all parents). A failure
      * here is usually a transport desync (short read → 0x02FF) that
@@ -285,8 +238,8 @@ ZuneVideoFile *zune_get_videos(ZuneDevice *dev, int *count) {
         free(handles);
         handles = NULL;
         nhandles = 0;
-        fprintf(stderr, "[libzune] zune_get_videos: handle query failed — "
-                "unjamming and retrying once\n");
+        ZLOG(ZUNE_CHATTER_SHOUT, "libzune", "zune_get_videos: handle query failed — "
+                "unjamming and retrying once");
         zune_unjam(dev);
         if (mtp_get_object_handles(&dev->ptp, dev->storage_id,
                                     0x00000000, 0x00000000,
@@ -301,7 +254,7 @@ ZuneVideoFile *zune_get_videos(ZuneDevice *dev, int *count) {
     int n = 0;
     int fail_streak = 0;
     for (int i = 0; i < nhandles; i++) {
-        if (dev->disconnecting) break;
+        if (ZUNE_FLAG_GET(dev->disconnecting)) break;
         mtp_object_info_t info;
         memset(&info, 0, sizeof(info));
         if (mtp_get_object_info(&dev->ptp, handles[i], &info) == 0) {
@@ -309,12 +262,12 @@ ZuneVideoFile *zune_get_videos(ZuneDevice *dev, int *count) {
             mtp_free_object_info(&info);
             fail_streak = 0;
         } else if (++fail_streak >= 2) {
-            fprintf(stderr, "[libzune] zune_get_videos: transport looks "
-                    "dead, stopping count at %d/%d\n", i + 1, nhandles);
+            ZLOG(ZUNE_CHATTER_SCREAM, "libzune", "zune_get_videos: transport looks "
+                    "dead, stopping count at %d/%d", i + 1, nhandles);
             break;
         }
     }
-    fprintf(stderr, "[libzune] zune_get_videos: %d video files, reading MetaGenre...\n", n);
+    ZLOG(ZUNE_CHATTER_TALK, "libzune", "zune_get_videos: %d video files, reading MetaGenre...", n);
 
     if (n == 0) {
         free(handles);
@@ -331,13 +284,13 @@ ZuneVideoFile *zune_get_videos(ZuneDevice *dev, int *count) {
     int idx = 0;
     fail_streak = 0;
     for (int i = 0; i < nhandles && idx < n; i++) {
-        if (dev->disconnecting) break;
+        if (ZUNE_FLAG_GET(dev->disconnecting)) break;
         mtp_object_info_t info;
         memset(&info, 0, sizeof(info));
         if (mtp_get_object_info(&dev->ptp, handles[i], &info) != 0) {
             if (++fail_streak >= 2) {
-                fprintf(stderr, "[libzune] zune_get_videos: transport looks "
-                        "dead, stopping at %d/%d\n", i + 1, nhandles);
+                ZLOG(ZUNE_CHATTER_SCREAM, "libzune", "zune_get_videos: transport looks "
+                        "dead, stopping at %d/%d", i + 1, nhandles);
                 break;
             }
             continue;
@@ -351,7 +304,7 @@ ZuneVideoFile *zune_get_videos(ZuneDevice *dev, int *count) {
         videos[idx].item_id   = handles[i];
         videos[idx].filename  = strdup(info.filename ? info.filename : "Unknown");
         videos[idx].object_filename = strdup(info.filename ? info.filename : "");
-        videos[idx].title = read_video_string(&dev->ptp, handles[i], MTP_OPC_Name);
+        videos[idx].title = mtp_read_string_prop(&dev->ptp, handles[i], MTP_OPC_Name);
         if (!videos[idx].title) videos[idx].title = strdup("");
         videos[idx].filesize  = (uint64_t)info.object_compressed_size;
         videos[idx].parent_id = info.parent_object;
@@ -365,12 +318,12 @@ ZuneVideoFile *zune_get_videos(ZuneDevice *dev, int *count) {
                                        MTP_OPC_MetaGenre,
                                        &prop_data, &prop_len) == 0) {
             if (prop_data && prop_len >= 2) {
-                metagenre = (uint16_t)(prop_data[0] | (prop_data[1] << 8));
+                metagenre = zune_le16(prop_data);
             }
             free(prop_data);
         }
         videos[idx].metagenre = metagenre;
-        fprintf(stderr, "[libzune] MetaGenre for %d/%d id=%u -> 0x%02X\n",
+        ZLOG(ZUNE_CHATTER_WHISPER, "libzune", "MetaGenre for %d/%d id=%u -> 0x%02X",
                 idx + 1, n, handles[i], metagenre);
 
         mtp_free_object_info(&info);
@@ -400,6 +353,7 @@ int zune_smuggle_video_named(ZuneDevice *dev, const char *filepath,
                             const char *description,
                             const uint8_t *poster_jpeg, size_t poster_len,
                             uint32_t *out_item_id) {
+    zune_clear_error();
     if (out_item_id) *out_item_id = 0;
     if (!dev || !filepath || !filepath[0] || !object_filename || !object_filename[0]
             || !title || !title[0] || !out_item_id || season < 0 || episode < 0
@@ -407,12 +361,12 @@ int zune_smuggle_video_named(ZuneDevice *dev, const char *filepath,
             || (meta_genre != ZUNE_METAGENRE_MOVIE && meta_genre != ZUNE_METAGENRE_TV_SHOW
                 && meta_genre != ZUNE_METAGENRE_MUSIC_VIDEO && meta_genre != ZUNE_METAGENRE_OTHER)) {
         zune_set_error("Invalid named-video upload arguments");
-        return -1;
+        return ZUNE_BLOWN;
     }
 
     uint32_t item_id = 0;
     if (send_video_file(dev, filepath, object_filename, &item_id) != 0)
-        return -1;
+        return ZUNE_BLOWN;
     /* The media is complete. Never return a retryable file failure after here. */
     *out_item_id = item_id;
     int failures = set_video_metadata(&dev->ptp, item_id, meta_genre, title, description);
@@ -434,18 +388,19 @@ int zune_smuggle_video_named(ZuneDevice *dev, const char *filepath,
                        failures & VIDEO_FAIL_POSTER ? " poster" : "");
         return ZUNE_VIDEO_METADATA_INCOMPLETE;
     }
-    return 0;
+    return ZUNE_OK;
 }
 
 int zune_smuggle_movie(ZuneDevice *dev, const char *filepath,
                      const char *display_name, const char *description,
                      const uint8_t *poster_jpeg, size_t poster_len,
                      uint32_t *out_item_id) {
-    if (!dev || !filepath) return -1;
+    zune_clear_error();
+    if (!dev || !filepath) return ZUNE_BLOWN;
 
     uint32_t item_id = 0;
     if (send_video_file(dev, filepath, display_name, &item_id) != 0)
-        return -1;
+        return ZUNE_BLOWN;
 
     if (out_item_id) *out_item_id = item_id;
 
@@ -457,26 +412,18 @@ int zune_smuggle_movie(ZuneDevice *dev, const char *filepath,
     if (poster_jpeg && poster_len > 0)
         send_representative_sample(&dev->ptp, item_id, poster_jpeg, poster_len);
 
-    return 0;
+    return ZUNE_OK;
 }
 
 int zune_get_series_info(ZuneDevice *dev, uint32_t item_id,
                                 char **out_series, int *out_season, int *out_episode,
                                 char **out_title)
 {
-    if (!dev) return -1;
+    zune_clear_error();
+    if (!dev) return ZUNE_BLOWN;
 
     /* Read series name (0xDA9A) -- string property */
-    char *series = NULL;
-    {
-        uint8_t *data = NULL;
-        uint32_t len = 0;
-        if (mtp_get_object_prop_value(&dev->ptp, item_id, ZUNE_OPC_SeriesName,
-                                       &data, &len) == 0 && data && len > 0) {
-            series = mtp_ucs2_to_string(data, len);
-        }
-        free(data);
-    }
+    char *series = mtp_read_string_prop(&dev->ptp, item_id, ZUNE_OPC_SeriesName);
 
     /* Read season (0xDAB5) -- uint32 property */
     uint32_t season = 0;
@@ -486,8 +433,7 @@ int zune_get_series_info(ZuneDevice *dev, uint32_t item_id,
         if (mtp_get_object_prop_value(&dev->ptp, item_id, ZUNE_OPC_Season,
                                        &data, &len) == 0) {
             if (data && len >= 4) {
-                season = (uint32_t)(data[0] | (data[1] << 8) |
-                                    (data[2] << 16) | (data[3] << 24));
+                season = zune_le32(data);
             }
             free(data);
         }
@@ -501,18 +447,17 @@ int zune_get_series_info(ZuneDevice *dev, uint32_t item_id,
         if (mtp_get_object_prop_value(&dev->ptp, item_id, ZUNE_OPC_Episode,
                                        &data, &len) == 0) {
             if (data && len >= 4) {
-                episode = (uint32_t)(data[0] | (data[1] << 8) |
-                                     (data[2] << 16) | (data[3] << 24));
+                episode = zune_le32(data);
             }
             free(data);
         }
     }
 
     /* Display title is Name; filename is only a fallback for missing metadata. */
-    char *title = read_video_string(&dev->ptp, item_id, MTP_OPC_Name);
+    char *title = mtp_read_string_prop(&dev->ptp, item_id, MTP_OPC_Name);
     if (!title || !title[0]) {
         free(title);
-        title = read_video_string(&dev->ptp, item_id, MTP_OPC_ObjectFileName);
+        title = mtp_read_string_prop(&dev->ptp, item_id, MTP_OPC_ObjectFileName);
     }
 
     const int found = series && series[0];
@@ -521,7 +466,7 @@ int zune_get_series_info(ZuneDevice *dev, uint32_t item_id,
     if (out_episode) *out_episode = (int)episode;
     if (out_title)   *out_title   = title;  else free(title);
 
-    return found ? 0 : -1;
+    return found ? ZUNE_OK : ZUNE_BLOWN;
 }
 
 int zune_smuggle_episode(ZuneDevice *dev, const char *filepath,
@@ -530,11 +475,12 @@ int zune_smuggle_episode(ZuneDevice *dev, const char *filepath,
                           const char *description,
                           const uint8_t *poster_jpeg, size_t poster_len,
                           uint32_t *out_item_id) {
-    if (!dev || !filepath) return -1;
+    zune_clear_error();
+    if (!dev || !filepath) return ZUNE_BLOWN;
 
     uint32_t item_id = 0;
     if (send_video_file(dev, filepath, display_name, &item_id) != 0)
-        return -1;
+        return ZUNE_BLOWN;
 
     if (out_item_id) *out_item_id = item_id;
 
@@ -549,7 +495,7 @@ int zune_smuggle_episode(ZuneDevice *dev, const char *filepath,
                  series, season, episode);
         int nr = mtp_set_object_prop_value_str(&dev->ptp, item_id,
                                                 MTP_OPC_Name, title_buf);
-        fprintf(stderr, "[libzune] Name '%s': %s\n",
+        ZLOG(ZUNE_CHATTER_WHISPER, "libzune", "Name '%s': %s",
                 title_buf, nr == 0 ? "OK" : "FAILED");
     }
 
@@ -565,18 +511,19 @@ int zune_smuggle_episode(ZuneDevice *dev, const char *filepath,
     if (poster_jpeg && poster_len > 0)
         send_representative_sample(&dev->ptp, item_id, poster_jpeg, poster_len);
 
-    return 0;
+    return ZUNE_OK;
 }
 
 int zune_smuggle_clip(ZuneDevice *dev, const char *filepath,
                            const char *display_name,
                            const uint8_t *poster_jpeg, size_t poster_len,
                            uint32_t *out_item_id) {
-    if (!dev || !filepath) return -1;
+    zune_clear_error();
+    if (!dev || !filepath) return ZUNE_BLOWN;
 
     uint32_t item_id = 0;
     if (send_video_file(dev, filepath, display_name, &item_id) != 0)
-        return -1;
+        return ZUNE_BLOWN;
 
     if (out_item_id) *out_item_id = item_id;
 
@@ -588,18 +535,19 @@ int zune_smuggle_clip(ZuneDevice *dev, const char *filepath,
     if (poster_jpeg && poster_len > 0)
         send_representative_sample(&dev->ptp, item_id, poster_jpeg, poster_len);
 
-    return 0;
+    return ZUNE_OK;
 }
 
 int zune_smuggle_other(ZuneDevice *dev, const char *filepath,
                        const char *display_name, const char *description,
                        const uint8_t *poster_jpeg, size_t poster_len,
                        uint32_t *out_item_id) {
-    if (!dev || !filepath) return -1;
+    zune_clear_error();
+    if (!dev || !filepath) return ZUNE_BLOWN;
 
     uint32_t item_id = 0;
     if (send_video_file(dev, filepath, display_name, &item_id) != 0)
-        return -1;
+        return ZUNE_BLOWN;
 
     if (out_item_id) *out_item_id = item_id;
 
@@ -610,26 +558,37 @@ int zune_smuggle_other(ZuneDevice *dev, const char *filepath,
     if (poster_jpeg && poster_len > 0)
         send_representative_sample(&dev->ptp, item_id, poster_jpeg, poster_len);
 
-    return 0;
+    return ZUNE_OK;
 }
 
 int zune_purge_video(ZuneDevice *dev, uint32_t item_id) {
-    if (!dev) return -1;
+    zune_clear_error();
+    if (!dev) {
+        zune_set_error("Invalid device");
+        return ZUNE_BLOWN;
+    }
     int ret = mtp_delete_object(&dev->ptp, item_id);
     if (ret != 0) {
-        fprintf(stderr, "[libzune] delete video failed: item %u\n", item_id);
-        return -1;
+        ZLOG(ZUNE_CHATTER_SCREAM, "libzune", "delete video failed: item %u", item_id);
+        zune_set_error("Failed to delete video %u (%s 0x%04X)", item_id,
+                       zune_autopsy_name(dev->ptp.last_response), dev->ptp.last_response);
+        return ZUNE_BLOWN;
     }
-    return 0;
+    return ZUNE_OK;
 }
 
 int zune_extract_video(ZuneDevice *dev, uint32_t item_id,
                          const char *dest_path) {
-    if (!dev || !dest_path) return -1;
+    zune_clear_error();
+    if (!dev || !dest_path) {
+        zune_set_error("Invalid device or destination path");
+        return ZUNE_BLOWN;
+    }
     int ret = mtp_get_object_to_file(&dev->ptp, item_id, dest_path);
     if (ret != 0) {
-        fprintf(stderr, "[libzune] download video failed: item %u\n", item_id);
-        return -1;
+        ZLOG(ZUNE_CHATTER_SCREAM, "libzune", "download video failed: item %u", item_id);
+        zune_set_error("Failed to download video %u to %s", item_id, dest_path);
+        return ZUNE_BLOWN;
     }
-    return 0;
+    return ZUNE_OK;
 }

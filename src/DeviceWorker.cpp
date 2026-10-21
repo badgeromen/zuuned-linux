@@ -1,4 +1,5 @@
 #include "DeviceWorker.h"
+#include "sync/DeviceCover.h"
 #include "sync/RecoveryIdentity.h"
 #include "library/VideoIdentity.h"
 
@@ -480,6 +481,12 @@ void DeviceWorker::doBreach() {
             }
             zune_free_albums(objs, albumObjCount);
         }
+    } else {
+        // An unreadable library is not an empty device: every queued item
+        // would look absent and be sent again. Keep the reason; sync refuses.
+        const char *why = zune_get_error();
+        r.libraryError = QString::fromUtf8(why && *why ? why : "the device database could not be read");
+        fprintf(stderr, "[worker] library read failed: %s\n", qPrintable(r.libraryError));
     }
 
     emit breachDone(r);
@@ -721,7 +728,7 @@ void DeviceWorker::doForgePlaylist(const QString &name,
 void DeviceWorker::doSendPhoto(const QString &entryId, const QString &filepath,
                                const QString &albumName) {
     if (!m_dev) {
-        emit sendPhotoDone(entryId, false, 0, QStringLiteral("no device"));
+        emit sendPhotoDone(entryId, false, 0, QStringLiteral("no device"), QString());
         return;
     }
     zune_clear_abort(m_dev);
@@ -730,10 +737,17 @@ void DeviceWorker::doSendPhoto(const QString &entryId, const QString &filepath,
     const int rc = zune_smuggle_photo(
         m_dev, filepath.toUtf8().constData(),
         albumName.isEmpty() ? nullptr : albumName.toUtf8().constData());
+    // Read the error right after the call; it says whether anything was sent.
+    const char *err = rc == 0 ? nullptr : zune_get_error();
+    const QString why = QString::fromUtf8(err ? err : "");
     const QString autopsy = rc == 0
         ? QString()
         : QString::fromUtf8(zune_autopsy_name(zune_autopsy(m_dev)));
-    emit sendPhotoDone(entryId, rc == 0, 0, autopsy);
+    if (rc != 0)
+        fprintf(stderr, "[worker] photo send failed: %s (%s)\n",
+                qPrintable(QFileInfo(filepath).fileName()), qPrintable(why.isEmpty() ? autopsy : why));
+    emit sendPhotoDone(entryId, rc == 0, 0, autopsy,
+                       rc != 0 && photoRefusedBeforeWrite(why) ? why : QString());
 }
 
 void DeviceWorker::doExtractPhoto(quint32 itemId, const QString &destPath) {
@@ -795,6 +809,13 @@ void DeviceWorker::doRenameItem(quint32 itemId, const QString &newName) {
 void DeviceWorker::doRefreshStorage() {
     if (!m_dev)
         return;
+    // The getters return what the last storage query read (at connect);
+    // ask the device again so a finished sync shows its real free space.
+    if (zune_refresh_storage(m_dev) != 0) {
+        const char *why = zune_get_error();
+        fprintf(stderr, "[worker] storage refresh failed (%s); keeping the last figures\n",
+                why && *why ? why : zune_autopsy_name(zune_autopsy(m_dev)));
+    }
     const double cap = zune_get_capacity(m_dev) / 1e9;
     const double free = zune_get_headroom(m_dev) / 1e9;
     fprintf(stderr, "[worker] storage refresh: %.1f GB free of %.1f GB\n",
@@ -830,17 +851,17 @@ void DeviceWorker::doSyncNotify(const QString &name, int itemIndex,
                      before, after);
 }
 
-void DeviceWorker::doForgeAlbums(const QVariantList &buckets) {
+QPair<int, int> DeviceWorker::forgeAlbumsCore(const QVariantList &buckets,
+                                           const QHash<QString, quint32> &artistOverrides) {
     if (!m_dev || buckets.isEmpty()) {
-        emit forgeDone(0, m_dev ? 0 : buckets.size());
-        return;
+        return {0, m_dev ? 0 : int(buckets.size())};
     }
 
     int okCount = 0, failCount = 0;
 
     // (a) libzune reuses existing device artists; this map additionally
     // coalesces repeated album owners within the current batch.
-    QHash<QString, quint32> artistHandles; // lower(name) → handle
+    QHash<QString, quint32> artistHandles = artistOverrides; // lower(name) → handle
     for (const QVariant &v : buckets) {
         const QString aa = v.toMap().value("albumartist").toString();
         const QString key = aa.toLower();
@@ -865,7 +886,18 @@ void DeviceWorker::doForgeAlbums(const QVariantList &buckets) {
     QHash<QString, Existing> existingByName;
     {
         int n = 0;
-        if (ZuneAlbumObject *objs = zune_get_albums(m_dev, &n)) {
+        ZuneAlbumObject *objs = nullptr;
+        // Strict read only: the lenient list reports an album whose track
+        // references could not be read as empty, and merging into it would
+        // rewire the album with only the new tracks. Without a complete list
+        // no album object is created or changed this sync.
+        if (zune_get_albums_checked(m_dev, &objs, &n) != 0) {
+            const char *why = zune_get_error();
+            fprintf(stderr, "[worker] album list unreadable (%s); album objects skipped\n",
+                    why && *why ? why : zune_autopsy_name(zune_autopsy(m_dev)));
+            return {0, int(buckets.size())};
+        }
+        if (objs) {
             for (int i = 0; i < n; i++) {
                 const QString name =
                     QString::fromUtf8(objs[i].name ? objs[i].name : "");
@@ -940,31 +972,52 @@ void DeviceWorker::doForgeAlbums(const QVariantList &buckets) {
         }
 
         if (albumId == 0) {
-            fprintf(stderr, "[worker] forge/rewire album failed: %s (%s)\n",
+            // libzune's error says whether a half-created album was removed.
+            const char *why = zune_get_error();
+            fprintf(stderr, "[worker] forge/rewire album failed: %s (%s)%s%s\n",
                     qPrintable(album),
-                    zune_autopsy_name(zune_autopsy(m_dev)));
+                    zune_autopsy_name(zune_autopsy(m_dev)),
+                    why && *why ? ": " : "", why && *why ? why : "");
             failCount++;
+            if (!artistOverrides.isEmpty()) {
+                failCount += total - b - 1;
+                break;
+            }
             QThread::msleep(300);
             continue;
         }
 
         // (d) Artist links: album AND each track (ArtistId 0xDAB9)
         const quint32 artistHandle = artistHandles.value(albumartist.toLower(), 0);
+        bool linksOk = true;
         if (artistHandle != 0) {
-            zune_link_artist(m_dev, albumId, artistHandle);
-            for (quint32 tid : std::as_const(trackIds))
-                zune_link_artist(m_dev, tid, artistHandle);
+            linksOk = zune_link_artist(m_dev, albumId, artistHandle) == 0;
+            for (quint32 tid : std::as_const(trackIds)) {
+                if (!artistOverrides.isEmpty() && !linksOk) break;
+                linksOk = (zune_link_artist(m_dev, tid, artistHandle) == 0) && linksOk;
+            }
+        }
+        // The HD catalog callback must not declare a valid graph after a failed
+        // artist link. Ordinary sync retains its historical soft-link behavior.
+        if (!artistOverrides.isEmpty() && !linksOk) {
+            failCount += total - b;
+            break;
         }
 
         // (f) Album art via representative sample
         if (!artPath.isEmpty()) {
             QFile f(artPath);
+            bool branded = false;
             if (f.open(QIODevice::ReadOnly)) {
                 const QByteArray jpeg = f.readAll();
                 if (!jpeg.isEmpty())
-                    zune_brand(m_dev, albumId,
+                    branded = zune_brand(m_dev, albumId,
                                reinterpret_cast<const uint8_t *>(jpeg.constData()),
-                               size_t(jpeg.size()));
+                               size_t(jpeg.size())) == 0;
+            }
+            if (!artistOverrides.isEmpty() && !branded) {
+                failCount += total - b;
+                break;
             }
         }
 
@@ -972,7 +1025,7 @@ void DeviceWorker::doForgeAlbums(const QVariantList &buckets) {
         QThread::msleep(300); // mac's inter-album breathing room
     }
 
-    emit forgeDone(okCount, failCount);
+    return {okCount, failCount};
 }
 
 void DeviceWorker::doFinalize() {
@@ -1202,7 +1255,12 @@ void DeviceWorker::doInspectPodcasts(const QString &token, const QString &serial
             const auto feed = row.value("feedUrl").toString().toUtf8();
             const auto source = row.value("sourceUrl").toString().toUtf8();
             if (zune_find_podcast_episode(m_dev, feed.constData(), source.constData(), &folder, &show, &episode)) {
-                error = QString::fromUtf8(zune_get_error());
+                // Some lookup failures set no message; an empty error would
+                // read as success with a partial list.
+                const char *why = zune_get_error();
+                error = why && *why ? QString::fromUtf8(why)
+                    : QStringLiteral("Could not check the Zune for an episode (%1)")
+                          .arg(QString::fromUtf8(zune_autopsy_name(zune_autopsy(m_dev))));
                 break;
             }
             row["onDevice"] = episode != 0;
@@ -1210,6 +1268,30 @@ void DeviceWorker::doInspectPodcasts(const QString &token, const QString &serial
         }
     }
     emit podcastsInspected(token, serial, result, error);
+}
+
+namespace {
+enum class CoverResult { Set, Unprepared, Refused };
+
+// Fit a cover to the artwork limits the device declares for the item's
+// format, then set it. Firmware stores oversized covers but may not show them.
+CoverResult brandCover(ZuneDevice *dev, uint32_t item, const QString &path) {
+    uint32_t width = 0, height = 0, bytes = 0;
+    if (zune_get_brand_limits(dev, item, &width, &height, &bytes)) {
+        const char *why = zune_get_error();
+        fprintf(stderr, "[worker] artwork limits unavailable for item %u (%s); using %dx%d\n",
+                item, why ? why : "unknown", DeviceCover::FallbackEdge, DeviceCover::FallbackEdge);
+    }
+    QString error;
+    const QByteArray jpeg = DeviceCover::prepare(path, DeviceCover::edge(width), DeviceCover::edge(height),
+                                                 bytes ? qint64(bytes) : DeviceCover::FallbackBytes, &error);
+    if (jpeg.isEmpty()) {
+        fprintf(stderr, "[worker] cover for item %u not prepared: %s\n", item, qPrintable(error));
+        return CoverResult::Unprepared;
+    }
+    return zune_brand(dev, item, reinterpret_cast<const uint8_t *>(jpeg.constData()), size_t(jpeg.size()))
+        ? CoverResult::Refused : CoverResult::Set;
+}
 }
 
 void DeviceWorker::doSendPodcast(const QString &entryId, const QString &filepath,
@@ -1272,11 +1354,13 @@ void DeviceWorker::doSendPodcast(const QString &entryId, const QString &filepath
     // Representative-sample artwork is optional. Refusal must not turn a
     // verified audio upload into a failed item that the user might retry.
     QString warning;
-    QFile art(episode.value("posterPath").toString());
-    if (art.exists() && art.size() > 0 && art.size() <= 10 * 1024 * 1024 && art.open(QIODevice::ReadOnly)) {
-        const auto bytes = art.readAll();
-        if (zune_brand(m_dev, show, reinterpret_cast<const uint8_t *>(bytes.constData()), size_t(bytes.size())))
+    const QString cover = episode.value("posterPath").toString();
+    if (!cover.isEmpty() && QFileInfo(cover).isFile()) {
+        const auto result = brandCover(m_dev, show, cover);
+        if (result == CoverResult::Refused)
             warning = QStringLiteral("Episode synced; this device did not accept the show cover.");
+        else if (result == CoverResult::Unprepared)
+            warning = QStringLiteral("Episode synced; the show cover could not be prepared.");
     }
     emit podcastSendDone(entryId, true, id, warning, false);
 }
@@ -1303,9 +1387,16 @@ void DeviceWorker::doInspectAudiobooks(const QString &token, const QString &seri
         zune_clear_abort(m_dev);
         for (const auto &value : parts) {
             auto row=value.toMap(); BookTransferInput p(row); uint32_t folder=0,id=0;
-            if (row.value("partNumber").toInt()<1 || row.value("partNumber").toInt()>65535 ||
-                zune_find_audiobook_part(m_dev,&p.input,&folder,&id)) {
-                error=QString::fromUtf8(zune_get_error()); break;
+            if (row.value("partNumber").toInt()<1 || row.value("partNumber").toInt()>65535) {
+                error=QStringLiteral("Invalid audiobook part order"); break;
+            }
+            if (zune_find_audiobook_part(m_dev,&p.input,&folder,&id)) {
+                // As for podcasts: never let a failed lookup look like success.
+                const char *why=zune_get_error();
+                error=why&&*why ? QString::fromUtf8(why)
+                    : QStringLiteral("Could not check the Zune for a book part (%1)")
+                          .arg(QString::fromUtf8(zune_autopsy_name(zune_autopsy(m_dev))));
+                break;
             }
             row["onDevice"]=id!=0;result.append(row);
         }
@@ -1329,11 +1420,11 @@ void DeviceWorker::doSendAudiobook(const QString &entryId, const QString &filepa
     }
     emit sendProgress(entryId,1);
     QString warning;
-    QFile art(part.value("posterPath").toString());
-    if(art.exists() && art.size()>0 && art.size()<=10*1024*1024 && art.open(QIODevice::ReadOnly)) {
-        const auto bytes=art.readAll();
-        if(zune_brand(m_dev,id,reinterpret_cast<const uint8_t*>(bytes.constData()),size_t(bytes.size())))
-            warning="Book part synced; this device did not accept its cover.";
+    const QString cover=part.value("posterPath").toString();
+    if(!cover.isEmpty() && QFileInfo(cover).isFile()) {
+        const auto result=brandCover(m_dev,id,cover);
+        if(result==CoverResult::Refused) warning="Book part synced; this device did not accept its cover.";
+        else if(result==CoverResult::Unprepared) warning="Book part synced; its cover could not be prepared.";
     }
     emit audiobookSendDone(entryId,true,id,warning,false);
 }

@@ -8,6 +8,7 @@ static void check(int result, const char *name)
 static char error_text[512];
 void zune_set_error(const char *fmt, ...)
 { va_list ap; va_start(ap, fmt); vsnprintf(error_text, sizeof(error_text), fmt, ap); va_end(ap); }
+void zune_clear_error(void) { error_text[0] = 0; }
 const char *zune_get_error(void) { return error_text; }
 static void put32(uint8_t *p, uint32_t v)
 { for (unsigned i = 0; i < 4; ++i) p[i] = (uint8_t)(v >> (8*i)); }

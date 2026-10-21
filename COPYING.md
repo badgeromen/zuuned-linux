@@ -27,7 +27,10 @@ In particular, inspect the actual bundled builds of Qt, mpv, FFmpeg and other
 libraries; their available upstream licensing options do not necessarily
 identify the terms applicable to a particular binary package. Original font
 assets have separate distribution terms and are not assigned a license by this
-application-code notice.
+application-code notice. Zuuned Sans is specifically distributed under the
+[SIL Open Font License 1.1](qml/fonts/ZuunedSans-OFL.txt); its original generation
+source and coverage are in `tools/font-studio/variants/zuuned-sans/`. This does
+not change the licenses of Permanent Marker or Specimen Alien.
 
 ## Source access for binary releases
 

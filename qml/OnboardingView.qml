@@ -769,7 +769,7 @@ Item {
                     }
                 }
 
-                // ═══ Step 7: Title face — Permanent Marker or Graffiti ═══
+                // ═══ Step 7: Title face — original expressive and clean options ═══
                 ColumnLayout {
                     spacing: Theme.spaceLg
 
@@ -780,7 +780,7 @@ Item {
                         color: Theme.textPrimary
                     }
                     Text {
-                        text: "the loud face on identity moments — the wordmark, "
+                        text: "the face for identity moments: the wordmark, "
                               + "page titles, now-playing. body text stays clean."
                         font.pixelSize: 13
                         font.weight: Font.Light
@@ -811,7 +811,8 @@ Item {
 
                     SegRow {
                         options: [{ label: "Permanent Marker", value: "permanentMarker" },
-                                  { label: "Specimen Alien", value: "specimenAlien" }]
+                                  { label: "Specimen Alien", value: "specimenAlien" },
+                                  { label: "Zuuned Sans", value: "zuunedSans" }]
                         current: AppSettings.headerFont
                         onPicked: function(v) { AppSettings.headerFont = v }
                     }

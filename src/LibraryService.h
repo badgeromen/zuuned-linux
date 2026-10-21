@@ -216,6 +216,7 @@ public:
                                              const QString &query, bool tv);
     Q_INVOKABLE QVariantMap customizeContext(const QString &kind,
                                              const QVariantMap &context) const;
+    Q_INVOKABLE QVariantMap hdArtistArtwork(const QString &artist) const;
     Q_INVOKABLE void searchCustomizeMusicIdentity(const QString &requestId, const QString &kind,
                                                    const QString &query, const QString &provider,
                                                    const QString &artistHint = QString());

@@ -52,6 +52,8 @@ private:
     Request m_ready, m_active;
     QHash<QString, quint64> m_starVersions;
     QList<Request> m_manual;
+    // Refreshed oldest-first requests waiting for their show's older pages.
+    QList<Request> m_parked;
     QSet<QString> m_attempted, m_starred;
     QString m_inventoryNotice;
 };

@@ -35,6 +35,53 @@ TestCase {
         verify(page !== null)
     }
     function cleanup() { if (page) page.visible = false; page = null }
+    function manyEpisodes(count, played) {
+        const rows = []
+        for (let i = 1; i <= count; ++i)
+            rows.push({itemId: 1000 + i, parentId: 71, seriesId: 9, title: "Episode " + i, author: "Author", seriesName: "Long show",
+                       durationMs: 120000, sizeMB: 5, artItemId: 9, playedKnown: true, played: i === played})
+        return rows
+    }
+    function test_refreshKeepsEpisodeListInPlace() {
+        DeviceService.connected = true
+        DeviceService.podcastEpisodesList = manyEpisodes(40, 0)
+        page.openCollection("podcast:9")
+        const list = findChild(page, "deviceSpokenRows")
+        waitForRendering(page)
+        compare(list.count, 40)
+        list.contentY = 300
+        const place = list.contentY
+        // A refreshed inventory: one episode now reported played.
+        DeviceService.podcastEpisodesList = manyEpisodes(40, 20)
+        compare(list.count, 40)
+        compare(list.contentY, place, "the episode list keeps its place")
+        compare(list.model.get(19).row.played, true)
+    }
+    function test_refreshKeepsShowGridInPlace() {
+        DeviceService.connected = true
+        const rows = []
+        for (let show = 1; show <= 40; ++show)
+            rows.push({itemId: 2000 + show, parentId: 71, seriesId: show, title: "Episode", author: "Author",
+                       seriesName: "Show " + String(show).padStart(2, "0"), durationMs: 120000, sizeMB: 5, artItemId: show})
+        DeviceService.podcastEpisodesList = rows
+        const grid = findChild(findChild(page, "deviceSpokenGroupGrid"), "galleryGrid")
+        waitForRendering(page)
+        verify(grid.contentHeight > grid.height)
+        grid.contentY = 200
+        const place = grid.contentY
+        // A refreshed inventory in which one show was renamed.
+        DeviceService.podcastEpisodesList = rows.map(r => r.seriesId === 30 ? Object.assign({}, r, {seriesName: "Show 30 (renamed)"}) : r)
+        compare(grid.contentY, place, "the show grid keeps its place")
+    }
+    function test_shortNarrowPageKeepsEpisodeList() {
+        DeviceService.connected = true
+        DeviceService.podcastEpisodesList = manyEpisodes(10, 0)
+        page.width = 560; page.height = 610
+        page.openCollection("podcast:9")
+        waitForRendering(page)
+        const list = findChild(page, "deviceSpokenRows")
+        verify(list.height >= Theme.spokenDetailRowHeight * 2, "the episode list keeps usable room: " + list.height)
+    }
     function test_unsupportedBooksDoNotClaimEmptyDevice() {
         DeviceService.connected = true
         DeviceService.audiobookBrowseSupported = false

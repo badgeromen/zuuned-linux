@@ -1,5 +1,71 @@
 # AGENTS.md — AI Assistant Guide for ZuunedLinux
 
+**2026-10-19 HD artwork integration:** libzune now offers a public C catalog
+API with shared native transport and a standalone example. Zuuned's local artist
+Customize sheet stages HD background, thumbnail, gallery and biography in the
+existing Apply transaction. New music sync pins immutable revisions and serves
+them from DeviceWorker during artist/album organization. Preserve session/token
+guards, exact artist GUIDs, no-write conflict fallback and uncertain-write stop
+behavior. App ordering differs from the hardware-proven research tool and still
+requires its own hardware gate. See `docs/HD_NOW_PLAYING_ART.md`; test suites are
+`tests/hd-artist-art/`, `tests/customize/` and `tests/hd-artist-art-worker/`.
+
+**2026-10-19 libzune 0.3.0 hardening:** `hardening/0.3.0` in both repos follows
+the user's spec, `libzune/docs/HARDENING_0.3.0.md` (Appendix A/C hold hardware
+evidence). Visible to the app: only `zune.h` functions are exported; logs route
+through `zune_wiretap` with the unchanged `[tag] message` stderr format
+(`ZUNE_CHATTER` sets the level; the device serial is now WHISPER); failed
+folder/track queries return errors instead of empty results; photo uploads
+reuse existing device albums and refuse non-JPEG fallbacks; failed uploads keep
+the real `zune_autopsy` code. The full `ci/check.sh` passes on this pin and the
+app connected to the HD read-only. October 20: the whole spec, Tier 3 included,
+is implemented and passes on the HD, the Zune 30 and the Zune 80; after the
+validation fixes this app synced and removed album tracks and an episode on
+the Zune 80 and the HD (Scorpius is untested).
+App-visible: errors clear on entry (read `zune_get_error` right after the
+failing call, as DeviceWorker does); podcast and audiobook sends now retry
+after a proven removal and never after an unanswered creation, and a failed
+part returns an ID only when it could not be removed or failed readback;
+album/playlist forges return 0 when references fail; uploads stream from disk.
+Validation round (same day): an album whose references fail without an answer
+is kept, not removed (removal could take its tracks); `zune_get_folders`
+returns an error on a dead transport; the app refuses to sync when the
+connect-time library read failed (`DeviceService::libraryError`), skips a photo
+libzune refused before any write (`photoRefusedBeforeWrite` matches libzune's
+messages, which `src/photo.c` asks to keep), keeps the recovery marker when a
+failed video reports an object that may remain, sniffs MP3 frames before
+re-tagging (a FLAC with an ID3 prefix is never rewritten), gives each
+transcode its own temporary file and calls `zune_go_dark` at shutdown. The
+Zune 80 can flip one bit while sending data back (bit 7 of byte 120 of a USB
+packet, stored copies intact; a Zune 30 on the same port shows none): a
+fault in that unit, see libzune Appendix C.
+
+**2026-10-20 review follow-up:** cancellation/disconnect after an unanswered
+video creation retains libzune's incomplete-object warning and Zuuned's recovery
+marker. A later removed retry never clears earlier uncertainty; pre-write
+cancellation still clears a safe marker. `tests/spoken-sync/run-backend.mjs`
+exercises both outcomes. libzune also preserves thumbnail sources when output
+aliases input and accepts complete compact Classic v2 descriptor tables without
+weakening truncation checks. These changes have offline regression coverage;
+the earlier hardware results are not a new physical validation of this patch.
+
+**2026-10-20 device covers:** audiobook parts and podcast shows get covers
+fitted by `src/sync/DeviceCover` to `zune_get_brand_limits` (never above the
+declared size or 480 px; 240x240 when undeclared; baseline 4:2:0). Never send
+stored 1600 px spoken covers raw: a Zune 30 declares 240x240 and 1 MiB, a Zune 80
+showed none of the raw covers and the HD loaded them slowly. Gates:
+`tests/spoken-cover-worker/` and libzune `tests/run-brand-limits.sh`; details in
+`docs/SPOKEN_MEDIA_AND_DEVICE_ART.md` (October 20).
+
+**2026-10-18 clean display font:** Zuuned Sans is a third title-face option in
+onboarding and Settings → Appearance (`headerFont=zuunedSans`). Preserve Permanent
+Marker as the default, Specimen Alien and the legacy preference migration.
+The original font source, exact 350-character coverage and validation live in
+`tools/font-studio/variants/zuuned-sans/`. Font output is SIL OFL 1.1; its notice
+is bundled and installed. This is one unhinted display face, not a replacement
+for body text or a complete international font family. Shared Theme consumers
+must bundle all three font resources.
+
 **Local build handoff (user decision, 2026-10-13):** after a completed
 user-facing local build, restart only Zuuned with the fresh executable, preserving
 the current profile and workspace. Do not interrupt an active device sync; defer
@@ -13,8 +79,43 @@ that turns red on hover/press/focus, with no background, and focus-scoped Escape
 limits are tracked in `docs/PLAYER_LAYOUT_AUDIT_2026-10-12.md` and
 `tests/player-layout/README.md`.
 
-**Scope update:** podcasts and audiobooks are active; defer HD artist backgrounds
-until both work. Use the dedicated `feature/podcasts-audiobooks` branches.
+**Scope update, 2026-10-17:** the user activated HD Now Playing artist backgrounds
+after the spoken-media release. Use `feature/hd-now-playing-art` in both repos;
+read `docs/HD_NOW_PLAYING_ART.md`. Earlier HD deferrals are historical. Begin with
+read-only identity/capability evidence, then one local-image hardware gate.
+Preserve serialized USB ownership and artist IDs; album representative samples
+are distinct from the HD artist-background catalog mechanism.
+
+**2026-10-18 HD transport gate:** authenticated read-only artist probing and
+bidirectional native PPP/IP, DNS/HTTP and orderly tunnel closure pass on Pavo.
+One backed-up DA97 assignment persisted in ZMDB with existing track/album links
+intact; the original value was restored and verified after no image requests
+arrived. See `libzune/docs/HD_ARTWORK_RESEARCH.md`. Keep optional-response polling opt-in; ordinary
+mandatory data reads retain their existing contract. No artist was recreated.
+The native one-artist catalog responder passes 961 software checks. Full
+initialization is hardware-accepted, but a six-minute window still produced no
+DNS/HTTP request. The temporary DA97 binding was restored and verified afterward.
+Do not report catalog-response tests as physical image delivery or display.
+The later network-ready update also read back correctly but produced no image
+request before the user ended polling. Automatic DA97 restoration was verified.
+The active direction is direct-push/cache-writer investigation using offline
+Pavo firmware. `nowPlayingBg.jpg` is a confirmed firmware string, not a proven
+writable endpoint. Keep firmware artifacts private and do not flash devices.
+The subsequent fully tagged fresh-artist test delivered two acknowledged JPEGs,
+including one device background, through the native USB responder: 3 DNS queries,
+9 HTTP requests. No existing artist was recreated. Startup retries now pass 179
+checks. Visible presentation, persistence and existing-artist retrofit remain
+separate gates. Cleanup hit firmware-retained album references; guarded recovery
+removed only the six test additions and restored the exact 230-handle baseline.
+The recovery gates pass 257 checks. Follow the journal-based evidence in the
+library research before further writes; normal experimental reference clearing
+still has this firmware limitation.
+**Retained visual test:** the later `HDArtworkProbe-BillieEilish-66de4016cf30`
+artist, album and 30-second clip remain on the HD at the user's request. Two
+JPEGs including its background were acknowledged; reindex returned `0x2001`.
+All 230 original handles remain plus six test objects. Do not delete this test
+before user acceptance/removal approval. See the retained Billie section of the
+library research and its private recovery manifest; screen display is pending.
 
 **Active private workstream, 2026-10-08:** read
 `docs/SPOKEN_MEDIA_AND_DEVICE_ART.md` before podcast, audiobook or Zune HD artist
@@ -489,6 +590,39 @@ push and wait for explicit approval. Earlier push approvals do not authorize
 later pushes. Prepare and verify the local change before asking.
 
 ### Documentation
+- **2026-10-20 large podcast feeds and back catalogues (user request):** the
+  largest feeds measured hold 50,193 episodes in six RFC 5005 pages (Omny) and
+  40,045 in 27 (Audacy); one document reached 24,258 episodes or 102.4 MiB.
+  Limits: 128 MiB and 50,000 episodes per document, 100,000 per show, 500,000
+  library rows. Feed downloads never run on the database worker: two lanes
+  (previews/refreshes, older pages) fetch one document at a time. Older pages
+  are saved by short background jobs (`planOlder`, `readOlder`, `saveOlder`;
+  `olderState`, cursor `olderPage`): never busy, stopped only by quitting
+  (resumed at the next start), retried per failing page, older pages only add
+  episodes, and a complete show only catches up.
+  Episodes are not held in memory: lists read SQLite through a read-only
+  UI-thread connection, 25 rows at a time as they scroll (`EpisodeList`), with
+  search, filters and a newest/oldest toggle; jobs reload only non-episode
+  rows and the counts of shows they wrote. Spoken lists and galleries (local
+  and on the Zune) change rows in place through `KeyedRows`: a view given a new
+  array jumps to the top, and the library changes every five seconds while
+  something plays. Keep query expressions
+  identical to the index expressions (`INDEXED BY`), `julianday()` as the sort
+  key, custom SQL functions out of indexes and schema version 1. Cleanup
+  candidates are read for the device and queued audio URLs only. `fetch()`
+  disables Qt's gzip bomb check (its own byte cap applies). A repeated GUID
+  keeps the first item. See the October 20 section of
+  `docs/SPOKEN_MEDIA_AND_DEVICE_ART.md`. Gates: `tests/spoken-media/run.sh`,
+  `tests/spoken-media/native/run.sh`, `tests/spoken-organization/run-qml.sh`.
+- **2026-10-20 build identity (user request):** `--version`, Settings → About,
+  the startup line and the debug report read
+  `0.2.0 (<branch> @ <sha12>; libzune <version>, <branch> @ <sha12>)` from
+  `packaging/WriteBuildInfo.cmake`. A detached checkout names no branch and a
+  non-root directory never borrows its parent's; archive builds may pass
+  `ZUUNED_SOURCE_BRANCH`/`ZUUNED_LIBZUNE_BRANCH` only with their revisions.
+  `zuuned-build.json` adds `applicationBranch`, `libzuneBranch` and
+  `libzuneVersion`; keep the existing fields' lines, which packaging parses.
+  Gate: `packaging/tests/run.sh`.
 - **2026-10-03 public source preparation:** `tools/export-public-source.mjs`
   creates a fresh source snapshot without private history, the embedded MTPZ
   header or build artifacts. Approved provider API defaults remain. Private files stay

@@ -16,6 +16,7 @@ static uint16_t read16(const uint8_t *p) { return p[0]|(p[1]<<8); }
 static void put32(uint8_t *p, uint32_t v) { for(int i=0;i<4;++i)p[i]=v>>(8*i); }
 static void check(int good,const char *label) { if(!good){fprintf(stderr,"FAIL: %s (%s)\n",label,error_text);exit(1);}printf("PASS: %s\n",label);++checks; }
 void zune_set_error(const char *fmt, ...) { va_list ap;va_start(ap,fmt);vsnprintf(error_text,sizeof(error_text),fmt,ap);va_end(ap); }
+void zune_clear_error(void) { error_text[0] = 0; }
 const char *zune_get_error(void) { return error_text; }
 static Object *object(uint32_t id) { for(int i=0;i<used;++i)if(objects[i].live&&objects[i].id==id)return &objects[i];return NULL; }
 static Prop *prop(Object *o,uint16_t code) { if(o)for(int i=0;i<o->count;++i)if(o->props[i].code==code)return &o->props[i];return NULL; }

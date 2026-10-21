@@ -9,9 +9,10 @@ presentation. libzune calls are synchronous; serialize device operations.
 1. Inspect the original file with `zune_probe`. Preserve source tags and user
    choices in your application; the library does not infer online album editions.
 2. Prepare a format supported by the target device. Upload functions do not
-   transcode. The library's legacy audio/video arm helpers currently hard-code
-   Homebrew's FFmpeg path; Linux applications should supply their own preparation
-   pipeline. Identify content accurately rather than trusting a filename alone.
+   transcode. The library's legacy audio/video arm helpers run the ffmpeg found
+   through `ZUNE_FFMPEG` or `PATH`; applications with their own preparation
+   pipeline can bypass them. Identify content accurately rather than trusting a
+   filename alone.
 3. Refresh storage with `zune_refresh_storage` and inspect failures. Cached
    free-space getters alone do not reflect preceding uploads.
 4. Upload with `zune_smuggle_track`, `zune_smuggle_track_tagged`, or

@@ -25,7 +25,7 @@ static int media_probe_report(ZuneDevice *dev, uint16_t format, FILE *output)
     if (!dev || !output || !format) return -1;
     fprintf(output, "media-capabilities-v1\nformat\t0x%04X\n", format);
     fprintf(output, "scope\tadvertised descriptor headers; writes unverified\n");
-    if (dev->cancel_requested || dev->disconnecting) {
+    if (ZUNE_FLAG_GET(dev->cancel_requested) || ZUNE_FLAG_GET(dev->disconnecting)) {
         fprintf(output, "status\tcancelled\n");
         return -1;
     }
@@ -45,7 +45,7 @@ static int media_probe_report(ZuneDevice *dev, uint16_t format, FILE *output)
     fprintf(output, "properties\t%d\nproperty\ttype\tget-set\tdescriptor-bytes\n", count);
     int result = 0;
     for (int i = 0; i < count; ++i) {
-        if (dev->cancel_requested || dev->disconnecting) {
+        if (ZUNE_FLAG_GET(dev->cancel_requested) || ZUNE_FLAG_GET(dev->disconnecting)) {
             fprintf(output, "status\tcancelled\n");
             result = -1;
             break;

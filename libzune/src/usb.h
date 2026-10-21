@@ -88,6 +88,17 @@ struct zune_usb_backend {
      * reset — Reset the USB device.
      */
     int (*reset)(zune_usb_handle_t *handle);
+
+    /*
+     * class_request — Still-image class request on the claimed interface,
+     *   e.g. PTP Cancel Request (0x64) and Get Device Status (0x67).
+     *   request_type is bmRequestType (0x21 to the device, 0xA1 from it).
+     *   Returns the bytes transferred, or a negative value on failure.
+     *   Optional: NULL where the platform cannot send one.
+     */
+    int (*class_request)(zune_usb_handle_t *handle, uint8_t request_type,
+                         uint8_t request, uint8_t *data, uint16_t length,
+                         uint32_t timeout_ms);
 };
 
 /* ---- USB handle ---- */

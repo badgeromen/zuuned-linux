@@ -14,6 +14,9 @@ TestCase {
             AppSettings.headerFont = "misdemeanor"
             compare(AppSettings.headerFont, "specimenAlien")
             compare(Theme.displayFamily, "Specimen Alien")
+            AppSettings.headerFont = "zuunedSans"
+            tryCompare(Theme.zuunedSans, "status", FontLoader.Ready)
+            compare(Theme.displayFamily, "Zuuned Sans")
             AppSettings.headerFont = "permanentMarker"
             tryCompare(Theme.marker, "status", FontLoader.Ready)
             compare(Theme.displayFamily, Theme.marker.font.family)

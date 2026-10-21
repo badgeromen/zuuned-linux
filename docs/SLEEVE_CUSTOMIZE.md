@@ -200,3 +200,58 @@ assertions, 21 database checks, and 17 naming cases passed. The updated app was
 launched successfully; its existing migration path backed up the v2 library
 before upgrading to v3. Live provider availability and real video frame sampling
 are environment-dependent and were not part of the offline fixture gates.
+
+## Zune HD artist content (private integration, 2026-10-19)
+
+Local artist **Customize → Zune HD** stages a Now Playing background, separate
+artist thumbnail, up to six ordered gallery pictures and an optional plain-text
+biography. Choose local files or drop one onto a role preview. Gallery controls
+move and remove individual pictures. A missing thumbnail uses the background
+source. These choices are separate from the desktop portrait, music identity,
+provider pins, liner notes and album covers. The shared Apply saves all changes
+atomically; switching tabs or Cancel performs no image writes. A Zune connection
+is not needed to edit or save.
+
+The first integration includes saved HD content when syncing new music for that
+artist to a Zune HD. Existing firmware caches can retain old content; saving a
+local choice does not claim device delivery or refresh and does not delete or
+recreate artists. Clearing HD choices only removes the local manifest. It does
+not clear anything already stored on a device.
+
+`HdArtistArtStore` prepares image resources on the customization worker before
+opening the write transaction. It preserves original bytes in app-owned,
+immutable revision directories under `hd-artist-art/<set UUID>/<revision UUID>/`.
+Sources are local regular files, limited to 16 MiB each, 16 million pixels and
+64 MiB combined per preparation. EXIF orientation is applied, tagged colors are
+converted to sRGB and transparency is flattened onto black. Profile 1 uses a
+centered 480×480 background, a centered 160×120 thumbnail and gallery pictures
+fitted within 480×720. Cropping happens before scaling to avoid large
+intermediates from extreme aspect ratios. Each JPEG is at most 128 KiB, with
+at most eight images. This is the application's conservative preparation
+profile, not a claim about firmware limits. There is no manual crop editor yet.
+The plain-text biography is limited to 4096 UTF-8 bytes and excludes XML control
+characters.
+
+The artist's existing collection-customization identity stores `_hdArtistArt`.
+That versioned manifest records set/catalog UUIDs, revision, source and JPEG
+SHA-256 hashes, original/derivative paths, role IDs, encoded dimensions and text.
+Artist renames carry the manifest in the same library transaction; customized
+destination collisions fail without merging artists. The catalog UUID stays
+stable. The background UUID uses the verified catalog-last-nibble XOR 1 mapping;
+other unchanged assets retain their UUIDs. New derivatives receive new IDs.
+A revision check before preparation and again inside the transaction rejects a
+stale HD draft. New immutable files are not live until the database commits;
+unreferenced preparation directories may remain after a later transaction
+failure, and prior revision files remain available to pinned sync snapshots.
+
+`LibraryService::hdArtistArtwork(name)` reads the saved manifest without image
+IO. `HdArtistArtStore::readSnapshot` loads bounded bytes off the UI thread,
+verifies hashes, dimensions, role IDs and JPEG decoding, and provides immutable
+bytes for the device worker. Original files can move or disappear after Apply
+without breaking saved artwork. The app does not overwrite original files.
+
+Validation: `bash tests/hd-artist-art/run.sh`, `bash tests/customize/run.sh`, and
+`node tests/customize/run-backend.mjs` cover native preparation, source
+preservation, missing/corrupt assets, revision checks, staged UI behavior and the
+real shared Apply transaction. Physical behavior belongs to the HD hardware
+record in `HD_NOW_PLAYING_ART.md`; the new GUI path still needs user acceptance.

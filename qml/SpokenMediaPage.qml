@@ -20,6 +20,8 @@ Item {
     property string collectionId: ""
     property var checks: ({})
     property string filter: "all"
+    property string episodeQuery: ""
+    property bool newestFirst: true
     readonly property bool deviceTransferReady: true
     readonly property var collection: { void SpokenMediaService.revision; return SpokenMediaService.item(collectionId) }
     property string pivot: books ? "Books" : "Shows"
@@ -47,35 +49,61 @@ Item {
     }
     readonly property var galleryRows: browsingShelves ? shelves.filter(c => !search.text || c.title.toLowerCase().includes(search.text.toLowerCase())).sort((a, b) => a.title.toLowerCase().localeCompare(b.title.toLowerCase()) || a.id.localeCompare(b.id)) : containers
     readonly property bool showingEntries: !!collectionId || (!books && pivot === "Starred episodes")
+    // A show can list tens of thousands of episodes: they come from the
+    // library 25 at a time as the list scrolls.
+    EpisodeList {
+        id: episodes
+        show: page.books ? "" : page.collectionId
+        starred: !page.books && !page.collectionId && page.pivot === "Starred episodes"
+        filter: page.filter
+        search: page.collectionId ? page.episodeQuery : search.text
+        newestFirst: page.newestFirst
+        playedSources: {
+            void DeviceService.podcastEpisodesList
+            return page.filter === "unplayed" ? DeviceService.podcastDeviceSources(page.collectionId ? (page.collection.identity || "") : "", true) : []
+        }
+    }
     readonly property var rows: {
         void SpokenMediaService.revision
-        let items = SpokenMediaService.entries(collectionId)
-        if (!books && !collectionId && pivot === "Starred episodes") {
-            items = []
-            for (const show of SpokenMediaService.collections("show"))
-                items = items.concat(SpokenMediaService.entries(show.id))
-            items = items.filter(e => e.favorite && (!search.text || e.title.toLowerCase().includes(search.text.toLowerCase())))
-        }
-        return items.filter(e => filter === "downloaded" ? !!e.path : filter === "unplayed" ? !(page.books ? e.played : podcastStatus.played(e)) : filter === "starred" ? !!e.favorite : true)
+        return books ? SpokenMediaService.entries(collectionId) : []
     }
+    // "select all" covers the whole list, not just the rows loaded so far.
+    readonly property bool allChecked: Object.keys(checks).length > 0 && Object.keys(checks).length >= Math.min(episodes.total, 5000)
+    function toggleAll() {
+        if (allChecked) { checks = {}; return }
+        const next = {}
+        for (const id of episodes.ids(5000)) next[id] = true
+        checks = next
+    }
+    function count(n) { return Number(n || 0).toLocaleString(Qt.locale(), "f", 0) }
     readonly property var listRows: {
-        if (!books) return rows
+        if (!books) return []
         let flat = []
         for (const part of rows) {
             flat.push(part)
             const children = filter === "bookmarks" ? part.bookmarks ?? [] : filter === "files" ? [] : part.chapters ?? []
-            for (const child of children) flat.push({ id: part.id, title: child.title || child.note || "bookmark", path: part.path, durationMs: child.startMs ?? child.positionMs ?? 0, detail: true })
+            children.forEach((child, i) => flat.push({ key: part.id + "#" + i, id: part.id, title: child.title || child.note || "bookmark", path: part.path, durationMs: child.startMs ?? child.positionMs ?? 0, detail: true }))
         }
         return flat
+    }
+    // A book's parts and chapters change in place too, so the list keeps its
+    // place while the book plays (a position save every five seconds).
+    KeyedRows { id: bookRows }
+    property string bookQuestion: ""
+    onListRowsChanged: {
+        const question = collectionId + "|" + filter
+        const fresh = question !== bookQuestion
+        bookQuestion = question
+        bookRows.apply(listRows, fresh)
+        if (fresh && list) list.positionViewAtBeginning()
     }
     onShelvesChanged: { if (shelfId && !shelves.some(s => s.id === shelfId)) { shelfId = ""; openCollection("") } }
     function time(ms) { const s = Math.max(0, Math.floor(ms / 1000)); return Math.floor(s / 60) + ":" + (s % 60).toString().padStart(2, "0") }
     function toggle(id) { const next = Object.assign({}, checks); if (next[id]) delete next[id]; else next[id] = true; checks = next }
     function playCollection(entry) {
         if (books) { SpokenMediaService.play(entry.id); return }
-        const episodes = SpokenMediaService.entries(entry.id)
-        const next = episodes.find(e => e.path && !e.played) || episodes.find(e => e.path)
-        if (next) SpokenMediaService.play(next.id)
+        const next = SpokenMediaService.resumeEpisode(entry.id)
+        if (next) SpokenMediaService.play(next)
     }
     function back() {
         if (collectionId) openCollection("")
@@ -89,7 +117,7 @@ Item {
         if (BookTrayState.building) BookTrayState.addBooks([id])
         else SpokenMediaService.queueAudiobooks([id])
     }
-    function openCollection(id) { collectionId = id; checks = {}; filter = "all" }
+    function openCollection(id) { collectionId = id; checks = {}; filter = "all"; newestFirst = true; episodeSearch.text = ""; episodeQuery = "" }
     function contextFor(entry) { contextMenu.entry = entry; contextMenu.popup() }
     function queueItems(ids) { if (books) SpokenMediaService.queueAudiobooks(ids); else SpokenMediaService.queuePodcasts(ids) }
     function pick(anchor, entry) {
@@ -113,6 +141,7 @@ Item {
                 onCurrentChanged: {
                     page.pivot = current; page.shelfId = ""; page.openCollection("")
                     search.text = ""; grid.letterFilter = ""
+                    Qt.callLater(grid.restart)
                 }
             }
             Item { Layout.fillWidth: true }
@@ -162,6 +191,7 @@ Item {
             lettered: !page.shelfId
             cellHeightFor: w => w * (page.books ? Theme.spokenBookRatio : 1) + Theme.spokenCardCaption
             rows: page.galleryRows
+            keyOf: r => r.id
             cardDelegate: Component {
                 Item {
                     required property var modelData
@@ -172,7 +202,7 @@ Item {
                         anchors.fill: parent
                         visible: !page.browsingShelves
                         entry: parent.modelData; book: page.books
-                        onDevice: !page.books && SpokenMediaService.entries(entry.id).some(e => podcastStatus.deviceFor(e.id).onDevice)
+                        onDevice: { void SpokenMediaService.revision; void DeviceService.podcastEpisodesList; return !page.books && SpokenMediaService.showOnDevice(entry.id, DeviceService.podcastDeviceSources(entry.identity || "")) }
                         cardSize: grid.plan.cell
                         transferReady: page.deviceTransferReady
                         playable: (entry.downloaded ?? 0) > 0
@@ -219,6 +249,7 @@ Item {
             rowSpacing: Theme.spaceMd
             Item {
                 id: heroArt
+                visible: page.width >= Theme.spokenDetailBreakpoint || page.height >= Theme.spokenStackedCoverHeight
                 Layout.preferredWidth: Theme.spokenShelfWidth
                 Layout.preferredHeight: Theme.spokenShelfHeight
                 SpokenShelf {
@@ -268,15 +299,19 @@ Item {
                 narrator: page.collection.narrator ?? ""
                 summary: {
                     void SpokenMediaService.revision
-                    const all = SpokenMediaService.entries(page.collectionId)
-                    const available = all.filter(e => !!e.path).length
+                    void SpokenMediaService.loadingOlder
                     if (page.books) {
+                        const all = SpokenMediaService.entries(page.collectionId)
                         const chapters = all.reduce((count, e) => count + (e.chapters || []).length, 0)
                         return (chapters ? chapters + " chapters · " : "") + all.length + (all.length === 1 ? " audio file" : " audio files")
                     }
-                    return all.length + " episodes · " + available + " downloaded"
+                    const show = SpokenMediaService.showSummary(page.collectionId)
+                    const older = show.readingOlder ? " · reading older pages…"
+                        : show.olderState === "incomplete" ? " · older pages not read yet"
+                        : show.olderState === "limited" ? " · back catalogue cut short" : ""
+                    return page.count(show.count) + " episodes · " + page.count(show.downloaded) + " downloaded" + older
                 }
-                SpokenButton { objectName: "spokenDetailPlay"; flat: true; text: "▶ resume"; enabled: page.rows.some(e => !!e.path); onClicked: page.playCollection(page.collection) }
+                SpokenButton { objectName: "spokenDetailPlay"; flat: true; text: "▶ resume"; enabled: { void SpokenMediaService.revision; return page.books ? page.rows.some(e => !!e.path) : !!SpokenMediaService.resumeEpisode(page.collectionId) } onClicked: page.playCollection(page.collection) }
                 SplitAddButton { objectName: "spokenDetailAdd"; showPick: !page.books; enabled: page.books && BookTrayState.building ? !BookTrayState.locked : DeviceService.connected && page.deviceTransferReady; onAddAll: page.books ? page.addBook(page.collectionId) : SpokenMediaService.queuePodcastSelection(page.collectionId); onPickParts: page.pick(this, page.collection) }
                 SpokenButton { objectName: "spokenDetailStar"; text: page.collection.favorite ? "★ starred" : "☆ star"; flat: true; highlighted: !!page.collection.favorite; onClicked: SpokenMediaService.setFavorite(page.collectionId, !page.collection.favorite) }
                 SpokenButton { visible: !page.books; flat: true; text: "↻ refresh feed"; enabled: !SpokenMediaService.busy; onClicked: SpokenMediaService.refreshFeed(page.collectionId) }
@@ -288,16 +323,42 @@ Item {
             Layout.leftMargin: Gallery.spine(page.width)
             Layout.rightMargin: Theme.spaceXxxl
             spacing: Theme.spaceXs
-            RowLayout {
+            // Filters, then search, order and selection; below the
+            // breakpoint the second group takes its own row.
+            GridLayout {
                 Layout.fillWidth: true
+                columns: page.width < Theme.spokenDetailBreakpoint ? 1 : 2
+                columnSpacing: Theme.spaceSm
+                rowSpacing: Theme.spaceXs
             PivotBar {
                 id: detailPivots
                 tabs: page.books ? ["chapters", "bookmarks", "files"] : ["all", "unplayed", "downloaded", "starred"]
                 current: page.filter === "all" && page.books ? "chapters" : page.filter
                 onCurrentChanged: { if (current !== (page.books && page.filter === "all" ? "chapters" : page.filter)) { page.filter = current; page.checks = {} } }
             }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: Theme.spaceSm
                 Item { Layout.fillWidth: true }
-                SpokenButton { visible: !page.books; flat: true; text: Object.keys(page.checks).length === page.rows.length && page.rows.length ? "clear selection" : "select all"; onClicked: { let selected = {}; if (Object.keys(page.checks).length !== page.rows.length) for (const e of page.rows) selected[e.id] = true; page.checks = selected } }
+                ZuneSearchField {
+                    id: episodeSearch
+                    objectName: "spokenEpisodeSearch"
+                    visible: !page.books && !!page.collectionId
+                    placeholderText: "search episodes"
+                    Layout.preferredWidth: Theme.spokenSearchWidth; Layout.maximumWidth: Theme.spokenSearchWidth; Layout.minimumWidth: Theme.spaceHuge
+                    onTextChanged: searchPause.restart()
+                    Timer { id: searchPause; interval: Theme.spokenSearchDelay; onTriggered: page.episodeQuery = episodeSearch.text }
+                }
+                SpokenButton {
+                    objectName: "spokenEpisodeOrder"
+                    visible: !page.books
+                    flat: true
+                    text: page.newestFirst ? "newest first ▾" : "oldest first ▴"
+                    Accessible.name: page.newestFirst ? "Newest first; show oldest first" : "Oldest first; show newest first"
+                    onClicked: page.newestFirst = !page.newestFirst
+                }
+                SpokenButton { objectName: "spokenSelectAll"; visible: !page.books; flat: true; text: page.allChecked ? "clear selection" : "select all"; onClicked: page.toggleAll() }
+            }
             }
             Flow {
                 objectName: "spokenSelectionActions"
@@ -318,13 +379,21 @@ Item {
             Layout.leftMargin: Gallery.spine(page.width)
             Layout.rightMargin: Theme.spaceXxxl
             clip: true
-            model: page.listRows
+            model: page.books ? bookRows : episodes
             spacing: 0
+            // The next 25 episodes load before the end comes into view.
+            function fill() {
+                if (!page.books && contentHeight - contentY - height < Theme.spokenDetailRowHeight * 8) episodes.loadMore()
+            }
+            onContentYChanged: fill()
+            onContentHeightChanged: Qt.callLater(fill)
+            onHeightChanged: Qt.callLater(fill)
+            Connections { target: episodes; function onReloaded() { list.positionViewAtBeginning() } }
             delegate: Column {
                 id: rowGroup
                 required property var modelData
                 required property int index
-                readonly property var deviceStatus: page.books ? ({}) : podcastStatus.deviceFor(modelData.id)
+                readonly property var deviceStatus: page.books ? ({}) : podcastStatus.deviceFor(modelData)
                 readonly property string playedLabel: page.books ? (modelData.played ? "played" : "") : podcastStatus.playedLabel(modelData)
                 width: list.width
                 Rectangle {
@@ -419,9 +488,16 @@ Item {
                 wrapMode: Text.Wrap; horizontalAlignment: Text.AlignHCenter
                 font.pixelSize: Theme.spokenBody; color: Theme.textSecondary
             }
+            Text {
+                anchors.centerIn: parent
+                width: Math.min(parent.width, Theme.spokenEmptyWidth)
+                visible: list.count === 0 && !page.books && !!page.collectionId && (!!page.episodeQuery || page.filter !== "all")
+                text: "No matching episodes"
+                horizontalAlignment: Text.AlignHCenter
+                font.pixelSize: Theme.spokenBody; color: Theme.textSecondary
+            }
             ScrollBar.vertical: ZuneScrollBar {}
         }
-
     }
     ZuneMenu {
         id: contextMenu

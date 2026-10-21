@@ -6,6 +6,15 @@ QtObject {
     property var podcastEpisodesList: []
     property var podcastStatuses: ({})
     function podcastDeviceStatus(feed, source) { return podcastStatuses[feed + "|" + source] || {known:false,onDevice:false,playedKnown:false,played:false} }
+    function podcastDeviceSources(feed, played) {
+        const sources = []
+        for (const key in podcastStatuses) {
+            const split = key.indexOf("|"), state = podcastStatuses[key]
+            if ((!feed || key.slice(0, split) === feed) && state.onDevice && (!played || (state.playedKnown && state.played)))
+                sources.push(key.slice(split + 1))
+        }
+        return sources
+    }
     function ensureSpokenMedia() {}
     property var photoOnDeviceKeys: ({})
     property var onDeviceKeys: ({})

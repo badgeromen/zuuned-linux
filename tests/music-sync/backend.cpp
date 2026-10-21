@@ -1,6 +1,10 @@
 #include "sync/SyncEngine.h"
 #include "LibraryService.h"
 #include "library/LibraryDb.h"
+extern "C" {
+#include "id3_rewrite.h"
+#include "libav_transcode.h"
+}
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
@@ -157,6 +161,110 @@ int main(int argc, char **argv) {
         const auto legacy=db.playlistEntries(legacyPlaylist);
         check(legacy.size()==2 && legacy[0].trackId<0 && legacy[1].trackId<0,
               "legacy unknown pending slots remain unresolved after reopening");
+    }
+    // Sync passthrough sniff: only MPEG Layer III audio skips transcoding.
+    // ADTS AAC and MP2 share the 0xFFE sync; ID3 tags can front any of them.
+    auto sniff = [&](const QByteArray &bytes) {
+        const QString path = root + "/sniff.bin";
+        QFile file(path);
+        if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) return false;
+        file.write(bytes); file.close();
+        return SyncEngine::sniffIsMp3(path);
+    };
+    auto id3 = [](int size, bool footer = false) {
+        QByteArray tag("ID3\x03\x00", 5);
+        tag.append(char(footer ? 0x10 : 0));
+        for (int shift : {21, 14, 7, 0}) tag.append(char((size >> shift) & 0x7F));
+        return tag + QByteArray(size, 'T') + (footer ? QByteArray("3DI\x03\x00\x10\0\0\0\0", 10) : QByteArray());
+    };
+    const QByteArray layer3("\xFF\xFB\x90\x64", 4), body(400, '\0');
+    check(sniff(layer3 + body), "bare MPEG-1 Layer III frame plays as-is");
+    check(sniff(id3(100) + QByteArray(300, '\0') + layer3 + body), "ID3 tag and zero padding before the frame");
+    check(sniff(id3(200 * 1024) + layer3 + body), "a cover-art-sized ID3 tag is skipped, not scanned");
+    check(sniff(id3(50) + id3(60) + layer3 + body), "two stacked ID3 tags");
+    check(sniff(id3(80, true) + layer3 + body), "ID3v2 footer flag is honored");
+    check(sniff(QByteArray("\xFF\xF3\x50\xC4", 4) + body), "MPEG-2 Layer III frame");
+    const QByteArray adts("\xFF\xF1\x50\x80\x02\x1F\xFC", 7);
+    check(!sniff(adts + body), "raw ADTS AAC transcodes");
+    check(!sniff(id3(100) + adts + body), "ID3-tagged ADTS AAC transcodes");
+    check(!sniff(QByteArray("\xFF\xFD\x90\x04", 4) + body), "MPEG-1 Layer II transcodes");
+    check(!sniff(id3(100) + QByteArray("fLaC\0\0\0\x22", 8) + body), "FLAC behind an ID3 tag transcodes");
+    check(!sniff(QByteArray("RIFF\x24\0\0\0WAVEfmt ", 16) + layer3 + body), "WAV is not scanned for frame syncs");
+    check(!sniff(QByteArray("\x30\x26\xB2\x75\x8E\x66\xCF\x11", 8) + body), "ASF/WMA transcodes");
+    check(!sniff(QByteArray("\xFF\xFB\xF0\x64", 4) + body), "reserved bitrate index is not a frame");
+    check(!sniff(id3(4096).left(200)), "an ID3 size past end of file transcodes");
+    check(!sniff(QByteArray()), "an empty file transcodes");
+
+    // In-place tag edits: any MPEG audio layer, never another codec that
+    // merely carries an ID3 tag (the rewriter would drop its header).
+    auto mpeg = [&](const QByteArray &bytes) {
+        const QString path = root + "/edit-sniff.bin";
+        QFile file(path);
+        if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) return false;
+        file.write(bytes); file.close();
+        return SyncEngine::sniffIsMpeg(path);
+    };
+    const QByteArray flacHead = QByteArray("fLaC\0\0\0\x22", 8) + QByteArray(34, 'S')
+        + QByteArray("\x03\0\0\x12", 4) + QByteArray(18, '\xFF');   // STREAMINFO, seek table
+    check(mpeg(id3(100) + layer3 + body), "tagged Layer III may be edited in place");
+    check(mpeg(QByteArray("\xFF\xFD\x90\x04", 4) + body), "MPEG-1 Layer II may be edited in place");
+    check(!mpeg(id3(100) + flacHead + body), "an ID3-tagged FLAC is never edited as MPEG");
+    check(!mpeg(id3(100) + adts + body), "an ID3-tagged ADTS AAC is never edited as MPEG");
+    check(!mpeg(QByteArray("\x30\x26\xB2\x75\x8E\x66\xCF\x11", 8) + body), "ASF/WMA is never edited as MPEG");
+
+    // The rewriter refuses such a file itself and leaves it byte for byte,
+    // although the FLAC seek-table placeholders contain FF FF syncs.
+    auto writeFile = [&](const QString &path, const QByteArray &bytes) {
+        QFile file(path);
+        if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) return false;
+        return file.write(bytes) == bytes.size();
+    };
+    auto readFile = [](const QString &path) {
+        QFile file(path);
+        return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
+    };
+    ZuunedId3Edits edits{};
+    edits.title = "Edited title";
+    {
+        const QString path = root + "/tagged.flac";
+        const QByteArray flac = id3(100) + flacHead + QByteArray(400, 'F');
+        check(writeFile(path, flac) && zuuned_edit_mp3_tags(path.toUtf8().constData(), &edits) != 0
+              && readFile(path) == flac && !QFile::exists(path + ".zuuned_edit.tmp"),
+              "the ID3 rewriter refuses an ID3-tagged FLAC and leaves it untouched");
+    }
+    {
+        // Two transcodes of sources with the same file name (episodes in
+        // different folders) get different outputs: the sync pipeline runs
+        // transcodes concurrently with a send still reading the first one.
+        QByteArray wav("RIFF", 4);
+        auto le = [](quint32 v, int n) { QByteArray b; for (int i = 0; i < n; ++i) b.append(char(v >> (8 * i))); return b; };
+        const quint32 dataBytes = 8000 * 2 / 5;                   // 0.2 s, 8 kHz mono 16-bit
+        wav += le(36 + dataBytes, 4) + "WAVEfmt " + le(16, 4) + le(1, 2) + le(1, 2) + le(8000, 4)
+             + le(16000, 4) + le(2, 2) + le(16, 2) + "data" + le(dataBytes, 4) + QByteArray(int(dataBytes), '\0');
+        QDir().mkpath(root + "/a"); QDir().mkpath(root + "/b");
+        const QString first = root + "/a/Episode 1.wav", second = root + "/b/Episode 1.wav";
+        char *outA = writeFile(first, wav) ? zuuned_transcode_audio(first.toUtf8().constData(), "Artist", nullptr, nullptr) : nullptr;
+        char *outB = writeFile(second, wav) ? zuuned_transcode_audio(second.toUtf8().constData(), "Artist", nullptr, nullptr) : nullptr;
+        check(outA && outB && strcmp(outA, outB) != 0 && QFile::exists(outA) && QFile::exists(outB),
+              "same-named sources transcode to different temporary outputs");
+        for (char *out : {outA, outB}) if (out) { QFile::remove(out); free(out); }
+    }
+    {
+        // Stacked tags: one rewritten tag, then exactly the original audio.
+        // The second tag holds UTF-16 text whose BOM (FF FE) looks like a
+        // frame sync to a search.
+        const QString path = root + "/stacked.mp3";
+        QByteArray utf16Tag = id3(60);
+        utf16Tag.replace(10, 2, QByteArray("\xFF\xFE", 2));
+        check(writeFile(path, id3(50) + utf16Tag + layer3 + body)
+              && zuuned_edit_mp3_tags(path.toUtf8().constData(), &edits) == 0, "stacked tags are rewritten");
+        const QByteArray out = readFile(path);
+        const int tagEnd = out.size() >= 10 && out.startsWith("ID3")
+            ? 10 + ((uchar(out[6]) & 0x7F) << 21 | (uchar(out[7]) & 0x7F) << 14
+                    | (uchar(out[8]) & 0x7F) << 7 | (uchar(out[9]) & 0x7F)) : -1;
+        check(tagEnd > 0 && out.mid(tagEnd, layer3.size() + body.size()) == layer3 + body
+              && out.indexOf("TTTT", tagEnd) < 0,
+              "after the rewritten tag the file holds the audio, not the second tag's bytes");
     }
     printf("Music sync identity: %d checks, %d failures; no USB constructed\n", checks, failed);
     return failed ? 1 : 0;

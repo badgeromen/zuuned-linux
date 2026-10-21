@@ -9,6 +9,7 @@ static char error[512];
 void zune_set_error(const char *fmt, ...) {
     va_list ap; va_start(ap, fmt); vsnprintf(error, sizeof(error), fmt, ap); va_end(ap);
 }
+void zune_clear_error(void) { error[0] = 0; }
 static void check(int ok, const char *label) {
     if (!ok) { fprintf(stderr, "FAIL %s: %s\n", label, error); exit(1); }
     printf("PASS %s\n", label); ++checks;

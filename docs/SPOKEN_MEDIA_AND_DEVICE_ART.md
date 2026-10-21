@@ -2,8 +2,10 @@
 
 Private development plan, 2026-10-08.
 
-**Scope update:** podcasts and audiobooks are the active work. HD artist
-backgrounds are deferred until both are working, per the user's latest decision.
+**Scope update, 2026-10-17:** the user activated HD Now Playing artist backgrounds
+after the spoken-media release. See [HD_NOW_PLAYING_ART.md](HD_NOW_PLAYING_ART.md)
+and the new `feature/hd-now-playing-art` branches. Earlier deferrals below are
+historical and superseded for this workstream.
 Dedicated `feature/podcasts-audiobooks` branches were created in libzune first
 and then Zuuned, preserving the existing local research/probe changes.
 The user requested all three workstreams for
@@ -431,7 +433,9 @@ Gate: known-good creation capture or equivalent hardware proof, a multipart
 book and chaptered input, correct ordering/category, reconnect/reindex, resume
 where supported, repeat-sync identity and truthful failure reporting.
 
-## Deferred follow-up: Zune HD artist backgrounds
+## Zune HD artist backgrounds (activated 2026-10-17)
+
+Current phases and evidence boundaries: [HD_NOW_PLAYING_ART.md](HD_NOW_PLAYING_ART.md).
 
 Treat artist catalog imagery independently of album representative samples.
 Investigate artist identity properties, the device's catalog HTTP requests and
@@ -696,7 +700,7 @@ whole-book gestures without a picker and unchanged podcast gestures), 35 native
 queue/recovery checks, and 34 range-encoding checks under ASan/UBSan. The latter
 independently decode adjacent cuts to verify sample counts, audible content and
 phase, including nonzero seeks, final endpoints and cancellation cleanup.
-Read-only preparation of the imported Philosopher's Stone opening [0,62042] ms
+Read-only preparation of an imported book's opening [0,62042] ms
 and final five seconds ending at 31282944 ms passed. The opening decoded to
 62042.018 ms (one output sample of rounding), final range to exactly 5000 ms.
 Original files were untouched and test output was removed. Whole-book hardware
@@ -1290,3 +1294,236 @@ libzune was committed/pushed first as `853bf3c`; the app pins that private commi
 The running Zuuned sync was left open throughout the commit/push operation.
 This checkpoint is private Gitea work, not a public release or a claim that all
 remaining hardware playback/resume gates have passed.
+
+## October 20: covers sized for the device
+
+Audiobook covers did not show during playback on the user's Zune 80 and loaded
+slowly on the HD. Zuuned sent the stored cover, up to 1600x1600 at JPEG quality
+93 (171 KB to 1.06 MB), unchanged to every part and podcast show. A Zune 30
+declares artwork of at most 240x240 and 1 MiB, JPEG only.
+
+`DeviceWorker` now fits each audiobook and show cover with
+`src/sync/DeviceCover` to the limits `zune_get_brand_limits` reports for that
+object: never larger than declared, never above 480 pixels, 240x240 when the
+device declares nothing or the read fails, baseline 4:2:0, quality lowered
+only to meet a byte limit. Stored covers in the app are unchanged. A cover
+that cannot be prepared is reported as a warning; the part or episode stays
+synced. Gates: `tests/spoken-cover-worker/run.mjs` (22 checks, 12 fail
+against the old send code) and libzune `tests/run-brand-limits.sh` (17).
+
+Existing objects were repaired outside the app with a one-off tool that uses
+the same cover code and matches parts by exact book title and author inside
+`ZUUNED-*` folders. On the Zune 30 it rebranded 19 audiobook parts and both
+podcast shows (240x240, 21,220 / 10,571 / 8,409 bytes), each read back byte for
+byte, then finalized. Podcast shows on other devices are rebranded by the next
+episode sync; audiobook parts already on the Zune 80 and HD still need the
+repair.
+
+App hardware gate, Zune 120 (Draco), same night: after removing the same book
+from the device page, the new build (`3f65a83`) synced it again from the
+local library: 19 parts in 7 m 55 s, each cover 240x240 and 21,220 bytes, no
+cover warnings, CleanDataStore OK. The user confirmed the cover shows during
+playback on the Zune 120. The Zune 30 screen check and the HD remain.
+
+## October 20: long back catalogues, paged feeds and paged lists
+
+The user's 3,104-episode feed (12.7 MiB decompressed) was refused at the old
+8 MiB cap; the cap rose to 64 MiB the same day. The follow-up asked how large
+podcasts get and for the back catalogue to be paged.
+
+### How large feeds get (measured October 20)
+
+The Podcast Index dump (4,744,067 feeds) keeps only the newest 1,000
+episodes of a feed (13,784 feeds sit at that cap), so it cannot rank feeds by
+size. About 640 of the busiest feeds were fetched instead: the capped feeds
+publishing fastest, the most popular ones and well-known daily shows.
+
+| Feed | Episodes | Documents | Decompressed |
+|---|---|---|---|
+| Mañanas BLU con Néstor Morales (Blu Radio, Omny) | 50,193 | 6 of 9,999 | 120.7 MiB, back to 2012 |
+| KYW Newsradio Audio On-Demand (Audacy) | 40,045 | 27 of 1,500 | 105.2 MiB, back to 2017 |
+| Eco Medios Entrevistas (iVoox) | 24,258 | 1 | 19 MiB |
+| Real Life ke Kahaniyan (Anchor, spam) | 10,000 | 1 | 102.4 MiB |
+
+Omny, Audacy (Amperwave) and Audioboom page their feeds with RFC 5005
+`atom:link rel="next"` (15 of 400 feeds checked on those hosts). Hosts cap a
+single document: Spreaker 1,000, Simplecast and Transistor 2,000, Castos
+3,000, Acast and Megaphone 5,000, Anchor 10,000. Before this change the parser
+refused 10 of the 16 largest single documents tried (seven over 10,000
+episodes, one over 64 MiB, two for one repeated GUID), and a paged feed showed
+only its first document (KYW: 1,500 of 40,045).
+
+### Limits
+
+`src/spoken/PodcastFeed.h`: 128 MiB and 50,000 episodes per document, 100,000
+episodes per show, 1,000 documents per walk; `SpokenStore::MaxItems` is
+500,000 rows. A later item repeating an episode identity with different
+content is skipped and counted, not a reason to refuse the feed (a 9,392-episode
+feed reused one GUID for two items). `fetch()` turns off Qt's compression-bomb
+check, which refused any gzip body past 10 MiB at a high ratio (the 102.4 MiB
+feed is 2.1 MB on the wire) and reported it as "HTTP 200"; `drain()` already
+caps decompressed bytes. Failures on a 2xx response now name the network
+error code or the deadline, never the reply's errorString (it can hold the
+URL).
+
+### Reading the back catalogue
+
+`readFeed` parses one document and returns `nextPage` (`rel="next"`, else
+`rel="prev-archive"`). Feed downloads never run on the database worker: two
+lanes, each a thread fetching one document at a time in order (`fetch()` runs
+a nested event loop, so a second fetch posted meanwhile would run inside the
+first), carry previews and refreshes, and older pages. A preview reports
+`episodeCount` and `hasOlder`; the QML preview no longer carries the episodes
+(QML copies the whole property on every read). After a subscribe or refresh
+saves the first document, `planOlder` starts a walk; each older page is
+downloaded in its lane and saved by a short background job (`saveOlder`):
+
+- A new subscription is saved as `loading` with its cursor (`olderPage`) on the
+  first older page and reads to the last one. Quitting keeps `loading`; the
+  walk resumes when the library next loads.
+- A failed page leaves `incomplete` with `olderError`. The next refresh
+  retries that page. After two walks in a row failed without adding an
+  episode the walk starts again from the first older page (a cursor URL can
+  expire); after three only a refresh the user asks for tries again
+  (`olderFailures`, reset by any new episode: page URLs may change on every
+  response, so this counts progress, not addresses). A response without a
+  next link leaves an unfinished walk as it is.
+- A complete show reads on only while pages hold new episodes: new episodes
+  push older ones down a page ("catching up"). With an unfinished walk the
+  pages pushed down come first, then the cursor, with the pages read while
+  catching up no longer counting as visited; a cursor on the first older page
+  is simply a full walk.
+- New episodes only push items later, so a stale cursor repeats items and
+  never skips one. Older pages only add episodes: a GUID repeated on an older
+  page never overwrites the newer copy.
+- A page with no items, or one linking back to a page already read or to the
+  feed, ends the chain as complete. An HTTPS feed's pages are never read over
+  plain HTTP, a saved cursor included: a catch-up just stops, a walk ends
+  `limited`. `limited` (not retried) means 100,000 episodes, 1,000 documents
+  or such an HTTP link.
+
+Walks never make the service busy and only quitting stops them: the task
+banner's "cancel task" leaves them going. The periodic position save goes on
+during a walk (one queued save at a time). The queue planner admits from the
+first page; an oldest-first request waits for its show's walk while other
+shows go on. Two rounds of independent review found the cancel, resume,
+repeated-page, nested-fetch and retry cases above; each has a test.
+
+### Episodes stay in SQLite
+
+Measured with the old model (every row decoded into memory after every job):
+at 50,000 episodes each job reloaded rows for 0.6 s, each `entries()` call
+sorted on the UI thread for 0.3 to 0.4 s (several per change, and a position
+save every five seconds while playing) and memory rose about 330 MiB.
+
+Now `run()` reloads only shows, books, parts and collections
+(`collectionRows`, by the kind index) and the per-show counts of the shows a
+job wrote (index-only). Episodes are read from SQLite: on the UI thread through
+a read-only WAL connection (`openReader`, 250 ms busy timeout, never waits for
+the writer), on the worker through the job's store. Schema version stays 1;
+only indexes were added, so an earlier build still opens the database:
+
+- `spoken_episode_dates`: show, publication instant descending. Lists come
+  newest first with equal dates in feed order straight from the index.
+- `spoken_episode_unplayed`, `_downloaded`, `_starred`: partial indexes for
+  each list filter; `_titles` for search; `_sources` for device audio URLs;
+  `spoken_kind`. Queries name their index with `INDEXED BY`: SQLite's planner
+  otherwise picks the unique (kind,parent,identity) index and reads every
+  episode of the show.
+- The sort key is `julianday()` of the stored text: offsets honoured, missing
+  or invalid dates NULL and last. Selections (newest or oldest N) keep their
+  tested order: instant, then identity, then ID, undated last.
+- Title search uses `zuuned_fold` (QString case folding; SQLite's lower() is
+  ASCII only), registered on every connection and never used in an index.
+- `put()` counts the items once per transaction (it counted every row on every
+  insert, quadratic for a long feed); a refresh skips unchanged rows.
+- The unplayed index holds no audio URL (equal dates would then sort by URL
+  and force a sort of every row before a deep page); episodes the Zune reports
+  played are excluded by row ID through the sources index.
+- `journal_size_limit` keeps the WAL at 8 MiB once reset: the UI reader keeps
+  the file open, so it would otherwise stay at its largest (92 MB after a
+  20,000-episode save). Shutdown closes the reader first so the last
+  connection can checkpoint.
+- Earlier builds still open the database, up to their own 100,000-row load
+  limit: past it they show an empty spoken library and refuse new rows;
+  nothing is lost.
+
+Timings at 50,000 synthetic episodes: a page 2.6 ms, the last page 3.8 ms,
+unplayed 3.8 ms (its last page 6.3 ms), downloaded or starred under 0.1 ms,
+search 30 ms, all counts 1 ms. Cleanup candidates are read only for the device
+audio URLs on the Zune or in the queue; the old snapshot of every episode
+returned nothing past 5,000 episodes and so silently disabled cleanup. Until
+the Zune's podcast inventory has been read this session, the episodes Zuuned
+has sent (each keeps the audio URL it was sent with; index
+`spoken_episode_sent`) go too, and the worker correlates them with the live
+inventory either way.
+
+### Lists
+
+The user chose the usual podcast-app pattern (October 20: Apple Podcasts,
+Spotify, Pocket Casts and AntennaPod show one list, newest first, with
+search, status filters and a newest/oldest flip; none numbers pages). The
+show page lists 25 episodes and loads 25 more as it scrolls (`EpisodeList`,
+a ListModel filled from `episodePage` with offset and limit), with a "newest
+first ▾ / oldest first ▴" toggle, the debounced episode search (250 ms,
+`Theme.spokenSearchDelay`) and the filters. "select all" takes the IDs of the
+whole list (`episodeIds`, at most 5,000), not only the rows loaded so far.
+
+Rows change in place: a ListView given a new JS array jumps back to the top
+(measured: contentY 400 went to 0, growing or not), and the library changes
+every five seconds while something plays and on every older page saved, so
+the earlier array lists jumped to the top that often. `KeyedRows` (a
+ListModel) removes, inserts and updates rows by key and only rebuilds when
+the question changes (show, filter, search, order); `EpisodeList` is built on
+it. The same applies to the spoken galleries (Shows, Books, Libraries: a
+`GalleryView` given `keyOf` keeps its grid in place; other galleries are
+unchanged), a book's parts and chapters, and the Zune's own podcast and
+audiobook pages, whose show grid and episode list kept jumping to the top
+whenever the device inventory refreshed. Oldest first reads the date index backwards
+and keeps undated episodes last. Rows carry no show notes, and they carry
+`feedUrl` and `deviceSource` so `PodcastStatus` needs no lookup per row.
+
+The summary adds "reading older pages…", "older pages not read yet" or "back
+catalogue cut short". Starred episodes use the same list across shows, and the
+picker's manual mode scrolls the same way; its newest / oldest modes filter
+device-played episodes in SQLite and keep an un-checked episode when the
+library changes. Show cards ask `showOnDevice` and resume asks
+`resumeEpisode`; neither lists the show. Below the detail breakpoint the
+search, order and selection controls take a row of their own, and the cover
+stacks above the heading only on pages at least 820 px tall
+(`Theme.spokenStackedCoverHeight`): at 560x610 it had left the list 0 px; it
+now gets 216 px. The Zune's own show page follows the same rule (its list had
+44 px there).
+
+### Verification
+
+Software: parser 53 checks (`tests/spoken-media/run.sh`), QML organization 58
+(short-window layouts, the picker un-check, a 60-episode list loading in
+batches, keeping its place, flipping order and selecting all, and the Books
+gallery and a 60-chapter book keeping their place while the library changes),
+device pages 24 (the Zune's show grid and episode list keeping their place
+through an inventory refresh, and their list in a short narrow window), native
+238 and planner 23 (`tests/spoken-media/native/run.sh`: a three-document
+loopback feed walked, caught up and resumed after a failed page and after a
+restart, a looping chain, a never-read chain with a repeated page, cancel and
+quit during a walk, a stale duplicate GUID, an empty page, a page that always
+fails, a show reaching 100,000 episodes, a 250-episode show scrolled, flipped,
+searched and selected in the real QML while the library changes, a gzip feed
+compressed about 300:1, which fails without the `fetch()` change) and the full
+`ci/check.sh` (56 gates). Real feeds through the real service in an isolated
+profile (no USB): KYW 40,047 episodes in 27 documents in 86 s, Mañanas BLU
+50,193 in six documents in 9 s, The Bert Show 7,866 in two, iVoox 24,258 and
+the 102.4 MiB Anchor feed in one each, and a 13,919-episode Omny feed the old
+cap refused. With all 149,387 episodes the library loads in 40 ms, the process
+stays at 103 MiB, a star toggle round trip takes 20 ms and real pages read in 2
+to 8 ms (search 13 to 73 ms). In the user's app on the Zune HD the
+3,104-episode show pages 1–100 to 3,101–3,104 and search finds matches across
+all pages.
+
+Limits that remain: parsing holds one document in memory (the 102.4 MiB one
+peaked at 771 MiB; Mañanas BLU's 24.6 MiB pages at 436 MiB); a document over
+50,000 episodes is still refused; there is still no way to remove a show from
+the library. The native check "listening position persisted to disk" failed
+once in four runs: it can pause before the player reports a position with a
+known duration, so no episode is current to save (timing older than this
+change).

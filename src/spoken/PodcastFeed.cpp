@@ -1,6 +1,7 @@
 #include "PodcastFeed.h"
 
 #include <QHash>
+#include <QLocale>
 #include <QXmlStreamReader>
 
 namespace {
@@ -8,6 +9,7 @@ constexpr auto Itunes = "http://www.itunes.com/dtds/podcast-1.0.dtd";
 constexpr auto XmlNs = "http://www.w3.org/XML/1998/namespace";
 constexpr auto Content = "http://purl.org/rss/1.0/modules/content/";
 constexpr auto Dublin = "http://purl.org/dc/elements/1.1/";
+constexpr auto Atom = "http://www.w3.org/2005/Atom";
 
 QUrl elementBase(const QXmlStreamReader &r, const QUrl &parent)
 {
@@ -113,6 +115,7 @@ void readChannel(QXmlStreamReader &r, const QUrl &parent, PodcastFeed &feed)
     const auto base = elementBase(r, parent);
     QHash<QString, int> seen;
     int items = 0;
+    QUrl archive;
     while (r.readNextStartElement()) {
         const auto ns = r.namespaceUri();
         const auto name = r.name();
@@ -123,6 +126,14 @@ void readChannel(QXmlStreamReader &r, const QUrl &parent, PodcastFeed &feed)
         else if (ns == QLatin1String(Itunes) && name == u"image") {
             feed.artworkUrl = Podcasts::mediaUrl(r.attributes().value(u"href").toString(), localBase);
             r.skipCurrentElement();
+        } else if (ns == QLatin1String(Atom) && name == u"link") {
+            // RFC 5005: a paged feed links its next (older) page, an archived
+            // feed its previous archive. Both continue the back catalogue.
+            const auto rel = r.attributes().value(u"rel").trimmed().toString().toLower();
+            const auto href = Podcasts::mediaUrl(r.attributes().value(u"href").toString(), localBase);
+            if (rel == u"next" && feed.nextPage.isEmpty()) feed.nextPage = href;
+            else if (rel == u"prev-archive" && archive.isEmpty()) archive = href;
+            r.skipCurrentElement();
         } else if (ns.isEmpty() && name == u"image") {
             while (r.readNextStartElement()) {
                 if (r.namespaceUri().isEmpty() && r.name() == u"url") {
@@ -132,23 +143,29 @@ void readChannel(QXmlStreamReader &r, const QUrl &parent, PodcastFeed &feed)
                 } else r.skipCurrentElement();
             }
         } else if (ns.isEmpty() && name == u"item") {
-            if (++items > Podcasts::MaxEpisodes) { r.raiseError(QStringLiteral("Feed exceeds episode limit")); return; }
+            if (++items > Podcasts::MaxEpisodes) {
+                r.raiseError(QStringLiteral("Feed lists more than %1 episodes in one document")
+                                 .arg(QLocale(QLocale::English).toString(Podcasts::MaxEpisodes)));
+                return;
+            }
             PodcastEpisode e;
             readEpisode(r, base, e);
             if (r.hasError()) return;
             if (e.title.isEmpty() || !e.enclosureUrl.isValid()) { ++feed.skippedItems; continue; }
             const auto existing = seen.constFind(e.identity);
             if (existing != seen.cend()) {
+                // Publishers do reuse a GUID by mistake (seen in a 9,392-episode
+                // feed). Keep the first item rather than refusing the feed.
                 const auto &previous = feed.episodes[*existing];
-                if (previous.title != e.title || previous.enclosureUrl != e.enclosureUrl || previous.mimeType != e.mimeType) {
-                    r.raiseError(QStringLiteral("Feed repeats an episode identity with conflicting content")); return;
-                }
+                if (previous.title != e.title || previous.enclosureUrl != e.enclosureUrl || previous.mimeType != e.mimeType)
+                    ++feed.skippedItems;
                 continue;
             }
             seen.insert(e.identity, feed.episodes.size());
             feed.episodes.append(e);
         } else r.skipCurrentElement();
     }
+    if (feed.nextPage.isEmpty()) feed.nextPage = archive;
     for (auto &e : feed.episodes) {
         if (e.author.isEmpty()) e.author = feed.author;
         if (e.artworkUrl.isEmpty()) e.artworkUrl = feed.artworkUrl;
@@ -174,7 +191,7 @@ bool Podcasts::parseRss(const QByteArray &bytes, const QUrl &url, PodcastFeed *o
     if (error) error->clear();
     const auto fail = [error](const QString &message) { if (error) *error = message; return false; };
     if (!out || bytes.isEmpty() || bytes.size() > MaxFeedBytes)
-        return fail(QStringLiteral("Feed is empty or exceeds 8 MiB"));
+        return fail(QStringLiteral("Feed is empty or larger than %1 MiB").arg(MaxFeedBytes / (1024 * 1024)));
     const auto source = mediaUrl(url.toString(QUrl::FullyEncoded), {});
     if (!source.isValid()) return fail(QStringLiteral("Feed requires an HTTP or HTTPS response URL"));
     // Validate every token, even unknown extensions, before skipCurrentElement.

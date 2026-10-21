@@ -37,6 +37,13 @@ TestCase {
         verify(page !== null)
     }
     function cleanup() { if (page) page.visible = false; page = null }
+    // What the episode list shows: podcast rows live in its model, not in page.rows.
+    function shownIds() {
+        const list = findChild(page, "spokenEpisodeList")
+        const ids = []
+        for (let i = 0; i < list.count; ++i) ids.push(page.books ? list.model[i].id : list.model.get(i).row.id)
+        return ids
+    }
     function pivotTab(parent, title) {
         if (parent.modelData === title && parent.active !== undefined) return parent
         for (const child of parent.children || []) {
@@ -100,6 +107,19 @@ TestCase {
         picker.addSelection()
         compare(SpokenMediaService.calls[0].method, "queuePodcasts")
         compare(SpokenMediaService.calls[0].args[0], ["episode-b"])
+        picker.close()
+    }
+    function test_pickerKeepsUncheckedEpisodesAcrossLibraryChanges() {
+        // Each older feed page saved changes the library; an un-check must survive it.
+        const picker = findChild(page, "spokenTransferPicker")
+        picker.openAt(page, SpokenMediaService.item("show-a"))
+        compare(picker.selectedIds.length, 2)
+        picker.toggle("episode-a")
+        compare(picker.selectedIds, ["episode-b"])
+        SpokenMediaService.revision++
+        compare(picker.selectedIds, ["episode-b"])
+        picker.episodeCount = 1
+        compare(picker.selectedIds, ["episode-b"])
         picker.close()
     }
     function test_podcastPlusUsesNativeSelectionFromCardsAndDetail() {
@@ -202,7 +222,7 @@ TestCase {
         DeviceService.podcastStatuses = {"show-a|episode-a":{known:true,onDevice:true,playedKnown:true,played:true}}
         DeviceService.podcastEpisodesList = [{itemId:123}]
         page.openCollection("show-a")
-        compare(page.rows.length,2)
+        compare(shownIds().length,2)
         const list = findChild(page,"spokenEpisodeList")
         list.forceLayout()
         tryVerify(() => list.itemAtIndex(0) !== null)
@@ -210,11 +230,11 @@ TestCase {
         verify(findChild(row,"spokenEpisodeOnDevice").visible)
         compare(findChild(row,"spokenEpisodePlayed").text,"✓ played on Zune")
         page.filter = "unplayed"
-        compare(page.rows.length,1)
+        compare(shownIds().length,1)
         page.filter = "all"
-        compare(page.rows.length,2)
+        compare(shownIds().length,2)
         DeviceService.connected = false
-        compare(page.rows.length,2)
+        compare(shownIds().length,2)
         verify(!findChild(list.itemAtIndex(0),"spokenEpisodeOnDevice").visible)
     }
     function test_podcastNewestTenAndSavedCountWithDeviceBadges() {
@@ -245,7 +265,7 @@ TestCase {
         DeviceService.podcastEpisodesList = []
         page.openCollection("show-a")
         page.filter = "unplayed"
-        compare(page.rows.length,2)
+        compare(shownIds().length,2)
         const list = findChild(page,"spokenEpisodeList")
         list.forceLayout()
         tryVerify(() => list.itemAtIndex(0) !== null)
@@ -281,17 +301,88 @@ TestCase {
         compare(SpokenMediaService.calls[0].args,["book-a",true])
         compare(page.containers.length,2)
     }
+    function test_longShowScrollsInBatchesAndKeepsItsPlace() {
+        const records = SpokenMediaService.records.filter(r => r.parentId !== "show-a")
+        for (let i = 60; i >= 1; --i)
+            records.push({id: "long-" + i, kind: "episode", parentId: "show-a", title: "Long episode " + i, path: "", durationMs: 1000})
+        SpokenMediaService.records = records
+        SpokenMediaService.revision++
+        page.openCollection("show-a")
+        const list = findChild(page, "spokenEpisodeList")
+        waitForRendering(page)
+        // Batches of 25, enough to fill the view and a little more.
+        verify(list.count < 60 && list.count % 25 === 0, "episodes load in batches of 25: " + list.count)
+        compare(shownIds()[0], "long-60")
+        while (list.count < 60) {
+            const before = list.count
+            list.contentY = list.contentHeight - list.height
+            tryVerify(() => list.count > before, 5000, "scrolling to the end loads the next batch")
+        }
+        compare(list.count, 60)
+        // A library change (a position save, an older page) keeps the view where it is.
+        list.contentY = 400
+        const place = list.contentY
+        SpokenMediaService.records = SpokenMediaService.records.map(r => r.id === "long-50" ? Object.assign({}, r, {title: "Long episode 50 (renamed)"}) : r)
+        SpokenMediaService.revision++
+        compare(list.count, 60)
+        compare(list.contentY, place, "the list keeps its scroll position")
+        compare(list.model.get(10).row.title, "Long episode 50 (renamed)")
+        const order = findChild(page, "spokenEpisodeOrder")
+        list.contentY = list.contentHeight - list.height
+        waitForRendering(page)
+        mouseClick(order, order.width / 2, order.height / 2)
+        compare(page.newestFirst, false)
+        compare(shownIds()[0], "long-1", "oldest first")
+        // Seen from the top, not from where the old list was scrolled.
+        tryCompare(list, "contentY", list.originY)
+        compare(list.indexAt(0, list.contentY + 1), 0)
+        const all = findChild(page, "spokenSelectAll")
+        mouseClick(all, all.width / 2, all.height / 2)
+        compare(Object.keys(page.checks).length, 60, "select all covers episodes not yet loaded")
+        compare(all.text, "clear selection")
+    }
+    function test_booksGalleryAndBookPageKeepTheirPlace() {
+        const records = []
+        for (let i = 1; i <= 60; ++i)
+            records.push({id: "book-" + i, kind: "book", title: "Book " + String(i).padStart(2, "0"), author: "Author", favorite: false, count: 1})
+        const chapters = []
+        for (let i = 0; i < 60; ++i) chapters.push({title: "Chapter " + (i + 1), startMs: i * 1000})
+        records.push({id: "long-part", kind: "part", parentId: "book-1", title: "Long part", path: "/fixture/long.m4b", durationMs: 60000, chapters: chapters})
+        SpokenMediaService.records = records
+        page.books = true
+        SpokenMediaService.revision++
+        const grid = findChild(findChild(page, "spokenGallery"), "galleryGrid")
+        waitForRendering(page)
+        verify(grid.contentHeight > grid.height)
+        grid.contentY = 300
+        const gridPlace = grid.contentY
+        // Playing a book saves its position every five seconds: a library change.
+        SpokenMediaService.records = SpokenMediaService.records.map(r => r.id === "book-30" ? Object.assign({}, r, {title: "Book 30 (renamed)"}) : r)
+        SpokenMediaService.revision++
+        compare(grid.contentY, gridPlace, "the books gallery keeps its place")
+        page.openCollection("book-1")
+        const list = findChild(page, "spokenEpisodeList")
+        waitForRendering(page)
+        compare(list.count, 61)
+        list.contentY = 400
+        const listPlace = list.contentY
+        SpokenMediaService.records = SpokenMediaService.records.map(r => r.id === "long-part" ? Object.assign({}, r, {positionMs: 5000}) : r)
+        SpokenMediaService.revision++
+        compare(list.count, 61)
+        compare(list.contentY, listPlace, "a playing book's chapter list keeps its place")
+    }
     function test_episodeFavoritesAreIndependentFromShow() {
         page.openCollection("show-a")
         page.filter = "starred"
-        compare(page.rows.map(r => r.id),["episode-a"])
+        compare(shownIds(),["episode-a"])
         compare(SpokenMediaService.item("show-a").favorite,false)
-        const star = findChild(page,"spokenEpisodeStar")
-        verify(star !== null)
+        // Inserted rows get their delegates at the next layout pass.
+        let star = null
+        tryVerify(() => { star = findChild(page,"spokenEpisodeStar"); return star !== null })
         waitForRendering(page)
         mouseClick(star,star.width/2,star.height/2)
         compare(SpokenMediaService.calls[0].args,["episode-a",false])
-        compare(page.rows.length,0)
+        compare(shownIds().length,0)
         compare(SpokenMediaService.item("show-a").favorite,false)
     }
     function test_sublibraryMaintainsExplicitBookOrderAndBreadcrumbReturn() {
@@ -312,7 +403,7 @@ TestCase {
         page.pivot = "Starred episodes"
         compare(page.collectionId,"")
         compare(page.showingEntries,true)
-        compare(page.listRows.map(r => r.id),["episode-a"])
+        compare(shownIds(),["episode-a"])
         compare(SpokenMediaService.calls.length,0)
     }
     function test_narrowHeaderAndGalleryStayInsidePage_data() {
@@ -321,10 +412,13 @@ TestCase {
     }
     function test_drillDownKeepsTitleActionsAndRowsInBounds_data() {
         return [{tag:"podcast-wide",books:false,width:1100},{tag:"podcast-narrow",books:false,width:500},
-                {tag:"book-wide",books:true,width:1100},{tag:"book-narrow",books:true,width:500}]
+                {tag:"book-wide",books:true,width:1100},{tag:"book-narrow",books:true,width:500},
+                {tag:"podcast-narrow-short",books:false,width:500,height:610},{tag:"book-narrow-short",books:true,width:500,height:610},
+                {tag:"podcast-wide-short",books:false,width:1100,height:610}]
     }
     function test_drillDownKeepsTitleActionsAndRowsInBounds(data) {
         page.width = data.width
+        if (data.height) page.height = data.height
         page.books = data.books
         const id = data.books ? "book-a" : "show-a"
         SpokenMediaService.records = SpokenMediaService.records.map(r => r.id === id
@@ -340,7 +434,9 @@ TestCase {
             const p = control.mapToItem(page,0,0)
             verify(p.x >= 0 && p.x + control.width <= page.width + 1,"Detail content fits page")
         }
-        verify(list.height >= Theme.spokenDetailRowHeight * 2,"Detail leaves usable space for its list")
+        verify(list.height >= Theme.spokenDetailRowHeight * 2,"Detail leaves usable space for its list: " + list.height)
+        const order = findChild(page,"spokenEpisodeOrder")
+        verify(data.books || order.mapToItem(page,order.width,order.height).x <= page.width + 1,"Sort toggle fits the page")
         verify(actions.mapToItem(page,0,actions.height).y <= list.mapToItem(page,0,0).y,"Actions do not overlap list")
         grabImage(page).save("/tmp/zuuned-drill-" + data.tag + ".png")
     }

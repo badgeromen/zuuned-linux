@@ -7,7 +7,7 @@
 
 static int spoken_ready(ZuneDevice *d)
 {
-    if (!d || !d->mtpz_authenticated || d->disconnecting || d->cancel_requested) {
+    if (!d || !d->mtpz_authenticated || ZUNE_FLAG_GET(d->disconnecting) || ZUNE_FLAG_GET(d->cancel_requested)) {
         zune_set_error("Spoken inventory requires an authenticated, active device");
         return 0;
     }
@@ -97,14 +97,15 @@ void zune_free_podcast_episodes(ZunePodcastEpisode *rows, int count)
 
 int zune_get_podcast_episodes(ZuneDevice *d, ZunePodcastEpisode **out, int *count)
 {
+    zune_clear_error();
     if (out) *out = NULL;
     if (count) *count = 0;
-    if (!out || !count) { zune_set_error("Podcast inventory requires both outputs"); return -1; }
+    if (!out || !count) { zune_set_error("Podcast inventory requires both outputs"); return ZUNE_BLOWN; }
     uint32_t *ids = NULL; int n = 0, used = 0, relevant = 0;
-    if (!spoken_handles(d, &ids, &n)) return -1;
+    if (!spoken_handles(d, &ids, &n)) return ZUNE_BLOWN;
     for (int i = 0; i < n; ++i) relevant += (ids[i] >> 24) == 0x10;
     ZunePodcastEpisode *rows = relevant ? calloc((size_t)relevant, sizeof(*rows)) : NULL;
-    if (relevant && !rows) { free(ids); zune_set_error("Cannot allocate podcast inventory"); return -1; }
+    if (relevant && !rows) { free(ids); zune_set_error("Cannot allocate podcast inventory"); return ZUNE_BLOWN; }
     for (int i = 0; i < n; ++i) {
         if ((ids[i] >> 24) != 0x10) continue;
         ZunePodcastEpisode *r = &rows[used++]; uint32_t category = 0;
@@ -120,11 +121,11 @@ int zune_get_podcast_episodes(ZuneDevice *d, ZunePodcastEpisode **out, int *coun
             !(r->series_name = spoken_text(d, r->item_id, ZUNE_OPC_SeriesName))) goto fail;
     }
     if (!spoken_ready(d)) goto fail;
-    free(ids); *out = rows; *count = used; return 0;
+    free(ids); *out = rows; *count = used; return ZUNE_OK;
 fail:
     free(ids); zune_free_podcast_episodes(rows, used);
     zune_set_error("Podcast inventory is incomplete or contains invalid metadata");
-    return -1;
+    return ZUNE_BLOWN;
 }
 
 void zune_free_audiobook_parts(ZuneAudiobookPart *rows, int count)
@@ -138,14 +139,15 @@ void zune_free_audiobook_parts(ZuneAudiobookPart *rows, int count)
 
 int zune_get_audiobook_parts(ZuneDevice *d, ZuneAudiobookPart **out, int *count)
 {
+    zune_clear_error();
     if (out) *out = NULL;
     if (count) *count = 0;
-    if (!out || !count) { zune_set_error("Audiobook inventory requires both outputs"); return -1; }
+    if (!out || !count) { zune_set_error("Audiobook inventory requires both outputs"); return ZUNE_BLOWN; }
     uint32_t *ids = NULL; int n = 0, used = 0, relevant = 0;
-    if (!spoken_handles(d, &ids, &n)) return -1;
+    if (!spoken_handles(d, &ids, &n)) return ZUNE_BLOWN;
     for (int i = 0; i < n; ++i) relevant += (ids[i] >> 24) == 0x12;
     ZuneAudiobookPart *rows = relevant ? calloc((size_t)relevant, sizeof(*rows)) : NULL;
-    if (relevant && !rows) { free(ids); zune_set_error("Cannot allocate audiobook inventory"); return -1; }
+    if (relevant && !rows) { free(ids); zune_set_error("Cannot allocate audiobook inventory"); return ZUNE_BLOWN; }
     for (int i = 0; i < n; ++i) {
         if ((ids[i] >> 24) != 0x12) continue;
         ZuneAudiobookPart *r = &rows[used++]; uint32_t category = 0;
@@ -160,9 +162,9 @@ int zune_get_audiobook_parts(ZuneDevice *d, ZuneAudiobookPart **out, int *count)
             !(r->book_title = spoken_text(d, r->item_id, 0xDA9A))) goto fail;
     }
     if (!spoken_ready(d)) goto fail;
-    free(ids); *out = rows; *count = used; return 0;
+    free(ids); *out = rows; *count = used; return ZUNE_OK;
 fail:
     free(ids); zune_free_audiobook_parts(rows, used);
     zune_set_error("Audiobook inventory is incomplete or contains invalid metadata");
-    return -1;
+    return ZUNE_BLOWN;
 }

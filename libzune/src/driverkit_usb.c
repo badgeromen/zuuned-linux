@@ -16,6 +16,7 @@
 #ifdef __APPLE__
 
 #include "usb.h"
+#include "wiretap.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -83,7 +84,7 @@ static int driverkit_open(zune_usb_handle_t *handle, uint16_t vid, uint16_t pid)
      */
     CFMutableDictionaryRef matching = IOServiceNameMatching("ZuneUSBDriver");
     if (!matching) {
-        fprintf(stderr, "[driverkit-usb] failed to create matching dictionary\n");
+        ZLOG(ZUNE_CHATTER_SCREAM, "driverkit-usb", "failed to create matching dictionary");
         return ZUNE_USB_ERROR;
     }
 
@@ -95,8 +96,8 @@ static int driverkit_open(zune_usb_handle_t *handle, uint16_t vid, uint16_t pid)
     /* matching is consumed by the call above, do not release it */
 
     if (service == IO_OBJECT_NULL) {
-        fprintf(stderr, "[driverkit-usb] ZuneUSBDriver service not found "
-                "(vid=0x%04X pid=0x%04X)\n", vid, pid);
+        ZLOG(ZUNE_CHATTER_WHISPER, "driverkit-usb", "ZuneUSBDriver service not found "
+                "(vid=0x%04X pid=0x%04X)", vid, pid);
         return ZUNE_USB_ERROR;
     }
 
@@ -106,7 +107,7 @@ static int driverkit_open(zune_usb_handle_t *handle, uint16_t vid, uint16_t pid)
      */
     kr = IOServiceOpen(service, mach_task_self(), 0, &connection);
     if (kr != KERN_SUCCESS) {
-        fprintf(stderr, "[driverkit-usb] IOServiceOpen failed: 0x%08X\n", kr);
+        ZLOG(ZUNE_CHATTER_SCREAM, "driverkit-usb", "IOServiceOpen failed: 0x%08X", kr);
         IOObjectRelease(service);
         return ZUNE_USB_ERROR;
     }
@@ -121,7 +122,7 @@ static int driverkit_open(zune_usb_handle_t *handle, uint16_t vid, uint16_t pid)
                              NULL, NULL, /* no scalar output */
                              NULL, NULL  /* no struct output */);
     if (kr != KERN_SUCCESS) {
-        fprintf(stderr, "[driverkit-usb] kZuneUSBOpen failed: 0x%08X\n", kr);
+        ZLOG(ZUNE_CHATTER_SCREAM, "driverkit-usb", "kZuneUSBOpen failed: 0x%08X", kr);
         IOServiceClose(connection);
         IOObjectRelease(service);
         return ZUNE_USB_ERROR;
@@ -141,7 +142,7 @@ static int driverkit_open(zune_usb_handle_t *handle, uint16_t vid, uint16_t pid)
                              NULL, NULL,        /* no scalar output */
                              &epinfo, &epinfo_size  /* struct output */);
     if (kr != KERN_SUCCESS) {
-        fprintf(stderr, "[driverkit-usb] kZuneUSBGetEndpointInfo failed: 0x%08X\n", kr);
+        ZLOG(ZUNE_CHATTER_SCREAM, "driverkit-usb", "kZuneUSBGetEndpointInfo failed: 0x%08X", kr);
         IOConnectCallMethod(connection, kZuneUSBClose,
                             NULL, 0, NULL, 0, NULL, NULL, NULL, NULL);
         IOServiceClose(connection);
@@ -150,7 +151,7 @@ static int driverkit_open(zune_usb_handle_t *handle, uint16_t vid, uint16_t pid)
     }
 
     if (epinfo_size < sizeof(ZuneUSBEndpointInfo)) {
-        fprintf(stderr, "[driverkit-usb] endpoint info too small: %zu < %zu\n",
+        ZLOG(ZUNE_CHATTER_SCREAM, "driverkit-usb", "endpoint info too small: %zu < %zu",
                 epinfo_size, sizeof(ZuneUSBEndpointInfo));
         IOConnectCallMethod(connection, kZuneUSBClose,
                             NULL, 0, NULL, 0, NULL, NULL, NULL, NULL);
@@ -166,8 +167,8 @@ static int driverkit_open(zune_usb_handle_t *handle, uint16_t vid, uint16_t pid)
     handle->bulk_out_maxpacket = epinfo.bulk_out_maxpacket;
     handle->interrupt_ep     = epinfo.interrupt_endpoint;
 
-    fprintf(stderr, "[driverkit-usb] opened: bulk_in=0x%02X (%u) "
-            "bulk_out=0x%02X (%u) intr=0x%02X\n",
+    ZLOG(ZUNE_CHATTER_TALK, "driverkit-usb", "opened: bulk_in=0x%02X (%u) "
+            "bulk_out=0x%02X (%u) intr=0x%02X",
             handle->bulk_in_ep, handle->bulk_in_maxpacket,
             handle->bulk_out_ep, handle->bulk_out_maxpacket,
             handle->interrupt_ep);
@@ -175,7 +176,7 @@ static int driverkit_open(zune_usb_handle_t *handle, uint16_t vid, uint16_t pid)
     /* Allocate and store backend-private data */
     driverkit_backend_data_t *data = calloc(1, sizeof(driverkit_backend_data_t));
     if (!data) {
-        fprintf(stderr, "[driverkit-usb] failed to allocate backend data\n");
+        ZLOG(ZUNE_CHATTER_SCREAM, "driverkit-usb", "failed to allocate backend data");
         IOConnectCallMethod(connection, kZuneUSBClose,
                             NULL, 0, NULL, 0, NULL, NULL, NULL, NULL);
         IOServiceClose(connection);
@@ -202,7 +203,7 @@ static int driverkit_close(zune_usb_handle_t *handle)
     kr = IOConnectCallMethod(data->connection, kZuneUSBClose,
                              NULL, 0, NULL, 0, NULL, NULL, NULL, NULL);
     if (kr != KERN_SUCCESS)
-        fprintf(stderr, "[driverkit-usb] kZuneUSBClose failed: 0x%08X\n", kr);
+        ZLOG(ZUNE_CHATTER_SCREAM, "driverkit-usb", "kZuneUSBClose failed: 0x%08X", kr);
 
     /* Close the IOUserClient connection */
     IOServiceClose(data->connection);
@@ -213,7 +214,7 @@ static int driverkit_close(zune_usb_handle_t *handle)
     free(data);
     handle->backend_data = NULL;
 
-    fprintf(stderr, "[driverkit-usb] closed\n");
+    ZLOG(ZUNE_CHATTER_TALK, "driverkit-usb", "closed");
     return ZUNE_USB_OK;
 }
 
@@ -222,7 +223,7 @@ static int driverkit_bulk_read(zune_usb_handle_t *handle, uint8_t endpoint,
                                uint32_t *actual_length, uint32_t timeout_ms)
 {
     if (!handle || !handle->backend_data) {
-        fprintf(stderr, "[driverkit-usb] bulk_read: invalid handle\n");
+        ZLOG(ZUNE_CHATTER_SCREAM, "driverkit-usb", "bulk_read: invalid handle");
         return ZUNE_USB_ERROR;
     }
 
@@ -252,8 +253,8 @@ static int driverkit_bulk_read(zune_usb_handle_t *handle, uint8_t endpoint,
     );
 
     if (kr != KERN_SUCCESS) {
-        fprintf(stderr, "[driverkit-usb] bulk_read failed: ep=0x%02X len=%u "
-                "err=0x%08X\n", endpoint, length, kr);
+        ZLOG(ZUNE_CHATTER_SCREAM, "driverkit-usb", "bulk_read failed: ep=0x%02X len=%u "
+                "err=0x%08X", endpoint, length, kr);
         if (actual_length)
             *actual_length = 0;
         return ZUNE_USB_ERROR;
@@ -270,7 +271,7 @@ static int driverkit_bulk_write(zune_usb_handle_t *handle, uint8_t endpoint,
                                 uint32_t *actual_length, uint32_t timeout_ms)
 {
     if (!handle || !handle->backend_data) {
-        fprintf(stderr, "[driverkit-usb] bulk_write: invalid handle\n");
+        ZLOG(ZUNE_CHATTER_SCREAM, "driverkit-usb", "bulk_write: invalid handle");
         return ZUNE_USB_ERROR;
     }
 
@@ -299,8 +300,8 @@ static int driverkit_bulk_write(zune_usb_handle_t *handle, uint8_t endpoint,
     );
 
     if (kr != KERN_SUCCESS) {
-        fprintf(stderr, "[driverkit-usb] bulk_write failed: ep=0x%02X len=%u "
-                "err=0x%08X\n", endpoint, length, kr);
+        ZLOG(ZUNE_CHATTER_SCREAM, "driverkit-usb", "bulk_write failed: ep=0x%02X len=%u "
+                "err=0x%08X", endpoint, length, kr);
         if (actual_length)
             *actual_length = 0;
         return ZUNE_USB_ERROR;
@@ -323,7 +324,7 @@ static int driverkit_bulk_write(zune_usb_handle_t *handle, uint8_t endpoint,
 static int driverkit_clear_halt(zune_usb_handle_t *handle, uint8_t endpoint)
 {
     if (!handle || !handle->backend_data) {
-        fprintf(stderr, "[driverkit-usb] clear_halt: invalid handle\n");
+        ZLOG(ZUNE_CHATTER_SCREAM, "driverkit-usb", "clear_halt: invalid handle");
         return ZUNE_USB_ERROR;
     }
 
@@ -341,19 +342,19 @@ static int driverkit_clear_halt(zune_usb_handle_t *handle, uint8_t endpoint)
     );
 
     if (kr != KERN_SUCCESS) {
-        fprintf(stderr, "[driverkit-usb] clear_halt failed: ep=0x%02X "
-                "err=0x%08X\n", endpoint, kr);
+        ZLOG(ZUNE_CHATTER_SCREAM, "driverkit-usb", "clear_halt failed: ep=0x%02X "
+                "err=0x%08X", endpoint, kr);
         return ZUNE_USB_ERROR;
     }
 
-    fprintf(stderr, "[driverkit-usb] clear_halt: ep=0x%02X OK\n", endpoint);
+    ZLOG(ZUNE_CHATTER_WHISPER, "driverkit-usb", "clear_halt: ep=0x%02X OK", endpoint);
     return ZUNE_USB_OK;
 }
 
 static int driverkit_reset(zune_usb_handle_t *handle)
 {
     if (!handle || !handle->backend_data) {
-        fprintf(stderr, "[driverkit-usb] reset: invalid handle\n");
+        ZLOG(ZUNE_CHATTER_SCREAM, "driverkit-usb", "reset: invalid handle");
         return ZUNE_USB_ERROR;
     }
 
@@ -369,11 +370,11 @@ static int driverkit_reset(zune_usb_handle_t *handle)
     );
 
     if (kr != KERN_SUCCESS) {
-        fprintf(stderr, "[driverkit-usb] reset failed: err=0x%08X\n", kr);
+        ZLOG(ZUNE_CHATTER_SCREAM, "driverkit-usb", "reset failed: err=0x%08X", kr);
         return ZUNE_USB_ERROR;
     }
 
-    fprintf(stderr, "[driverkit-usb] device reset OK\n");
+    ZLOG(ZUNE_CHATTER_TALK, "driverkit-usb", "device reset OK");
     return ZUNE_USB_OK;
 }
 
@@ -398,7 +399,7 @@ const zune_usb_backend_t *zune_usb_get_backend(void)
 int zune_usb_find_device(zune_usb_handle_t *handle)
 {
     if (!handle) {
-        fprintf(stderr, "[driverkit-usb] find_device: NULL handle\n");
+        ZLOG(ZUNE_CHATTER_SCREAM, "driverkit-usb", "find_device: NULL handle");
         return ZUNE_USB_ERROR;
     }
 
@@ -409,25 +410,25 @@ int zune_usb_find_device(zune_usb_handle_t *handle)
      * Try the standard Zune PID first (covers Zune 4/8/16/30/80/120),
      * then fall back to the Zune HD PID.
      */
-    fprintf(stderr, "[driverkit-usb] searching for Zune (PID 0x%04X)...\n",
+    ZLOG(ZUNE_CHATTER_WHISPER, "driverkit-usb", "searching for Zune (PID 0x%04X)...",
             ZUNE_USB_PID_ZUNE);
 
     if (handle->backend->open(handle, ZUNE_USB_VID, ZUNE_USB_PID_ZUNE) == ZUNE_USB_OK) {
-        fprintf(stderr, "[driverkit-usb] found Zune (PID 0x%04X)\n",
+        ZLOG(ZUNE_CHATTER_TALK, "driverkit-usb", "found Zune (PID 0x%04X)",
                 ZUNE_USB_PID_ZUNE);
         return ZUNE_USB_OK;
     }
 
-    fprintf(stderr, "[driverkit-usb] searching for Zune HD (PID 0x%04X)...\n",
+    ZLOG(ZUNE_CHATTER_WHISPER, "driverkit-usb", "searching for Zune HD (PID 0x%04X)...",
             ZUNE_USB_PID_ZUNE_HD);
 
     if (handle->backend->open(handle, ZUNE_USB_VID, ZUNE_USB_PID_ZUNE_HD) == ZUNE_USB_OK) {
-        fprintf(stderr, "[driverkit-usb] found Zune HD (PID 0x%04X)\n",
+        ZLOG(ZUNE_CHATTER_TALK, "driverkit-usb", "found Zune HD (PID 0x%04X)",
                 ZUNE_USB_PID_ZUNE_HD);
         return ZUNE_USB_OK;
     }
 
-    fprintf(stderr, "[driverkit-usb] no Zune device found\n");
+    ZLOG(ZUNE_CHATTER_TALK, "driverkit-usb", "no Zune device found");
     return ZUNE_USB_ERROR;
 }
 

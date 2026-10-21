@@ -12,6 +12,7 @@ Popup {
     property int podcasts: 0
     property int podcastsRemoved: 0
     property string cleanupWarning: ""
+    property int hdArtworkDelivered: 0
     property int audiobooks: 0
     property int tracks: 0
     property int videos: 0
@@ -19,7 +20,8 @@ Popup {
     property int skipped: 0
     property int failed: 0
 
-    function openWith(elapsed, t, v, p, s, f, podcastCount, audiobookCount, removedCount, warning) {
+    function openWith(elapsed, t, v, p, s, f, podcastCount, audiobookCount, removedCount, warning, artistCount) {
+        hdArtworkDelivered = artistCount || 0
         podcastsRemoved = removedCount ?? 0
         cleanupWarning = warning || ""
         audiobooks = audiobookCount ?? 0
@@ -105,6 +107,14 @@ Popup {
             Layout.alignment: Qt.AlignHCenter
             visible: sheet.podcastsRemoved > 0
             text: sheet.podcastsRemoved + (sheet.podcastsRemoved === 1 ? " played podcast removed" : " played podcasts removed")
+            font.pixelSize: Theme.spokenBody
+            color: Theme.textPrimary
+        }
+        Text {
+            Layout.fillWidth: true
+            visible: sheet.hdArtworkDelivered > 0
+            text: sheet.hdArtworkDelivered + " HD artist sets received"
+            wrapMode: Text.Wrap
             font.pixelSize: Theme.spokenBody
             color: Theme.textPrimary
         }

@@ -62,7 +62,9 @@ cmake -B "$zuuned_build" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PRE
     "-DZUUNED_SOURCE_REVISION=${ZUUNED_SOURCE_REVISION:-}" \
     "-DZUUNED_LIBZUNE_REVISION=${ZUUNED_LIBZUNE_REVISION:-}" \
     "-DZUUNED_SOURCE_DIRTY=${ZUUNED_SOURCE_DIRTY:-}" \
-    "-DZUUNED_LIBZUNE_DIRTY=${ZUUNED_LIBZUNE_DIRTY:-}"
+    "-DZUUNED_LIBZUNE_DIRTY=${ZUUNED_LIBZUNE_DIRTY:-}" \
+    "-DZUUNED_SOURCE_BRANCH=${ZUUNED_SOURCE_BRANCH:-}" \
+    "-DZUUNED_LIBZUNE_BRANCH=${ZUUNED_LIBZUNE_BRANCH:-}"
 cmake --build "$zuuned_build" --parallel "${ZUUNED_BUILD_JOBS:-4}"
 rm -rf "$zuuned_appdir" # Only the fixed generated AppDir, never user data.
 DESTDIR="$zuuned_appdir" cmake --install "$zuuned_build"

@@ -11,6 +11,11 @@ obj/
 
 # Compiled integration examples
 /examples/bin/
+*.so.*
+libzune.pc
+
+# macOS Finder metadata
+.DS_Store
 
 # Private authentication inputs supplied only to trusted builds.
 /src/mtpz_keys.h

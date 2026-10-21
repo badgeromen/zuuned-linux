@@ -11,7 +11,7 @@ mkdir -p "$customize_test_root/imports/Zuuned" "$customize_test_root/runtime" \
     "$customize_test_root/config" "$customize_test_root/data" "$customize_test_root/cache"
 chmod 700 "$customize_test_root/runtime"
 
-for customize_component in CustomizeSheet EditTrackSheet CustomizeArtwork ArtworkImage CustomizeField Theme GradientText ZuneScrollBar SpinningDiscView VinylRecordView CassetteTile; do
+for customize_component in HdArtistArtEditor CustomizeSheet EditTrackSheet CustomizeArtwork ArtworkImage CustomizeField Theme GradientText ZuneScrollBar SpinningDiscView VinylRecordView CassetteTile; do
     ln -s "$customize_repo_dir/qml/$customize_component.qml" \
         "$customize_test_root/imports/Zuuned/$customize_component.qml"
 done
@@ -21,6 +21,7 @@ cp "$customize_repo_dir/tests/artwork-print/stubs/ArtworkRequest.qml" "$customiz
 cat > "$customize_test_root/imports/Zuuned/qmldir" <<'MODULE'
 module Zuuned
 CustomizeSheet 1.0 CustomizeSheet.qml
+HdArtistArtEditor 1.0 HdArtistArtEditor.qml
 EditTrackSheet 1.0 EditTrackSheet.qml
 CustomizeArtwork 1.0 CustomizeArtwork.qml
 ArtworkImage 1.0 ArtworkImage.qml

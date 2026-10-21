@@ -59,7 +59,7 @@ class LibraryService;
 //   connect(worker, &DeviceWorker::sendProgress, engine, &SyncEngine::onSendProgress);
 //   connect(worker, &DeviceWorker::sendDone,     engine, &SyncEngine::onSendDone);
 //   connect(worker, &DeviceWorker::forgeProgress,engine, &SyncEngine::onForgeProgress);
-//   connect(worker, &DeviceWorker::forgeDone,    engine, &SyncEngine::onForgeDone);
+//   connect(worker, &DeviceWorker::forgeBatchDone, engine, &SyncEngine::onForgeBatchDone);
 // On completion the engine invokes DeviceService "setAwaitingDisconnect"
 // by name (QMetaObject) so this file has no compile dependency on the
 // in-flight DeviceService additions; switch to a direct call at
@@ -124,7 +124,9 @@ public:
     // Integration wiring (main.cpp, post engine-load).
     void attachDevice(DeviceService *device, DeviceWorker *worker);
     void attachLibrary(LibraryService *library) { m_library = library; }
-    void attachPodcastCleanup(std::function<QVariantList()> candidates) {
+    // Called with the device audio URLs that matter (on the Zune or queued),
+    // or with everything set while the Zune's podcast inventory is unknown.
+    void attachPodcastCleanup(std::function<QVariantList(const QStringList &, bool everything)> candidates) {
         m_cleanupCandidates = std::move(candidates);
     }
 
@@ -175,10 +177,15 @@ public:
     // title.
     static QVector<QVariantMap> canonicalizeAlbumArtists(QVector<QVariantMap> entries);
     static QString normalizeDiscFolder(const QString &folder);
-    // Magic-byte sniff: true = MPEG audio ("ID3" prefix or frame sync
-    // 0xFF Ex/Fx) → retag path; false (ASF GUID 30 26 B2 75 or anything
-    // else) → transcode path.
+    // Magic-byte sniff for in-place ID3 edits: true only when the audio
+    // (after any ID3v2 tags) starts with an MPEG Layer I-III frame. FLAC,
+    // AAC and WMA can carry an ID3 tag too; the rewriter would drop their
+    // headers. Sync uses sniffIsMp3.
     static bool sniffIsMpeg(const QString &path);
+    // Sync passthrough sniff: true only when the audio (after any ID3v2
+    // tags) starts with an MPEG Layer III frame → retag path. ADTS AAC,
+    // MP2 and anything else → transcode path.
+    static bool sniffIsMp3(const QString &path);
     static QString videoDisplayTitle(const QString &title, const QString &series,
                                      int season, int episode);
     // ObjectFileName: TV → "Series - S02E05[ - Title]",
@@ -220,10 +227,16 @@ public slots:
                     const QString &autopsyName);
     void onForgeProgress(int current, int total);
     void onForgeDone(int okCount, int failCount);
+    void onForgeBatchDone(const QString &runToken, int okCount, int failCount);
+    void onHdArtworkProgress(const QString &serial, quint64 generation,
+                             const QString &runToken, const QString &artist,
+                             int acknowledged, int total);
+    void onHdArtworkDone(const QString &serial, quint64 generation,
+                         const QString &artist, const QVariantMap &result);
     void onVideoSendDone(const QString &entryId, bool ok, quint32 itemId,
                          const QString &autopsyName);
     void onPhotoSendDone(const QString &entryId, bool ok, quint32 itemId,
-                         const QString &autopsyName);
+                         const QString &autopsyName, const QString &refusal = QString());
     // DeviceWorker::forgePlaylistDone (playlist phase)
     void onPlaylistForgeDone(const QString &name, quint32 playlistId, bool ok);
 
@@ -241,6 +254,7 @@ signals:
     void prepareSpokenTransfer(const QString &token, const QVariantMap &item);
     void cancelSpokenTransfer(const QString &token);
     void podcastQueueNotice(const QString &message);
+    void syncNotice(const QString &message);
     void queueClearedByUser();
     void workerInspectAudiobooks(const QString &token, const QString &serial, const QVariantList &parts);
     void workerSendAudiobook(const QString &entryId, const QString &filepath, const QVariantMap &part);
@@ -290,7 +304,7 @@ private:
     void endPodcastCleanup(const QString &error = {});
     void settlePodcastRemovalRows();
     bool cleanupDeviceCurrent() const;
-    std::function<QVariantList()> m_cleanupCandidates;
+    std::function<QVariantList(const QStringList &, bool)> m_cleanupCandidates;
     QString m_cleanupToken, m_cleanupSerial, m_cleanupStage, m_cleanupWarning;
     quint64 m_cleanupGeneration = 0;
     QVariantList m_cleanupRows;
@@ -362,6 +376,8 @@ private:
     bool markInflight(const QString &type, const QVariantMap &identity);
     void retainFailedInflight(quint32 itemId);
     void markInflightVideo(const QString &filename, const QString &title);
+    // Turn the current video marker into an interrupted send for review.
+    void adoptInflightVideo();
     void clearInflight();
 
     QSet<QString> m_podcastChecks;
@@ -422,6 +438,10 @@ private:
     // "albumartist\talbum" → {albumartist, artist, album, genre,
     // trackIds, artJpegPath}
     QMap<QString, QVariantMap> m_buckets;
+    QString m_forgeRunToken;
+    QHash<QString, QVariantMap> m_hdArtworkSnapshots;
+    QVariantList m_hdArtworkResults;
+    QStringList m_hdArtworkWarnings;
 
     QTimer m_spacing;                     // 200ms between sends
     QTimer m_persistTimer;                // A1 debounce

@@ -2,7 +2,7 @@
  * libzune — transcode.c
  *
  * Audio and video transcoding for Zune-compatible formats.
- * Uses popen() to invoke ffmpeg. Returns malloc'd temp file paths
+ * Runs ffmpeg directly (argv, no shell). Returns malloc'd temp file paths
  * that the caller must free() and unlink().
  *
  * Pure C99. No GLib. No GTK.
@@ -11,49 +11,37 @@
 #include "zune_internal.h"
 #include <ctype.h>
 
-/* ---- Shell escaping helper ----
- *
- * Escape single quotes in a string for safe use inside '...' shell quoting.
- * Returns a malloc'd buffer.  Caller frees.
- */
-static char *shell_escape(const char *s)
+/* Unique private output named after the input, for example
+ * $TMPDIR/zunelinux_vid_Show_Ab12Cd.mp4. Caller unlinks and frees. */
+static char *temp_output(const char *kind, const char *input_path,
+                         const char *suffix)
 {
-    /* Worst case: every char is a quote → 4x expansion ("'\''") + 1 NUL */
-    size_t len = strlen(s);
-    size_t alloc = len * 4 + 1;
-    char *buf = malloc(alloc);
-    if (!buf) return NULL;
-
-    char *out = buf;
-    for (const char *p = s; *p; p++) {
-        if (*p == '\'') {
-            *out++ = '\'';
-            *out++ = '\\';
-            *out++ = '\'';
-            *out++ = '\'';
-        } else {
-            *out++ = *p;
-        }
-    }
-    *out = '\0';
-    return buf;
+    char *base = zune_filename_no_ext(input_path);
+    if (!base) return NULL;
+    size_t length = strlen(kind) + strlen(base) + 1;
+    char *label = malloc(length);
+    if (label) snprintf(label, length, "%s%s", kind, base);
+    free(base);
+    char *path = label ? zune_mktemp(label, suffix) : NULL;
+    free(label);
+    return path;
 }
 
-/* ---- Filename helper (basename without extension) ---- */
-
-static char *filename_no_ext(const char *path)
+/* Keep a finished output, or remove a failed one. */
+static char *finish_output(char *output, int status, const char *what)
 {
-    const char *base = strrchr(path, '/');
-    base = base ? base + 1 : path;
-
-    const char *dot = strrchr(base, '.');
-    size_t len = dot ? (size_t)(dot - base) : strlen(base);
-
-    char *result = malloc(len + 1);
-    if (!result) return NULL;
-    memcpy(result, base, len);
-    result[len] = '\0';
-    return result;
+    if (status == 0 && zune_tool_output_ok(output)) {
+        ZLOG(ZUNE_CHATTER_TALK, "libzune", "%s OK: %s", what, output);
+        return output;
+    }
+    ZLOG(ZUNE_CHATTER_SCREAM, "libzune", "%s FAILED (status=%d)", what, status);
+    if (status > 0)
+        zune_set_error("ffmpeg %s failed (exit %d)", what, status);
+    else if (status == 0)
+        zune_set_error("ffmpeg %s produced no output", what);
+    unlink(output);
+    free(output);
+    return NULL;
 }
 
 /* ------------------------------------------------------------------ */
@@ -62,57 +50,25 @@ static char *filename_no_ext(const char *path)
 
 char *zune_arm_audio(const char *input_path)
 {
+    zune_clear_error();
     if (!input_path) return NULL;
 
-    /* Build temp output path */
-    char *base = filename_no_ext(input_path);
-    if (!base) return NULL;
+    char *output = temp_output("", input_path, ".mp3");
+    if (!output) return NULL;
 
-    char output[512];
-    snprintf(output, sizeof(output), "/tmp/zunelinux_%s_%d.mp3",
-             base, (int)getpid());
-    free(base);
-
-    /* Escape paths for shell */
-    char *esc_in  = shell_escape(input_path);
-    char *esc_out = shell_escape(output);
-    if (!esc_in || !esc_out) {
-        free(esc_in);
-        free(esc_out);
-        return NULL;
-    }
-
-    /* ffmpeg command:
+    /* ffmpeg arguments:
      *   -codec:a libmp3lame      explicit LAME encoder
      *   -b:a 320k                constant bitrate (Zune handles CBR best)
      *   -map_metadata -1         strip source metadata (MTP tags take precedence)
      *   -id3v2_version 3         Zune supports ID3v2.3, not v2.4
      */
-    char cmd[2048];
-    snprintf(cmd, sizeof(cmd),
-        "/opt/homebrew/bin/ffmpeg -y -i '%s' -codec:a libmp3lame -b:a 320k "
-        "-map_metadata -1 -id3v2_version 3 '%s' 2>&1",
-        esc_in, esc_out);
-    free(esc_in);
-    free(esc_out);
-
-    FILE *pipe = popen(cmd, "r");
-    if (!pipe) return NULL;
-
-    /* Drain the pipe (ffmpeg writes progress to stderr, piped via 2>&1) */
-    char line[512];
-    while (fgets(line, sizeof(line), pipe)) {
-        /* Could parse "time=HH:MM:SS.xx" for progress — not needed in lib */
-    }
-
-    int status = pclose(pipe);
-    if (status != 0 || access(output, F_OK) != 0) {
-        fprintf(stderr, "[libzune] audio transcode FAILED (status=%d)\n", status);
-        return NULL;
-    }
-
-    fprintf(stderr, "[libzune] audio transcode OK: %s\n", output);
-    return strdup(output);
+    const char *const argv[] = {
+        "ffmpeg", "-y", "-i", input_path, "-codec:a", "libmp3lame",
+        "-b:a", "320k", "-map_metadata", "-1", "-id3v2_version", "3",
+        output, NULL
+    };
+    return finish_output(output, zune_run_tool("ffmpeg", argv, -1),
+                         "audio transcode");
 }
 
 /* ------------------------------------------------------------------ */
@@ -126,23 +82,11 @@ char *zune_arm_audio(const char *input_path)
 
 char *zune_retag(const char *mp3_path)
 {
+    zune_clear_error();
     if (!mp3_path) return NULL;
 
-    char *base = filename_no_ext(mp3_path);
-    if (!base) return NULL;
-
-    char output[512];
-    snprintf(output, sizeof(output), "/tmp/zunelinux_retag_%s_%d.mp3",
-             base, (int)getpid());
-    free(base);
-
-    char *esc_in  = shell_escape(mp3_path);
-    char *esc_out = shell_escape(output);
-    if (!esc_in || !esc_out) {
-        free(esc_in);
-        free(esc_out);
-        return NULL;
-    }
+    char *output = temp_output("retag_", mp3_path, ".mp3");
+    if (!output) return NULL;
 
     /* Stream copy — no re-encoding, just retag.
      *   -c copy              no re-encoding (instant)
@@ -150,72 +94,59 @@ char *zune_retag(const char *mp3_path)
      *   -id3v2_version 3     downgrade to ID3v2.3
      *   -write_id3v1 1       also write ID3v1.1 tags
      */
-    char cmd[2048];
-    snprintf(cmd, sizeof(cmd),
-        "/opt/homebrew/bin/ffmpeg -y -i '%s' -c copy -map_metadata 0 "
-        "-id3v2_version 3 -write_id3v1 1 '%s' 2>&1",
-        esc_in, esc_out);
-    free(esc_in);
-    free(esc_out);
-
-    FILE *pipe = popen(cmd, "r");
-    if (!pipe) return NULL;
-
-    char line[512];
-    while (fgets(line, sizeof(line), pipe)) { /* drain */ }
-
-    int status = pclose(pipe);
-    if (status != 0 || access(output, F_OK) != 0) {
-        fprintf(stderr, "[libzune] ID3v2.3 retag FAILED (status=%d)\n", status);
-        return NULL;
-    }
-
-    fprintf(stderr, "[libzune] retagged to ID3v2.3: %s\n", output);
-    return strdup(output);
+    const char *const argv[] = {
+        "ffmpeg", "-y", "-i", mp3_path, "-c", "copy", "-map_metadata", "0",
+        "-id3v2_version", "3", "-write_id3v1", "1", output, NULL
+    };
+    return finish_output(output, zune_run_tool("ffmpeg", argv, -1),
+                         "ID3v2.3 retag");
 }
 
 /* ------------------------------------------------------------------ */
 /*  Video profiles — one per Zune model                               */
+/*  Encoder arguments between "-i input" and the optional metadata.   */
+/*  Every profile forces 8-bit 4:2:0: the Zune decoders need it, and  */
+/*  x264's baseline profile refuses 4:4:4/4:2:2 input outright.       */
 /* ------------------------------------------------------------------ */
 
-static const char *VIDEO_PROFILES[] = {
-    /* 0: Zune 30 — WMV2 320x240 in WMV container */
-    "/opt/homebrew/bin/ffmpeg -y -i '%s' -c:v wmv2 -b:v 800k "
-    "-vf \"scale=320:240:force_original_aspect_ratio=decrease,"
-    "pad=320:240:(ow-iw)/2:(oh-ih)/2\" "
-    "-c:a wmav2 -b:a 128k -ar 44100 -ac 2 "
-    "%s"                          /* metadata placeholder */
-    "'%s' 2>&1",
+/* 0: Zune 30 — WMV2 320x240 in WMV container */
+static const char *const PROFILE_ZUNE30[] = {
+    "-c:v", "wmv2", "-b:v", "800k",
+    "-vf", "scale=320:240:force_original_aspect_ratio=decrease,"
+           "pad=320:240:(ow-iw)/2:(oh-ih)/2", "-pix_fmt", "yuv420p",
+    "-c:a", "wmav2", "-b:a", "128k", "-ar", "44100", "-ac", "2", NULL
+};
 
-    /* 1: Zune 4/8/16/80/120 — H.264 Baseline Level 2.1, 320x240 */
-    "/opt/homebrew/bin/ffmpeg -y -i '%s' -c:v libx264 -profile:v baseline -level 2.1 "
-    "-b:v 768k -maxrate 1500k -bufsize 1500k -refs 1 "
-    "-vf \"scale=320:240:force_original_aspect_ratio=decrease,"
-    "pad=320:240:(ow-iw)/2:(oh-ih)/2\" "
-    "-c:a aac -b:a 128k -ar 44100 -ac 2 "
-    "-movflags +faststart "
-    "%s"                          /* metadata placeholder */
-    "'%s' 2>&1",
+/* 1: Zune 4/8/16/80/120 — H.264 Baseline Level 2.1, 320x240 */
+static const char *const PROFILE_ZUNE80[] = {
+    "-c:v", "libx264", "-profile:v", "baseline", "-level", "2.1",
+    "-b:v", "768k", "-maxrate", "1500k", "-bufsize", "1500k", "-refs", "1",
+    "-vf", "scale=320:240:force_original_aspect_ratio=decrease,"
+           "pad=320:240:(ow-iw)/2:(oh-ih)/2", "-pix_fmt", "yuv420p",
+    "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2",
+    "-movflags", "+faststart", NULL
+};
 
-    /* 2: Zune HD — H.264 Baseline Level 3.1, 480x272 */
-    "/opt/homebrew/bin/ffmpeg -y -i '%s' -c:v libx264 -profile:v baseline -level 3.1 "
-    "-b:v 2500k "
-    "-vf \"scale=480:272:force_original_aspect_ratio=decrease,"
-    "pad=480:272:(ow-iw)/2:(oh-ih)/2\" "
-    "-c:a aac -b:a 192k "
-    "-movflags +faststart "
-    "%s"                          /* metadata placeholder */
-    "'%s' 2>&1",
+/* 2: Zune HD — H.264 Baseline Level 3.1, 480x272 */
+static const char *const PROFILE_ZUNEHD[] = {
+    "-c:v", "libx264", "-profile:v", "baseline", "-level", "3.1",
+    "-b:v", "2500k",
+    "-vf", "scale=480:272:force_original_aspect_ratio=decrease,"
+           "pad=480:272:(ow-iw)/2:(oh-ih)/2", "-pix_fmt", "yuv420p",
+    "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", NULL
+};
 
-    /* 3: Zune HD 720p — H.264 Baseline Level 3.1, 1280x720 */
-    "/opt/homebrew/bin/ffmpeg -y -i '%s' -c:v libx264 -profile:v baseline -level 3.1 "
-    "-b:v 8000k "
-    "-vf \"scale=1280:720:force_original_aspect_ratio=decrease,"
-    "pad=1280:720:(ow-iw)/2:(oh-ih)/2\" "
-    "-c:a aac -b:a 192k "
-    "-movflags +faststart "
-    "%s"                          /* metadata placeholder */
-    "'%s' 2>&1",
+/* 3: Zune HD 720p — H.264 Baseline Level 3.1, 1280x720 */
+static const char *const PROFILE_ZUNEHD_720P[] = {
+    "-c:v", "libx264", "-profile:v", "baseline", "-level", "3.1",
+    "-b:v", "8000k",
+    "-vf", "scale=1280:720:force_original_aspect_ratio=decrease,"
+           "pad=1280:720:(ow-iw)/2:(oh-ih)/2", "-pix_fmt", "yuv420p",
+    "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", NULL
+};
+
+static const char *const *const VIDEO_PROFILES[] = {
+    PROFILE_ZUNE30, PROFILE_ZUNE80, PROFILE_ZUNEHD, PROFILE_ZUNEHD_720P
 };
 
 /* Map ZuneModel enum to profile index (0-3) */
@@ -230,6 +161,15 @@ static int model_to_profile(ZuneModel model)
     }
 }
 
+/* "key=value" for one -metadata argument. Caller frees. */
+static char *metadata_arg(const char *key, const char *value)
+{
+    size_t length = strlen(key) + 1 + strlen(value) + 1;
+    char *arg = malloc(length);
+    if (arg) snprintf(arg, length, "%s=%s", key, value);
+    return arg;
+}
+
 /* Shared implementation for video and TV episode transcoding.
  * If series is non-NULL and episode > 0, TV metadata is embedded. */
 static char *transcode_video_impl(const char *input_path, ZuneModel model,
@@ -238,67 +178,54 @@ static char *transcode_video_impl(const char *input_path, ZuneModel model,
     if (!input_path) return NULL;
 
     int profile = model_to_profile(model);
-    const char *out_ext = (profile == 0) ? "wmv" : "mp4";
+    const char *out_ext = (profile == 0) ? ".wmv" : ".mp4";
 
-    /* Build temp output path */
-    char *base = filename_no_ext(input_path);
-    if (!base) return NULL;
-
-    char output[512];
-    snprintf(output, sizeof(output), "/tmp/zunelinux_vid_%s_%d.%s",
-             base, (int)getpid(), out_ext);
-    free(base);
-
-    /* Escape paths */
-    char *esc_in  = shell_escape(input_path);
-    char *esc_out = shell_escape(output);
-    if (!esc_in || !esc_out) {
-        free(esc_in);
-        free(esc_out);
-        return NULL;
-    }
-
-    /* Build metadata flags for TV episodes.
-     * For MP4: ffmpeg embeds iTunes-style atoms that the Zune reads.
-     * For WMV (profile 0): metadata flags get embedded in ASF container. */
-    char meta[512] = "";
+    /* TV episode metadata. For MP4 ffmpeg embeds iTunes-style atoms that
+     * the Zune reads; for WMV (profile 0) they land in the ASF container.
+     * Values are whole arguments, so series names need no quoting. */
+    char *show = NULL, *season_arg = NULL, *episode_arg = NULL;
     if (series && series[0] && episode > 0) {
-        char *esc_series = shell_escape(series);
-        if (esc_series) {
-            snprintf(meta, sizeof(meta),
-                     "-metadata show='%s' -metadata season_number='%d' "
-                     "-metadata episode_sort='%d' ",
-                     esc_series, season, episode);
-            free(esc_series);
+        char number[16];
+        show = metadata_arg("show", series);
+        snprintf(number, sizeof(number), "%d", season);
+        season_arg = metadata_arg("season_number", number);
+        snprintf(number, sizeof(number), "%d", episode);
+        episode_arg = metadata_arg("episode_sort", number);
+        if (!show || !season_arg || !episode_arg) {
+            free(show); free(season_arg); free(episode_arg);
+            zune_set_error("Out of memory preparing episode metadata");
+            return NULL;
         }
     }
 
-    /* Build full command from profile template.
-     * Each profile has 3 format specifiers: %s (input), %s (meta), %s (output) */
-    char cmd[4096];
-    snprintf(cmd, sizeof(cmd), VIDEO_PROFILES[profile],
-             esc_in, meta, esc_out);
-    free(esc_in);
-    free(esc_out);
-
-    fprintf(stderr, "[libzune] video transcode profile=%d: %s\n", profile, cmd);
-
-    FILE *pipe = popen(cmd, "r");
-    if (!pipe) return NULL;
-
-    char line[512];
-    while (fgets(line, sizeof(line), pipe)) {
-        /* Drain pipe */
-    }
-
-    int status = pclose(pipe);
-    if (status != 0 || access(output, F_OK) != 0) {
-        fprintf(stderr, "[libzune] video transcode FAILED (status=%d)\n", status);
+    char *output = temp_output("vid_", input_path, out_ext);
+    if (!output) {
+        free(show); free(season_arg); free(episode_arg);
         return NULL;
     }
 
-    fprintf(stderr, "[libzune] video transcode OK: %s\n", output);
-    return strdup(output);
+    /* ffmpeg -y -i input <profile arguments> [metadata] output */
+    const char *argv[48];
+    size_t argc = 0;
+    argv[argc++] = "ffmpeg";
+    argv[argc++] = "-y";
+    argv[argc++] = "-i";
+    argv[argc++] = input_path;
+    for (const char *const *arg = VIDEO_PROFILES[profile]; *arg; arg++)
+        argv[argc++] = *arg;
+    if (show) {
+        argv[argc++] = "-metadata"; argv[argc++] = show;
+        argv[argc++] = "-metadata"; argv[argc++] = season_arg;
+        argv[argc++] = "-metadata"; argv[argc++] = episode_arg;
+    }
+    argv[argc++] = output;
+    argv[argc] = NULL;
+
+    ZLOG(ZUNE_CHATTER_TALK, "libzune", "video transcode profile=%d: %s", profile, input_path);
+
+    int status = zune_run_tool("ffmpeg", argv, -1);
+    free(show); free(season_arg); free(episode_arg);
+    return finish_output(output, status, "video transcode");
 }
 
 /* ------------------------------------------------------------------ */
@@ -307,11 +234,13 @@ static char *transcode_video_impl(const char *input_path, ZuneModel model,
 
 char *zune_arm_video(const char *input_path, ZuneModel model)
 {
+    zune_clear_error();
     return transcode_video_impl(input_path, model, NULL, 0, 0);
 }
 
 char *zune_arm_episode(const char *input_path, ZuneModel model,
                                 const char *series, int season, int episode)
 {
+    zune_clear_error();
     return transcode_video_impl(input_path, model, series, season, episode);
 }

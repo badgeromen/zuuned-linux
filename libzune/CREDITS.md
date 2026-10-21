@@ -1,9 +1,21 @@
 # Credits & Attribution
 
 libzune builds on protocol knowledge and reverse engineering work from
-several open-source projects. While libzune is an independent C
-implementation (no code was copied), the following projects were
-essential references for understanding the Zune's proprietary protocols.
+several open-source projects. libzune is an independent C implementation,
+with one exception: `src/mtpz.c` is ported from libmtp (see below). No code
+was copied from the other projects listed here; they were essential
+references for understanding the Zune's proprietary protocols.
+
+## libmtp (MTPZ)
+
+- **Author:** Sajid Anwar (MTPZ support in libmtp)
+- **License:** LGPL, version 2 or later, as `src/mtpz.c` states (libmtp
+  itself ships the LGPL 2.1 text)
+- **Repository:** https://github.com/libmtp/libmtp
+
+`src/mtpz.c` is ported from libmtp's `mtpz.c`, copyright (C) 2011-2012
+Sajid Anwar. It implements the MTPZ (WMDRM-PD trusted application) handshake.
+The original copyright and license notice is kept at the top of that file.
 
 ## XuneSyncLibrary
 

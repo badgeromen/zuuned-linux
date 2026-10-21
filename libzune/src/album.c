@@ -12,10 +12,18 @@
 
 #include "zune_internal.h"
 
-/* Check if a property code is in a supported list */
-static int prop_supported(uint16_t prop, uint16_t *list, int count) {
-    for (int i = 0; i < count; i++)
-        if (list[i] == prop) return 1;
+/* ---- Failed creation ---- */
+
+uint32_t zune_forge_failed(ZuneDevice *dev, uint32_t id, const char *kind,
+                           const char *name, const char *stage) {
+    uint16_t original = dev->ptp.last_response;
+    int removed = mtp_delete_object(&dev->ptp, id) == 0;
+    dev->ptp.last_response = original;
+    zune_set_error("%s '%s': %s failed (%s 0x%04X); new object %u %s", kind, name, stage,
+                   zune_autopsy_name(original), original, id,
+                   removed ? "removed" : "could not be removed; inspect before retrying");
+    ZLOG(ZUNE_CHATTER_SCREAM, "libzune", "%s '%s': %s failed (0x%04X); new object %u %s", kind, name,
+         stage, original, id, removed ? "removed" : "remains");
     return 0;
 }
 
@@ -26,6 +34,7 @@ uint32_t zune_forge_album(ZuneDevice *dev,
                                    const char *artist_name,
                                    const char *genre,
                                    uint32_t *track_ids, int track_count) {
+    zune_clear_error();
     if (!dev || !album_name || !artist_name) {
         zune_set_error("Invalid parameters for album creation");
         return 0;
@@ -42,10 +51,9 @@ uint32_t zune_forge_album(ZuneDevice *dev,
     int sup_count = 0;
     if (mtp_get_props_supported(&dev->ptp, MTP_OFC_AbstractAudioAlbum,
                                  &supported, &sup_count) == 0) {
-        fprintf(stderr, "[libzune] album (0xBA03) supported props (%d):", sup_count);
-        for (int i = 0; i < sup_count; i++)
-            fprintf(stderr, " 0x%04X", supported[i]);
-        fprintf(stderr, "\n");
+        char label[64];
+        snprintf(label, sizeof(label), "album (0xBA03) supported props (%d):", sup_count);
+        zune_log_codes(ZUNE_CHATTER_WHISPER, "libzune", label, supported, sup_count);
     }
 
     /* Build filename */
@@ -65,7 +73,7 @@ uint32_t zune_forge_album(ZuneDevice *dev,
     props[n].value.str = filename;
     n++;
 
-    if (!supported || prop_supported(MTP_OPC_Name, supported, sup_count)) {
+    if (!supported || zune_prop_listed(MTP_OPC_Name, supported, sup_count)) {
         props[n].prop_code = MTP_OPC_Name;
         props[n].data_type = PTP_DTC_STR;
         props[n].value.str = (char *)album_name;
@@ -74,7 +82,7 @@ uint32_t zune_forge_album(ZuneDevice *dev,
 
     /* Zune does NOT support AlbumArtist (0xDC9B) on album objects.
      * Use Artist (0xDC46), which is in the supported props list. */
-    if (!supported || prop_supported(MTP_OPC_Artist, supported, sup_count)) {
+    if (!supported || zune_prop_listed(MTP_OPC_Artist, supported, sup_count)) {
         props[n].prop_code = MTP_OPC_Artist;
         props[n].data_type = PTP_DTC_STR;
         props[n].value.str = (char *)artist_name;
@@ -82,7 +90,7 @@ uint32_t zune_forge_album(ZuneDevice *dev,
     }
 
     if (genre && genre[0] &&
-        (!supported || prop_supported(MTP_OPC_Genre, supported, sup_count))) {
+        (!supported || zune_prop_listed(MTP_OPC_Genre, supported, sup_count))) {
         props[n].prop_code = MTP_OPC_Genre;
         props[n].data_type = PTP_DTC_STR;
         props[n].value.str = (char *)genre;
@@ -111,24 +119,28 @@ uint32_t zune_forge_album(ZuneDevice *dev,
      * On failure, delete the half-created handle — orphaned nameless
      * album objects otherwise adopt freshly synced tracks at re-index
      * and display as their GUID moniker. */
-    if (mtp_send_object(&dev->ptp, NULL, 0) != 0) {
-        zune_set_error("Album commit (SendObject) failed for: %s (%s 0x%04X)",
-                       album_name, zune_autopsy_name(dev->ptp.last_response),
-                       dev->ptp.last_response);
-        mtp_delete_object(&dev->ptp, album_id);
+    if (mtp_send_object(&dev->ptp, NULL, 0) != 0)
+        return zune_forge_failed(dev, album_id, "Album", album_name, "commit (SendObject)");
+
+    /* Step 6: Set object references (track IDs). An album without its tracks
+     * is not the album that was asked for. */
+    if (track_ids && track_count > 0 &&
+        mtp_set_object_references(&dev->ptp, album_id, track_ids, track_count) != 0) {
+        uint16_t code = dev->ptp.last_response;
+        if (!zune_response_uncertain(code))
+            return zune_forge_failed(dev, album_id, "Album", album_name, "track references");
+        /* No answer: the device may have applied the references, and a Zune
+         * HD deletes an album's referenced tracks along with the album. Keep
+         * the album rather than risk tracks that were just sent. */
+        zune_set_error("Album '%s': track references got no answer (%s 0x%04X); new object %u kept, "
+                       "since removing it could remove its tracks; inspect it before retrying",
+                       album_name, zune_autopsy_name(code), code, album_id);
+        ZLOG(ZUNE_CHATTER_SCREAM, "libzune", "Album '%s': track references got no answer (0x%04X); "
+             "new object %u kept", album_name, code, album_id);
         return 0;
     }
 
-    /* Step 6: Set object references (track IDs) */
-    if (track_ids && track_count > 0) {
-        ret = mtp_set_object_references(&dev->ptp, album_id,
-                                         track_ids, track_count);
-        if (ret != 0) {
-            fprintf(stderr, "[libzune] warning: set references on album %u failed\n", album_id);
-        }
-    }
-
-    fprintf(stderr, "[libzune] created album \"%s\" by \"%s\" (%d tracks, id=%u)\n",
+    ZLOG(ZUNE_CHATTER_TALK, "libzune", "created album \"%s\" by \"%s\" (%d tracks, id=%u)",
             album_name, artist_name, track_count, album_id);
     return album_id;
 }
@@ -139,9 +151,10 @@ int zune_rewire_album(ZuneDevice *dev, uint32_t album_id,
                               const char *album_name,
                               const char *artist_name,
                               uint32_t *track_ids, int track_count) {
+    zune_clear_error();
     if (!dev) {
         zune_set_error("Invalid device for album update");
-        return -1;
+        return ZUNE_BLOWN;
     }
 
     /* Update Name property */
@@ -149,7 +162,7 @@ int zune_rewire_album(ZuneDevice *dev, uint32_t album_id,
         int ret = mtp_set_object_prop_value_str(&dev->ptp, album_id,
                                                  MTP_OPC_Name, album_name);
         if (ret != 0) {
-            fprintf(stderr, "[libzune] warning: update Name on album %u failed\n", album_id);
+            ZLOG(ZUNE_CHATTER_SHOUT, "libzune", "warning: update Name on album %u failed", album_id);
         }
     }
 
@@ -158,7 +171,7 @@ int zune_rewire_album(ZuneDevice *dev, uint32_t album_id,
         int ret = mtp_set_object_prop_value_str(&dev->ptp, album_id,
                                                  MTP_OPC_Artist, artist_name);
         if (ret != 0) {
-            fprintf(stderr, "[libzune] warning: update Artist on album %u failed\n", album_id);
+            ZLOG(ZUNE_CHATTER_SHOUT, "libzune", "warning: update Artist on album %u failed", album_id);
         }
     }
 
@@ -168,13 +181,13 @@ int zune_rewire_album(ZuneDevice *dev, uint32_t album_id,
                                              track_ids, track_count);
         if (ret != 0) {
             zune_set_error("Failed to update album %u", album_id);
-            return -1;
+            return ZUNE_BLOWN;
         }
     }
 
-    fprintf(stderr, "[libzune] updated album id=%u (%d tracks)\n",
+    ZLOG(ZUNE_CHATTER_TALK, "libzune", "updated album id=%u (%d tracks)",
             album_id, track_count);
-    return 0;
+    return ZUNE_OK;
 }
 
 /* ---- Create artist object ---- */
@@ -219,25 +232,20 @@ static int find_artist(ZuneDevice *dev, const char *name, uint32_t *found) {
     }
     if (count < 0 || (count && !handles)) { free(handles); return -1; }
     for (int i = 0; i < count; i++) {
-        uint8_t *data = NULL;
-        uint32_t len = 0;
-        if (dev->cancel_requested || mtp_get_object_prop_value(&dev->ptp,
-                handles[i], MTP_OPC_Name, &data, &len) != 0 || !data || !len) {
-            free(data); free(handles); return -1;
-        }
-        char *candidate = mtp_ucs2_to_string(data, len);
-        free(data);
+        if (ZUNE_FLAG_GET(dev->cancel_requested)) { free(handles); return -1; }
+        char *candidate = mtp_read_string_prop(&dev->ptp, handles[i], MTP_OPC_Name);
         if (!candidate || !candidate[0]) { free(candidate); free(handles); return -1; }
         if (artist_name_equal(candidate, name) && (!*found || handles[i] < *found))
             *found = handles[i];
         free(candidate);
     }
     free(handles);
-    return dev->cancel_requested ? -1 : 0;
+    return ZUNE_FLAG_GET(dev->cancel_requested) ? -1 : 0;
 }
 
 uint32_t zune_forge_artist(ZuneDevice *dev,
                                     const char *artist_name) {
+    zune_clear_error();
     if (!dev || !artist_name || artist_name_equal(artist_name, "")) {
         zune_set_error("Invalid parameters for artist creation");
         return 0;
@@ -254,7 +262,7 @@ uint32_t zune_forge_artist(ZuneDevice *dev,
     int sup_count = 0;
     if (mtp_get_props_supported(&dev->ptp, MTP_OFC_AbstractArtist,
                                  &supported, &sup_count) != 0 || sup_count == 0) {
-        fprintf(stderr, "[libzune] artist format 0xB218 not supported by device — skipping\n");
+        ZLOG(ZUNE_CHATTER_SHOUT, "libzune", "artist format 0xB218 not supported by device — skipping");
         free(supported);
         return 0;
     }
@@ -263,19 +271,20 @@ uint32_t zune_forge_artist(ZuneDevice *dev,
     if (find_artist(dev, artist_name, &existing) != 0) {
         free(supported);
         zune_set_error("Could not check existing artists; refusing duplicate-prone creation");
-        fprintf(stderr, "[libzune] artist lookup failed — creation skipped\n");
+        ZLOG(ZUNE_CHATTER_SHOUT, "libzune", "artist lookup failed — creation skipped");
         return 0;
     }
     if (existing) {
         free(supported);
-        fprintf(stderr, "[libzune] reusing artist object \"%s\" (handle=%u)\n", artist_name, existing);
+        ZLOG(ZUNE_CHATTER_TALK, "libzune", "reusing artist object \"%s\" (handle=%u)", artist_name, existing);
         return existing;
     }
 
-    fprintf(stderr, "[libzune] artist (0xB218) supported props (%d):", sup_count);
-    for (int i = 0; i < sup_count; i++)
-        fprintf(stderr, " 0x%04X", supported[i]);
-    fprintf(stderr, "\n");
+    {
+        char label[64];
+        snprintf(label, sizeof(label), "artist (0xB218) supported props (%d):", sup_count);
+        zune_log_codes(ZUNE_CHATTER_WHISPER, "libzune", label, supported, sup_count);
+    }
 
     /* Build filename */
     size_t namelen = strlen(artist_name);
@@ -293,7 +302,7 @@ uint32_t zune_forge_artist(ZuneDevice *dev,
     props[n].value.str = filename;
     n++;
 
-    if (prop_supported(MTP_OPC_Name, supported, sup_count)) {
+    if (zune_prop_listed(MTP_OPC_Name, supported, sup_count)) {
         props[n].prop_code = MTP_OPC_Name;
         props[n].data_type = PTP_DTC_STR;
         props[n].value.str = (char *)artist_name;
@@ -309,7 +318,8 @@ uint32_t zune_forge_artist(ZuneDevice *dev,
     free(filename);
 
     if (ret != 0) {
-        fprintf(stderr, "[libzune] artist creation failed for \"%s\" — album AlbumArtist will be used instead\n",
+        zune_set_error("Failed to forge artist: %s", artist_name);
+        ZLOG(ZUNE_CHATTER_SHOUT, "libzune", "artist creation failed for \"%s\" — album AlbumArtist will be used instead",
                 artist_name);
         return 0;
     }
@@ -319,14 +329,10 @@ uint32_t zune_forge_artist(ZuneDevice *dev,
      * carries the display name), but returning the handle of an object
      * the device never committed poisons zune_link_artist downstream. */
     /* Zero-byte commit matching the declared size (see album path). */
-    if (mtp_send_object(&dev->ptp, NULL, 0) != 0) {
-        fprintf(stderr, "[libzune] artist commit (SendObject) failed (%s 0x%04X) — deleting orphan\n",
-                zune_autopsy_name(dev->ptp.last_response), dev->ptp.last_response);
-        mtp_delete_object(&dev->ptp, artist_handle);
-        return 0;
-    }
+    if (mtp_send_object(&dev->ptp, NULL, 0) != 0)
+        return zune_forge_failed(dev, artist_handle, "Artist", artist_name, "commit (SendObject)");
 
-    fprintf(stderr, "[libzune] created artist object \"%s\" (handle=%u)\n",
+    ZLOG(ZUNE_CHATTER_TALK, "libzune", "created artist object \"%s\" (handle=%u)",
             artist_name, artist_handle);
     return artist_handle;
 }
@@ -335,22 +341,24 @@ uint32_t zune_forge_artist(ZuneDevice *dev,
 
 int zune_link_artist(ZuneDevice *dev, uint32_t object_id,
                         uint32_t artist_handle) {
+    zune_clear_error();
     if (!dev) {
         zune_set_error("Invalid device for artist linking");
-        return -1;
+        return ZUNE_BLOWN;
     }
 
     int ret = mtp_set_object_prop_value_u32(&dev->ptp, object_id,
                                              ZUNE_OPC_ArtistId, artist_handle);
     if (ret != 0) {
-        return -1;
+        return ZUNE_BLOWN;
     }
-    return 0;
+    return ZUNE_OK;
 }
 
 /* ---- Get existing album objects ---- */
 
 ZuneAlbumObject *zune_get_albums(ZuneDevice *dev, int *count) {
+    zune_clear_error();
     if (!dev || !count) {
         if (count) *count = 0;
         return NULL;
@@ -390,37 +398,21 @@ ZuneAlbumObject *zune_get_albums(ZuneDevice *dev, int *count) {
 
         /* Read the Name property (more accurate than filename) */
         {
-            uint8_t *prop_data = NULL;
-            uint32_t prop_len = 0;
-            if (mtp_get_object_prop_value(&dev->ptp, handles[i],
-                                           MTP_OPC_Name, &prop_data, &prop_len) == 0
-                && prop_data && prop_len > 0) {
-                char *name_str = mtp_ucs2_to_string(prop_data, prop_len);
-                if (name_str && name_str[0]) {
-                    free(albums[n].name);
-                    albums[n].name = name_str;
-                } else {
-                    free(name_str);
-                }
-                free(prop_data);
+            char *name_str = mtp_read_string_prop(&dev->ptp, handles[i], MTP_OPC_Name);
+            if (name_str && name_str[0]) {
+                free(albums[n].name);
+                albums[n].name = name_str;
+            } else {
+                free(name_str);
             }
         }
 
         /* Read the Artist property — Zune does NOT support AlbumArtist (0xDC9B)
          * on album objects per ZUNE_MTP_PROTOCOL_FINDINGS.md. Use Artist (0xDC46),
          * which is in the supported props list and matches what tracks use. */
-        {
-            uint8_t *prop_data = NULL;
-            uint32_t prop_len = 0;
-            if (mtp_get_object_prop_value(&dev->ptp, handles[i],
-                                           MTP_OPC_Artist, &prop_data, &prop_len) == 0
-                && prop_data && prop_len > 0) {
-                albums[n].artist = mtp_ucs2_to_string(prop_data, prop_len);
-                free(prop_data);
-            }
-            if (!albums[n].artist)
-                albums[n].artist = strdup("");
-        }
+        albums[n].artist = mtp_read_string_prop(&dev->ptp, handles[i], MTP_OPC_Artist);
+        if (!albums[n].artist)
+            albums[n].artist = strdup("");
 
         /* Get object references (track IDs) */
         {

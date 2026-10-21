@@ -5,6 +5,7 @@ static const char *names[8];
 static uint32_t ids[8];
 static int count, creates, commits, deletes, enumeration_fail, name_fail, commit_fail;
 void zune_set_error(const char *fmt, ...) {}
+void zune_clear_error(void) {}
 const char *zune_autopsy_name(uint16_t code) { return "fixture"; }
 int mtp_get_props_supported(ptp_session_t *s, uint16_t f, uint16_t **p, int *n) {
     *p = malloc(sizeof(uint16_t)); **p = MTP_OPC_Name; *n = 1; return 0;

@@ -5,6 +5,7 @@
 #include "UdevSetup.h"
 #include "library/VideoIdentity.h"
 #include "sync/RecoveryIdentity.h"
+#include "zune.h"
 
 #include <QDir>
 #include <QProcess>
@@ -65,6 +66,7 @@ DeviceService::DeviceService(QObject *parent, bool watchDevice) : QObject(parent
             }
             m_podcastEpisodesList = podcasts;
             m_audiobookPartsList = books;
+            m_spokenMediaRead = true;
             rebuildPodcastDeviceStatus();
             if (audiobookBrowseSupported())
                 fprintf(stderr, "[device] spoken inventory: %lld podcast episodes, %lld audiobook parts\n",
@@ -228,7 +230,10 @@ DeviceService::~DeviceService() {
     if (m_connected)
         emit workerSever();
     m_workerThread.quit();
-    m_workerThread.wait(5000);
+    // Wipe the loaded MTPZ keys only once the worker (and any device it
+    // held) is gone: zune_go_dark requires no open device.
+    if (m_workerThread.wait(5000))
+        zune_go_dark();
 }
 
 void DeviceService::onZuneArrived() {
@@ -269,11 +274,13 @@ void DeviceService::onZuneLeft() {
 }
 
 void DeviceService::clearDeviceState() {
+    m_libraryError.clear();
     ++m_spokenGeneration;
     m_worker->setSpokenGeneration(m_spokenGeneration);
     m_podcastEpisodesList.clear();
     m_podcastDeviceStatus.clear();
     m_podcastMembershipKnown = false;
+    m_spokenMediaRead = false;
     m_podcastStatusWarning.clear();
     m_spokenRequested = false;
     m_spokenReadDeferred = false;
@@ -386,6 +393,7 @@ void DeviceService::onBreachDone(const DeviceWorker::BreachData &r) {
     } else {
         m_connectionError.clear();
         m_connected = true;
+        m_libraryError = r.libraryError;
         m_name = r.name;
         m_model = r.model;
         m_serial = r.serial;
@@ -438,7 +446,9 @@ void DeviceService::onBreachDone(const DeviceWorker::BreachData &r) {
         }
         rebuildOnDeviceKeys();
         m_moodColor = pickMoodColor(r.genres);
-        m_status = QStringLiteral("Connected");
+        m_status = m_libraryError.isEmpty()
+            ? QStringLiteral("Connected")
+            : QStringLiteral("Connected, but the Zune's library could not be read");
     }
     emit stateChanged();
 }
@@ -936,6 +946,16 @@ QVariantMap DeviceService::podcastDeviceStatus(const QString &feedUrl, const QSt
         result["bookmarkMs"] = known ? row.value("bookmarkMs").toUInt() : 0u;
     } else result["known"] = m_podcastMembershipKnown;
     return result;
+}
+
+QStringList DeviceService::podcastDeviceSources(const QString &feedUrl, bool played) const {
+    QStringList sources;
+    if (!m_connected) return sources;
+    for (auto it = m_podcastDeviceStatus.cbegin(); it != m_podcastDeviceStatus.cend(); ++it)
+        if ((feedUrl.isEmpty() || it.key().first == feedUrl) &&
+            (!played || (it.value().value("playedKnown").toBool() && it.value().value("played").toBool())))
+            sources.append(it.key().second);
+    return sources;
 }
 
 void DeviceService::prunePodcastDeviceStatus(const QSet<quint32> &ids) {

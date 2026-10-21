@@ -10,14 +10,223 @@
 #include "zune_internal.h"
 #include <ctype.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <math.h>
 #include <regex.h>
+#include <spawn.h>
 #include <strings.h>
-#ifndef USE_LIBAV
-#include <fcntl.h>
 #include <sys/wait.h>
+
+#ifdef __APPLE__
+/* A dylib cannot link against environ directly. */
+#include <crt_externs.h>
+#define environ (*_NSGetEnviron())
+#else
+extern char **environ;
 #endif
+
+/* ------------------------------------------------------------------ */
+/*  External tools: argv only, never a shell                           */
+/* ------------------------------------------------------------------ */
+
+static int is_executable_file(const char *path)
+{
+    struct stat st;
+    return stat(path, &st) == 0 && S_ISREG(st.st_mode) && access(path, X_OK) == 0;
+}
+
+/* First executable `name` in a colon-separated directory list. Only absolute
+ * entries count: an empty, "." or other relative entry names the current
+ * directory, and a library must not run tools from there. */
+static int tool_search(const char *dirs, const char *name, char *out, size_t out_size)
+{
+    size_t name_len = strlen(name);
+    while (*dirs) {
+        const char *end = strchr(dirs, ':');
+        size_t dir_len = end ? (size_t)(end - dirs) : strlen(dirs);
+        if (dir_len && dirs[0] == '/' && dir_len + 1 + name_len < out_size) {
+            memcpy(out, dirs, dir_len);
+            out[dir_len] = '/';
+            memcpy(out + dir_len + 1, name, name_len + 1);
+            if (is_executable_file(out)) return 0;
+        }
+        if (!end) break;
+        dirs = end + 1;
+    }
+    return -1;
+}
+
+const char *zune_tool_path(const char *name)
+{
+    static __thread char resolved[PATH_MAX];
+    if (!name || !*name || strchr(name, '/')) {
+        zune_set_error("Invalid external tool name");
+        return NULL;
+    }
+
+    /* ZUNE_FFMPEG, ZUNE_FFPROBE, ZUNE_SIPS: an executable path, or a name
+     * to look up on PATH instead of the default one. */
+    char variable[64] = "ZUNE_";
+    size_t used = strlen(variable);
+    for (const char *p = name; *p && used + 1 < sizeof(variable); p++)
+        variable[used++] = isalnum((unsigned char)*p) ? (char)toupper((unsigned char)*p) : '_';
+    variable[used] = '\0';
+
+    const char *wanted = name;
+    const char *override = getenv(variable);
+    if (override && *override) {
+        if (strchr(override, '/')) {
+            if (strlen(override) >= sizeof(resolved) || !is_executable_file(override)) {
+                zune_set_error("%s=%s is not an executable file", variable, override);
+                return NULL;
+            }
+            strcpy(resolved, override);
+            return resolved;
+        }
+        wanted = override;
+    }
+
+    const char *path = getenv("PATH");
+    if (!path || !*path) path = "/usr/local/bin:/usr/bin:/bin";
+    if (tool_search(path, wanted, resolved, sizeof(resolved)) == 0)
+        return resolved;
+#ifdef __APPLE__
+    /* Apps launched from Finder do not inherit the shell's PATH. */
+    if (tool_search("/opt/homebrew/bin:/usr/local/bin", wanted,
+                    resolved, sizeof(resolved)) == 0)
+        return resolved;
+#endif
+    zune_set_error("%s not found on PATH; install it or set %s to its full path",
+                   wanted, variable);
+    return NULL;
+}
+
+char *zune_mktemp(const char *label, const char *suffix)
+{
+    const char *dir = getenv("TMPDIR");
+    if (!dir || dir[0] != '/') dir = "/tmp";
+    size_t dir_len = strlen(dir);
+    while (dir_len > 1 && dir[dir_len - 1] == '/') dir_len--;
+    if (!suffix) suffix = "";
+    size_t suffix_len = strlen(suffix);
+    if (suffix_len > 32 || strchr(suffix, '/')) {
+        zune_set_error("Invalid temporary file suffix");
+        return NULL;
+    }
+    /* The label keeps names readable; cut on a UTF-8 boundary so the whole
+     * name stays well inside NAME_MAX. */
+    size_t label_len = label ? strlen(label) : 0;
+    if (label_len > 96) {
+        label_len = 96;
+        while (label_len && ((unsigned char)label[label_len] & 0xC0) == 0x80) label_len--;
+    }
+
+    static const char prefix[] = "/zunelinux_";
+    size_t size = dir_len + sizeof(prefix) + label_len + 1 + 6 + suffix_len;
+    char *path = malloc(size);
+    if (!path) {
+        zune_set_error("Out of memory for a temporary file name");
+        return NULL;
+    }
+    char *p = path;
+    memcpy(p, dir, dir_len); p += dir_len;
+    memcpy(p, prefix, sizeof(prefix) - 1); p += sizeof(prefix) - 1;
+    for (size_t i = 0; i < label_len; i++) *p++ = label[i] == '/' ? '_' : label[i];
+    if (label_len) *p++ = '_';
+    memcpy(p, "XXXXXX", 6); p += 6;
+    memcpy(p, suffix, suffix_len + 1);
+
+    /* mkstemps creates the file exclusively, mode 0600: a planted name or
+     * symlink cannot be reused, and ffmpeg -y only overwrites our own file. */
+    int fd = mkstemps(path, (int)suffix_len);
+    if (fd < 0) {
+        zune_set_error("Could not create a temporary file in %.*s: %s",
+                       (int)dir_len, dir, strerror(errno));
+        free(path);
+        return NULL;
+    }
+    close(fd);
+    return path;
+}
+
+int zune_tool_output_ok(const char *path)
+{
+    struct stat st;
+    return path && stat(path, &st) == 0 && S_ISREG(st.st_mode) && st.st_size > 0;
+}
+
+/* Start an executable without a shell. stdin and stderr are /dev/null;
+ * stdout is capture_fd when it is >= 0, otherwise /dev/null. posix_spawn
+ * rather than fork: the host app is multi-threaded. Returns 0 or errno. */
+static int tool_spawn(const char *path, const char *const argv[],
+                      int capture_fd, pid_t *out_pid)
+{
+    posix_spawn_file_actions_t actions;
+    int rc = posix_spawn_file_actions_init(&actions);
+    if (rc) return rc;
+    rc = posix_spawn_file_actions_addopen(&actions, STDIN_FILENO,
+                                          "/dev/null", O_RDONLY, 0);
+    if (!rc)
+        rc = capture_fd >= 0
+            ? posix_spawn_file_actions_adddup2(&actions, capture_fd, STDOUT_FILENO)
+            : posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO,
+                                               "/dev/null", O_WRONLY, 0);
+    if (!rc)
+        rc = posix_spawn_file_actions_addopen(&actions, STDERR_FILENO,
+                                              "/dev/null", O_WRONLY, 0);
+    if (!rc)
+        rc = posix_spawn(out_pid, path, &actions, NULL,
+                         (char *const *)argv, environ);
+    posix_spawn_file_actions_destroy(&actions);
+    return rc;
+}
+
+/* Resolve a tool name (or accept an explicit path) into a local buffer. */
+static int tool_resolve(const char *tool, char *out, size_t out_size)
+{
+    const char *path = strchr(tool, '/') ? tool : zune_tool_path(tool);
+    if (!path) return -1;
+    if (strlen(path) >= out_size) {
+        zune_set_error("Path to %s is too long", tool);
+        return -1;
+    }
+    strcpy(out, path);
+    return 0;
+}
+
+/* Reap a spawned tool. Exit status 0..255, or -1 if it did not exit. */
+static int tool_wait(const char *tool, pid_t child)
+{
+    int status = 0;
+    pid_t waited;
+    do { waited = waitpid(child, &status, 0); } while (waited < 0 && errno == EINTR);
+    if (waited != child) {
+        zune_set_error("Lost track of %s (waitpid: %s)", tool, strerror(errno));
+        return -1;
+    }
+    if (WIFEXITED(status)) return WEXITSTATUS(status);
+    zune_set_error("%s was terminated by signal %d", tool,
+                   WIFSIGNALED(status) ? WTERMSIG(status) : 0);
+    return -1;
+}
+
+int zune_run_tool(const char *tool, const char *const argv[], int capture_fd)
+{
+    if (!tool || !argv || !argv[0]) {
+        zune_set_error("Invalid external tool invocation");
+        return -1;
+    }
+    char path[PATH_MAX];
+    if (tool_resolve(tool, path, sizeof(path)) < 0) return -1;
+    pid_t child;
+    int rc = tool_spawn(path, argv, capture_fd, &child);
+    if (rc) {
+        zune_set_error("Could not run %s: %s", tool, strerror(rc));
+        return -1;
+    }
+    return tool_wait(tool, child);
+}
 
 /* ------------------------------------------------------------------ */
 /*  Path helpers (replacing GLib g_path_get_*)                        */
@@ -117,10 +326,120 @@ static void clean_series_name(char **series, int *season)
 /*  Returns 0 if no pattern (movie), 1 if TV episode detected.       */
 /* ------------------------------------------------------------------ */
 
+/* Read the decimal digits at *s, advancing past them. -1 when the number does
+ * not fit in an int: no real season or episode is that large. */
+static int read_number(const char **s)
+{
+    long long value = 0;
+    for (; isdigit((unsigned char)**s); (*s)++)
+        if (value <= INT_MAX)
+            value = value * 10 + (**s - '0');
+    return value > INT_MAX ? -1 : (int)value;
+}
+
+/* Pattern 1: SxxExx anywhere (case insensitive), e.g. "Show Name - S01E05 -
+ * Episode Title". The series is the text before it, else the grandparent
+ * folder (.../That 70s Show/Season 1/S01E01.mkv), else "Unknown Series".
+ * Returns 1 with the outputs set, 0 when the name has no SxxExx. */
+static int decode_season_episode(const char *filepath, const char *name,
+                                 char **out_series, int *out_season,
+                                 int *out_episode)
+{
+    const char *p = name;
+    while (*p) {
+        if ((*p == 'S' || *p == 's') && isdigit((unsigned char)p[1])) {
+            const char *sp = p + 1;
+            int s = read_number(&sp);
+            int e = -1;
+            if ((*sp == 'E' || *sp == 'e')
+                && isdigit((unsigned char)sp[1])) {
+                sp++;
+                e = read_number(&sp);
+            }
+            if (s >= 0 && e >= 0) {
+                *out_season  = s;
+                *out_episode = e;
+                *out_series  = strip_trim(name, (size_t)(p - name));
+
+                /* If no series name from filename, try grandparent dir
+                 * e.g. .../That 70s Show/Season 1/S01E01.mkv */
+                if (!*out_series) {
+                    char *dir = path_get_dirname(filepath);
+                    char *gp  = dir ? path_get_dirname(dir) : NULL;
+                    if (gp) {
+                        char *folder = path_get_basename(gp);
+                        if (folder && strcmp(folder, ".") != 0
+                            && strcmp(folder, "/") != 0) {
+                            *out_series = folder;
+                        } else {
+                            free(folder);
+                        }
+                        free(gp);
+                    }
+                    free(dir);
+                }
+                if (!*out_series)
+                    *out_series = strdup("Unknown Series");
+
+                return 1;
+            }
+        }
+        p++;
+    }
+    return 0;
+}
+
+/* Patterns 2-3e: names carrying only an episode number. Each is tried in
+ * order; the first whose episode number is positive wins. The series is the
+ * text before the match ("Unknown Series" when empty), or empty for 3e. */
+static const struct {
+    const char *regex;
+    int icase;
+    int episode_group;  /* capture group holding the episode number */
+    int series_before;  /* series is the text before the match; else empty */
+} episode_patterns[] = {
+    /* 2: "Episode XX" / "EP XX" / "EP88" / "Ep. XX". The keyword may be glued
+     * to the digits ("One Piece EP88", "One.Piece.EP1167") — common in web
+     * rips — so the separator is optional. POSIX ERE has no \b, so a leading
+     * non-letter guard keeps "Deep6" / "Step2" from matching their "ep".
+     * Groups: 1 = guard, 2 = keyword, 3 = digits. */
+    { "(^|[^A-Za-z])(episode|ep\\.?)[ \t]*([0-9]+)", 1, 3, 1 },
+    /* 3: " - XX - " (number between dashes). */
+    { "[ \t]*-[ \t]*([0-9]{1,3})[ \t]*-[ \t]*", 0, 1, 1 },
+    /* 3b: "  NNN - " (anime: double-space + number + dash), e.g. "Naruto  001 -
+     * Enter Naruto Uzumaki". Two or more spaces before the number keep movies
+     * with a year or sequel number ("Airplane 2") out. */
+    { "[ \t]{2,}([0-9]{1,3})[ \t]*-[ \t]*", 0, 1, 1 },
+    /* 3c: " E## " or trailing " E##" (episode only, no season), e.g.
+     * "Fullmetal Alchemist Brotherhood E01". The leading whitespace keeps
+     * "Episode 1" (pattern 2) and things like "Gate E12" apart. */
+    { "[ \t]+[Ee]([0-9]{1,3})([ \t]|$)", 0, 1, 1 },
+    /* 3d: " - NNN [" / " - NNN (" / trailing " - NNN", e.g.
+     * "[Naruto-Kun.Hu] Naruto - 116 [1080p]", "[uP] One Piece - 0542B (FHD
+     * 1080p ...)" (part letter eaten), "Show - 116". Pattern 3 needs a second
+     * dash after the number; release names end it with a bracketed tag or
+     * nothing. Spaces around the dash keep hyphenated titles ("Spider-Man")
+     * out. Up to 4 digits for absolute-numbered anime; an optional part
+     * letter (A-D) is consumed with the number. */
+    { "[ \t]+-[ \t]+([0-9]{1,4})[A-Da-d]?[ \t]*([([]|$)", 0, 1, 1 },
+    /* 3e: leading "NN-Title", e.g. "11-Tsuzumi Mansion [C12B68BD]" inside a
+     * show/season folder. The filename carries no series, so it is returned
+     * EMPTY (not "Unknown Series"): callers with folder context (the macOS
+     * scanner's deriveSeriesFromPath) fill it in. 1-3 digits so years
+     * ("2001-A Space Odyssey") can't match; the dash must be followed by a
+     * letter (a title). */
+    { "^([0-9]{1,3})-[A-Za-z]", 0, 1, 0 },
+};
+
+/* Pattern 4 (trailing number) was REMOVED as too aggressive: it matched movie
+ * names with numbers (Spaceballs_1, Uncle Buck_100, DVD rip title numbers) as
+ * TV episodes. Real TV shows are caught by the patterns above. */
+
 int zune_decode_filename(const char *filepath,
                               char **out_series, int *out_season,
                               int *out_episode)
 {
+    zune_clear_error();
     if (!filepath || !out_series || !out_season || !out_episode)
         return 0;
 
@@ -139,220 +458,41 @@ int zune_decode_filename(const char *filepath,
     memcpy(name, base, namelen);
     name[namelen] = '\0';
 
-    /* ---- Pattern 1: SxxExx (case insensitive) ----
-     * e.g. "Show Name - S01E05 - Episode Title" */
-    {
-        const char *p = name;
-        while (*p) {
-            if ((*p == 'S' || *p == 's') && isdigit((unsigned char)p[1])) {
-                int s = 0, e = 0;
-                const char *sp = p + 1;
-                while (isdigit((unsigned char)*sp)) {
-                    s = s * 10 + (*sp - '0');
-                    sp++;
-                }
-                if ((*sp == 'E' || *sp == 'e')
-                    && isdigit((unsigned char)sp[1])) {
-                    sp++;
-                    while (isdigit((unsigned char)*sp)) {
-                        e = e * 10 + (*sp - '0');
-                        sp++;
-                    }
-                    *out_season  = s;
-                    *out_episode = e;
-                    *out_series  = strip_trim(name, (size_t)(p - name));
-
-                    /* If no series name from filename, try grandparent dir
-                     * e.g. .../That 70s Show/Season 1/S01E01.mkv */
-                    if (!*out_series) {
-                        char *dir = path_get_dirname(filepath);
-                        char *gp  = dir ? path_get_dirname(dir) : NULL;
-                        if (gp) {
-                            char *folder = path_get_basename(gp);
-                            if (folder && strcmp(folder, ".") != 0
-                                && strcmp(folder, "/") != 0) {
-                                *out_series = folder;
-                            } else {
-                                free(folder);
-                            }
-                            free(gp);
-                        }
-                        free(dir);
-                    }
-                    if (!*out_series)
-                        *out_series = strdup("Unknown Series");
-
-                    free(name);
-                    clean_series_name(out_series, out_season);
-                    return 1;
-                }
-            }
-            p++;
-        }
+    if (decode_season_episode(filepath, name, out_series, out_season, out_episode)) {
+        free(name);
+        clean_series_name(out_series, out_season);
+        return 1;
     }
 
-    /* ---- Pattern 2: "Episode XX" / "EP XX" / "EP88" / "Ep. XX" ----
-     * Uses POSIX regex (case insensitive). The keyword may be glued to the
-     * digits ("One Piece EP88", "One.Piece.EP1167") — common in web rips —
-     * so the separator is optional. POSIX ERE has no \b, so a leading
-     * non-letter guard keeps "Deep6" / "Step2" from matching their "ep".
-     * matches[1] = guard, matches[2] = keyword, matches[3] = digits */
-    {
+    for (size_t i = 0; i < sizeof(episode_patterns) / sizeof(episode_patterns[0]); i++) {
         regex_t re;
         regmatch_t matches[4];
-        if (regcomp(&re,
-                    "(^|[^A-Za-z])(episode|ep\\.?)[ \t]*([0-9]+)",
-                    REG_EXTENDED | REG_ICASE) == 0) {
-            if (regexec(&re, name, 4, matches, 0) == 0) {
-                *out_episode = atoi(name + matches[3].rm_so);
-                *out_series  = strip_trim(name, (size_t)matches[0].rm_so);
+        if (regcomp(&re, episode_patterns[i].regex,
+                    REG_EXTENDED | (episode_patterns[i].icase ? REG_ICASE : 0)) != 0)
+            continue;
+        if (regexec(&re, name, 4, matches, 0) == 0) {
+            const char *digits = name + matches[episode_patterns[i].episode_group].rm_so;
+            int number = read_number(&digits);
+            *out_episode = number > 0 ? number : 0;
+            /* A match with episode 0 keeps looking; its series is replaced
+             * by the next match's, or returned as it is when none follows. */
+            free(*out_series);
+            if (episode_patterns[i].series_before) {
+                *out_series = strip_trim(name, (size_t)matches[0].rm_so);
                 if (!*out_series)
                     *out_series = strdup("Unknown Series");
-            }
-            regfree(&re);
-
-            if (*out_episode > 0) {
-                free(name);
-                clean_series_name(out_series, out_season);
-                return 1;
+            } else {
+                *out_series = strdup("");
             }
         }
-    }
+        regfree(&re);
 
-    /* ---- Pattern 3: " - XX - " (number between dashes) ---- */
-    {
-        regex_t re;
-        regmatch_t matches[2];
-        if (regcomp(&re, "[ \t]*-[ \t]*([0-9]{1,3})[ \t]*-[ \t]*",
-                    REG_EXTENDED) == 0) {
-            if (regexec(&re, name, 2, matches, 0) == 0) {
-                *out_episode = atoi(name + matches[1].rm_so);
-                *out_series  = strip_trim(name, (size_t)matches[0].rm_so);
-                if (!*out_series)
-                    *out_series = strdup("Unknown Series");
-            }
-            regfree(&re);
-
-            if (*out_episode > 0) {
-                free(name);
-                clean_series_name(out_series, out_season);
-                return 1;
-            }
+        if (*out_episode > 0) {
+            free(name);
+            clean_series_name(out_series, out_season);
+            return 1;
         }
     }
-
-    /* ---- Pattern 3b: "  NNN - " (anime: double-space + number + dash) ----
-     * e.g., "Naruto  001 - Enter Naruto Uzumaki"
-     * Requires 2+ whitespace chars before the number to avoid false positives
-     * on movies that have year or sequel numbers (e.g., "Airplane 2"). */
-    {
-        regex_t re;
-        regmatch_t matches[2];
-        if (regcomp(&re, "[ \t]{2,}([0-9]{1,3})[ \t]*-[ \t]*",
-                    REG_EXTENDED) == 0) {
-            if (regexec(&re, name, 2, matches, 0) == 0) {
-                *out_episode = atoi(name + matches[1].rm_so);
-                *out_series  = strip_trim(name, (size_t)matches[0].rm_so);
-                if (!*out_series)
-                    *out_series = strdup("Unknown Series");
-            }
-            regfree(&re);
-
-            if (*out_episode > 0) {
-                free(name);
-                clean_series_name(out_series, out_season);
-                return 1;
-            }
-        }
-    }
-
-    /* ---- Pattern 3c: " E## " or trailing " E##" (episode-only, no season) ----
-     * e.g., "Fullmetal Alchemist Brotherhood E01"
-     * Requires a leading whitespace so "Episode 1" (already handled in Pat 2)
-     * and things like "Gate E12" aren't confused with real "E## " suffixes.
-     * Uses word-boundary-ish check: must be preceded by whitespace. */
-    {
-        regex_t re;
-        regmatch_t matches[2];
-        if (regcomp(&re, "[ \t]+[Ee]([0-9]{1,3})([ \t]|$)",
-                    REG_EXTENDED) == 0) {
-            if (regexec(&re, name, 2, matches, 0) == 0) {
-                *out_episode = atoi(name + matches[1].rm_so);
-                *out_series  = strip_trim(name, (size_t)matches[0].rm_so);
-                if (!*out_series)
-                    *out_series = strdup("Unknown Series");
-            }
-            regfree(&re);
-
-            if (*out_episode > 0) {
-                free(name);
-                clean_series_name(out_series, out_season);
-                return 1;
-            }
-        }
-    }
-
-    /* ---- Pattern 3d: " - NNN [" / " - NNN (" / trailing " - NNN" ----
-     * e.g., "[Naruto-Kun.Hu] Naruto - 116 [1080p]"
-     *       "[uP] One Piece - 0542B (FHD 1080p ...)"   (part letter eaten)
-     *       "Show - 116"
-     * Pattern 3 requires a SECOND dash after the number; release names end
-     * the number with a bracketed tag or nothing instead. Spaces around the
-     * dash are required so hyphenated titles ("Spider-Man") don't trigger.
-     * Up to 4 digits for absolute-numbered anime; an optional single part
-     * letter (A-D) is consumed with the number. */
-    {
-        regex_t re;
-        regmatch_t matches[2];
-        if (regcomp(&re, "[ \t]+-[ \t]+([0-9]{1,4})[A-Da-d]?[ \t]*([([]|$)",
-                    REG_EXTENDED) == 0) {
-            if (regexec(&re, name, 2, matches, 0) == 0) {
-                *out_episode = atoi(name + matches[1].rm_so);
-                *out_series  = strip_trim(name, (size_t)matches[0].rm_so);
-                if (!*out_series)
-                    *out_series = strdup("Unknown Series");
-            }
-            regfree(&re);
-
-            if (*out_episode > 0) {
-                free(name);
-                clean_series_name(out_series, out_season);
-                return 1;
-            }
-        }
-    }
-
-    /* ---- Pattern 3e: leading "NN-Title" ----
-     * e.g., "11-Tsuzumi Mansion [C12B68BD]" inside a show/season folder.
-     * The filename carries no series at all, so series is returned EMPTY
-     * (not "Unknown Series") — callers with folder context (the macOS
-     * scanner's deriveSeriesFromPath) fill it from the directory structure,
-     * and an empty string keeps that path reachable. 1-3 digits so years
-     * ("2001-A Space Odyssey") can't match; the dash must be immediately
-     * followed by a letter (a title), not another number or separator. */
-    {
-        regex_t re;
-        regmatch_t matches[2];
-        if (regcomp(&re, "^([0-9]{1,3})-[A-Za-z]",
-                    REG_EXTENDED) == 0) {
-            if (regexec(&re, name, 2, matches, 0) == 0) {
-                *out_episode = atoi(name + matches[1].rm_so);
-                *out_series  = strdup("");
-            }
-            regfree(&re);
-
-            if (*out_episode > 0) {
-                free(name);
-                clean_series_name(out_series, out_season);
-                return 1;
-            }
-        }
-    }
-
-    /* Pattern 4 (trailing number) REMOVED — too aggressive.
-     * It matched movie names with numbers (Spaceballs_1, Uncle Buck_100,
-     * DVD rip title numbers) as TV episodes. If it's a real TV show,
-     * patterns 1-3 (SxxExx, "Episode XX", " - XX - ") will catch it. */
 
     /* ---- Fallback: no TV pattern detected — it's a movie ---- */
     free(name);
@@ -368,27 +508,48 @@ int zune_decode_filename(const char *filepath,
 
 int zune_snap_thumb(const char *video_path, const char *output_path)
 {
-    if (!video_path || !output_path) return -1;
+    zune_clear_error();
+    if (!video_path || !output_path) return ZUNE_BLOWN;
 
-    /* Build shell command with escaped paths.
-     * -ss 10        seek 10s in (skip black intro frames)
-     * -vf scale=200:-1   200px wide, auto height
-     * -frames:v 1   one frame only
-     * -q:v 2        JPEG quality */
-    char cmd[2048];
-    snprintf(cmd, sizeof(cmd),
-        "ffmpeg -y -ss 10 -i '%s' -vf \"scale=200:-1\" "
-        "-frames:v 1 -q:v 2 '%s' 2>/dev/null",
-        video_path, output_path);
-
-    int ret = system(cmd);
-    if (ret != 0) {
-        fprintf(stderr, "[libzune] thumbnail generation failed for: %s\n",
-                video_path);
-        return -1;
+    /* Check before unlinking or invoking ffmpeg: a mistaken output path
+     * must not destroy the source. stat resolves symbolic links and catches
+     * hard links and equivalent path spellings as well. */
+    struct stat source, output;
+    if (strcmp(video_path, output_path) == 0 ||
+        (stat(video_path, &source) == 0 && stat(output_path, &output) == 0 &&
+         source.st_dev == output.st_dev && source.st_ino == output.st_ino)) {
+        zune_set_error("Thumbnail input and output refer to the same file");
+        return ZUNE_BLOWN;
     }
 
-    return 0;
+    /* -ss 10        seek 10s in (skip black intro frames); a clip shorter
+     *               than that has no frame there, so retry from its start
+     * -vf scale=200:-1   200px wide, auto height
+     * -frames:v 1   one frame only
+     * -q:v 2        JPEG quality
+     * Past the end, newer ffmpeg exits nonzero and older ffmpeg exits 0
+     * without writing the file, so success means a nonempty output, and any
+     * older file there is removed first so it cannot pass for this one. */
+    static const char *const seeks[] = { "10", "0" };
+    int ret = -1;
+    for (size_t i = 0; i < sizeof(seeks) / sizeof(seeks[0]); i++) {
+        unlink(output_path);
+        const char *const argv[] = {
+            "ffmpeg", "-y", "-ss", seeks[i], "-i", video_path, "-vf", "scale=200:-1",
+            "-frames:v", "1", "-q:v", "2", output_path, NULL
+        };
+        ret = zune_run_tool("ffmpeg", argv, -1);
+        if (ret < 0) break;                        /* ffmpeg did not run; error set */
+        if (ret == 0 && zune_tool_output_ok(output_path)) return ZUNE_OK;
+    }
+    if (ret > 0)
+        zune_set_error("ffmpeg could not make a thumbnail (exit %d)", ret);
+    else if (ret == 0)
+        zune_set_error("ffmpeg wrote no thumbnail");
+    unlink(output_path);                           /* no empty or partial file */
+    ZLOG(ZUNE_CHATTER_SCREAM, "libzune", "thumbnail generation failed for: %s",
+            video_path);
+    return ZUNE_BLOWN;
 }
 
 /* ------------------------------------------------------------------ */
@@ -622,12 +783,13 @@ static AVStream *probe_selected_stream(AVFormatContext *format)
 
 int zune_probe(const char *filepath, ZuneMetadata *out)
 {
-    if (!out) return -1;
+    zune_clear_error();
+    if (!out) return ZUNE_BLOWN;
     memset(out, 0, sizeof(*out));
-    if (!filepath || !*filepath) return -1;
+    if (!filepath || !*filepath) return ZUNE_BLOWN;
     AVFormatContext *fmt = NULL;
     ProbeTags container = {0}, selected = {0};
-    int result = -1;
+    int result = ZUNE_BLOWN;
     if (avformat_open_input(&fmt, filepath, NULL, NULL) < 0) goto done;
     if (avformat_find_stream_info(fmt, NULL) < 0) goto done;
     AVStream *stream = probe_selected_stream(fmt);
@@ -640,7 +802,7 @@ int zune_probe(const char *filepath, ZuneMetadata *out)
     }
     if (!out->duration_ms && stream->duration > 0)
         out->duration_ms = probe_duration(stream->duration * av_q2d(stream->time_base));
-    result = 0;
+    result = ZUNE_OK;
 done:
     probe_tags_free(&container);
     probe_tags_free(&selected);
@@ -711,47 +873,44 @@ static uint32_t probe_flat_duration(const char *value)
 
 int zune_probe(const char *filepath, ZuneMetadata *out)
 {
-    if (!out) return -1;
+    zune_clear_error();
+    if (!out) return ZUNE_BLOWN;
     memset(out, 0, sizeof(*out));
-    if (!filepath || !*filepath) return -1;
-    const char *ffprobe = NULL;
-    if (access("/opt/homebrew/bin/ffprobe", X_OK) == 0)
-        ffprobe = "/opt/homebrew/bin/ffprobe";
-    else if (access("/usr/local/bin/ffprobe", X_OK) == 0)
-        ffprobe = "/usr/local/bin/ffprobe";
-    else if (access("/usr/bin/ffprobe", X_OK) == 0)
-        ffprobe = "/usr/bin/ffprobe";
-    else return -1;
+    if (!filepath || !*filepath) return ZUNE_BLOWN;
+    char ffprobe[PATH_MAX];
+    if (tool_resolve("ffprobe", ffprobe, sizeof(ffprobe)) < 0) return ZUNE_BLOWN;
 
     /* No shell expansion, filename truncation or fixed-size tag lines. */
     const char *entries = "stream=codec_name,codec_type,duration,sample_rate,channels,width,height:stream_disposition=default:"
         "stream_tags=title,artist,album_artist,albumartist,album,genre,track,tracknumber,disc,discnumber,date,year:"
         "format=duration:format_tags=title,artist,album_artist,albumartist,album,genre,track,tracknumber,disc,discnumber,date,year";
+    const char *const argv[] = { "ffprobe", "-v", "error", "-show_entries", entries,
+                                 "-of", "flat", "-i", filepath, NULL };
     int descriptors[2];
-    if (pipe(descriptors) < 0) return -1;
-    pid_t child = fork();
-    if (child < 0) { close(descriptors[0]); close(descriptors[1]); return -1; }
-    if (!child) {
-        close(descriptors[0]);
-        if (dup2(descriptors[1], STDOUT_FILENO) < 0) _exit(127);
-        close(descriptors[1]);
-        int quiet = open("/dev/null", O_RDWR);
-        if (quiet >= 0) {
-            dup2(quiet, STDERR_FILENO);
-            dup2(quiet, STDIN_FILENO);
-            if (quiet > STDERR_FILENO) close(quiet);
-        }
-        execl(ffprobe, ffprobe, "-v", "error", "-show_entries", entries, "-of", "flat", "-i", filepath, (char *)NULL);
-        _exit(127);
-    }
+    /* Neither pipe end leaks into the child (its stdout is a duplicate), nor
+     * into a tool another thread starts meanwhile. */
+#ifdef __linux__
+    if (pipe2(descriptors, O_CLOEXEC) < 0) return ZUNE_BLOWN;
+#else
+    if (pipe(descriptors) < 0) return ZUNE_BLOWN;
+    fcntl(descriptors[0], F_SETFD, FD_CLOEXEC);
+    fcntl(descriptors[1], F_SETFD, FD_CLOEXEC);
+#endif
+    pid_t child;
+    int spawned = tool_spawn(ffprobe, argv, descriptors[1], &child);
     close(descriptors[1]);
+    if (spawned) {
+        close(descriptors[0]);
+        zune_set_error("Could not run ffprobe: %s", strerror(spawned));
+        return ZUNE_BLOWN;
+    }
     FILE *output = fdopen(descriptors[0], "r");
     ProbeTags container = {0};
     ProbeStream *streams = NULL;
     size_t count = 0, line_capacity = 0;
     char *line = NULL;
     uint32_t duration = 0;
-    int result = -1, parse_error = !output;
+    int result = ZUNE_BLOWN, parse_error = !output;
     if (!output) close(descriptors[0]);
     while (output && getline(&line, &line_capacity, output) >= 0) {
         char *equals = strchr(line, '=');
@@ -791,10 +950,8 @@ int zune_probe(const char *filepath, ZuneMetadata *out)
     }
     if (output) { if (ferror(output)) parse_error = 1; fclose(output); }
     free(line);
-    int status = 0;
-    pid_t waited;
-    do { waited = waitpid(child, &status, 0); } while (waited < 0 && errno == EINTR);
-    if (!parse_error && waited == child && WIFEXITED(status) && WEXITSTATUS(status) == 0) {
+    int exit_status = tool_wait("ffprobe", child);
+    if (!parse_error && exit_status == 0) {
         ProbeStream *selected = NULL;
         for (int type = 1; type <= 2 && !selected; ++type) {
             for (size_t i = 0; i < count; ++i) {
@@ -807,7 +964,7 @@ int zune_probe(const char *filepath, ZuneMetadata *out)
         }
         if (selected && probe_fill(out, &container, &selected->tags) == 0) {
             out->duration_ms = duration ? duration : selected->duration;
-            result = 0;
+            result = ZUNE_OK;
         }
     }
     probe_tags_free(&container);

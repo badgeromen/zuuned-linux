@@ -61,20 +61,37 @@ static const ZMDBDescMap CLASSIC_DESC_MAP[] = {
 
 /* ---- Binary reading helpers ---- */
 
-static inline uint16_t rd16(const uint8_t *buf) {
-    return (uint16_t)(buf[0] | (buf[1] << 8));
-}
+/* Little-endian reads come from bytes.h (zune_le16/zune_le32). */
 
-static inline uint32_t rd32(const uint8_t *buf) {
-    return (uint32_t)(buf[0] | (buf[1] << 8) | (buf[2] << 16) | (buf[3] << 24));
+/* ---- Bounds helpers ----
+ * Every device-supplied offset, size and count is checked here, in size_t,
+ * by subtraction, so no sum of device values can wrap past a check. */
+
+/* 1 if [off, off+need) lies inside a buffer of length len. */
+static inline int zmdb_span_ok(size_t len, size_t off, size_t need)
+{ return off <= len && need <= len - off; }
+
+/* 1 if count entries of size bytes starting at off lie inside len. */
+static inline int zmdb_array_ok(size_t len, size_t off, size_t count, size_t size)
+{ return off <= len && size && count <= (len - off) / size; }
+
+/* Research hex dump: one "[zunedb]   0000: xx xx ..." message per 16 bytes. */
+static void zmdb_log_hex(ZuneChatter level, const uint8_t *bytes, uint32_t count) {
+    for (uint32_t row = 0; row < count; row += 16) {
+        char line[8 + 16 * 3 + 1];
+        size_t used = (size_t)snprintf(line, sizeof(line), "  %04x:", row);
+        for (uint32_t b = row; b < count && b < row + 16; b++)
+            used += (size_t)snprintf(line + used, sizeof(line) - used, " %02x", bytes[b]);
+        ZLOG(level, "zunedb", "%s", line);
+    }
 }
 
 static inline int32_t rdi32(const uint8_t *buf) {
-    return (int32_t)rd32(buf);
+    return (int32_t)zune_le32(buf);
 }
 
 static inline uint64_t rd64(const uint8_t *buf) {
-    return (uint64_t)rd32(buf) | ((uint64_t)rd32(buf + 4) << 32);
+    return (uint64_t)zune_le32(buf) | ((uint64_t)zune_le32(buf + 4) << 32);
 }
 
 /* Read null-terminated UTF-8 string, stripping leading encoding artifacts */
@@ -108,8 +125,13 @@ typedef struct {
 
 typedef struct {
     uint32_t atom_id;
-    uint32_t record_offset;
+    uint32_t record_offset;   /* 0: record flagged unusable (sign bit) */
+    uint32_t record_size;     /* validated inside the payload by zmdb_load */
+    size_t   position;        /* table order; keeps first-match lookups */
 } ZMDBIndexEntry;
+
+#define ZMDB_DESCRIPTORS 96
+#define ZMDB_DESCRIPTOR_SIZE 20
 
 /* ---- Internal parser state ---- */
 
@@ -117,34 +139,35 @@ typedef struct {
     const uint8_t *data;
     size_t data_len;
     int is_hd;
-    ZMDBDescriptor descs[96];
-    ZMDBIndexEntry *index;
-    int index_count;
+    ZMDBDescriptor descs[ZMDB_DESCRIPTORS];
+    int desc_count;           /* descriptors before the index starts (see zmdb_load) */
+    ZMDBIndexEntry *index;    /* sorted by atom_id, then table position */
+    size_t index_count;
 } ZMDBState;
-
-/* ---- Record reading ---- */
-
-static const uint8_t *zmdb_read_record(ZMDBState *st, uint32_t offset, uint32_t *out_size) {
-    if (offset < 4 || offset >= st->data_len) return NULL;
-
-    uint32_t header = rd32(st->data + offset - 4);
-    if (header & 0x80000000) return NULL;  /* sign bit must be 0 */
-
-    uint32_t rec_size = header & 0x00FFFFFF;
-    if (offset + rec_size > st->data_len) return NULL;
-
-    if (out_size) *out_size = rec_size;
-    return st->data + offset;
-}
 
 /* ---- Index lookup ---- */
 
-static uint32_t zmdb_lookup(ZMDBState *st, uint32_t atom_id) {
-    for (int i = 0; i < st->index_count; i++) {
-        if (st->index[i].atom_id == atom_id)
-            return st->index[i].record_offset;
+static int zmdb_index_order(const void *a, const void *b) {
+    const ZMDBIndexEntry *x = a, *y = b;
+    if (x->atom_id != y->atom_id) return x->atom_id < y->atom_id ? -1 : 1;
+    return (x->position > y->position) - (x->position < y->position);
+}
+
+/* Record for atom_id: the first index entry in table order, as the former
+ * linear scan returned. NULL when the atom is absent or flagged unusable. */
+static const uint8_t *zmdb_find_record(const ZMDBState *st, uint32_t atom_id,
+                                       uint32_t *out_size) {
+    size_t lo = 0, hi = st->index_count;
+    while (lo < hi) {
+        size_t mid = lo + (hi - lo) / 2;
+        if (st->index[mid].atom_id < atom_id) lo = mid + 1;
+        else hi = mid;
     }
-    return 0;
+    if (lo == st->index_count || st->index[lo].atom_id != atom_id
+        || !st->index[lo].record_offset)
+        return NULL;
+    if (out_size) *out_size = st->index[lo].record_size;
+    return st->data + st->index[lo].record_offset;
 }
 
 /* ---- Resolve string reference ---- */
@@ -152,11 +175,8 @@ static uint32_t zmdb_lookup(ZMDBState *st, uint32_t atom_id) {
 static char *zmdb_resolve_string(ZMDBState *st, uint32_t atom_id) {
     if (!atom_id) return strdup("");
 
-    uint32_t offset = zmdb_lookup(st, atom_id);
-    if (!offset) return strdup("");
-
     uint32_t rec_size = 0;
-    const uint8_t *rec = zmdb_read_record(st, offset, &rec_size);
+    const uint8_t *rec = zmdb_find_record(st, atom_id, &rec_size);
     if (!rec || rec_size < 2) return strdup("");
 
     int schema = (atom_id >> 24) & 0xFF;
@@ -219,19 +239,20 @@ static int zmdb_parse_varint_fields(const uint8_t *rec, uint32_t rec_size,
     if (title_end >= rec_size)
         return 0; /* no varint data after title */
 
-    /* Parse fields backwards from the end of the record */
+    /* Parse fields backwards from the end of the record. Every check keeps
+     * pos >= title_end, so pos - title_end never wraps. */
     int count = 0;
     uint32_t pos = rec_size;
 
     while (pos > title_end && count < max_fields) {
-        if (pos < title_end + 2) break;
+        if (pos - title_end < 2) break;
 
         /* Read field ID (1-2 bytes, from end) */
         pos--;
         uint8_t id_byte1 = rec[pos];
         uint16_t field_id;
         if (id_byte1 & 0x80) {
-            if (pos < title_end + 1) break;
+            if (pos - title_end < 1) break;
             pos--;
             uint8_t id_byte2 = rec[pos];
             field_id = (uint16_t)((id_byte2 << 7) | (id_byte1 & 0x7F));
@@ -240,16 +261,16 @@ static int zmdb_parse_varint_fields(const uint8_t *rec, uint32_t rec_size,
         }
 
         /* Read field size (1-3 bytes, from end) */
-        if (pos < title_end + 1) break;
+        if (pos - title_end < 1) break;
         pos--;
         uint8_t sz_byte1 = rec[pos];
         uint32_t field_size;
         if (sz_byte1 & 0x80) {
-            if (pos < title_end + 1) break;
+            if (pos - title_end < 1) break;
             pos--;
             uint8_t sz_byte2 = rec[pos];
             if (sz_byte2 & 0x80) {
-                if (pos < title_end + 1) break;
+                if (pos - title_end < 1) break;
                 pos--;
                 uint8_t sz_byte3 = rec[pos];
                 field_size = ((uint32_t)(sz_byte3) << 14) |
@@ -283,13 +304,13 @@ static int zmdb_parse_track(ZMDBState *st, const uint8_t *rec, uint32_t rec_size
     if (rec_size < (uint32_t)es) return -1;
 
     /* Fixed fields */
-    uint32_t album_ref    = rd32(rec + 0);
-    uint32_t artist_ref   = rd32(rec + 4);
-    uint32_t genre_ref    = rd32(rec + 8);
-    uint32_t filename_ref = rd32(rec + 12);
+    uint32_t album_ref    = zune_le32(rec + 0);
+    uint32_t artist_ref   = zune_le32(rec + 4);
+    uint32_t genre_ref    = zune_le32(rec + 8);
+    uint32_t filename_ref = zune_le32(rec + 12);
     int32_t  duration     = rdi32(rec + 16);
     int32_t  size         = rdi32(rec + 20);
-    uint16_t track_num    = rd16(rec + 24);
+    uint16_t track_num    = zune_le16(rec + 24);
 
     /* Skip root entries (all refs zero) */
     if (album_ref == 0 && artist_ref == 0 && genre_ref == 0)
@@ -299,7 +320,7 @@ static int zmdb_parse_track(ZMDBState *st, const uint8_t *rec, uint32_t rec_size
     uint16_t playcount = 0;
     uint8_t  rating    = 0;
     if (st->is_hd && rec_size >= 32) {
-        playcount = rd16(rec + 26);
+        playcount = zune_le16(rec + 26);
         /* offset 28-29: codec_id (uint16) — not exposed yet */
         rating    = rec[30];
     }
@@ -331,13 +352,13 @@ static int zmdb_parse_track(ZMDBState *st, const uint8_t *rec, uint32_t rec_size
         switch (fields[i].field_id) {
         case 0x63: /* skip_count */
             if (fields[i].field_size >= 4)
-                out->skip_count = rd32(fields[i].field_data);
+                out->skip_count = zune_le32(fields[i].field_data);
             break;
         case 0x6C: /* disc_number */
             if (fields[i].field_size >= 4)
-                out->disc_number = (uint16_t)rd32(fields[i].field_data);
+                out->disc_number = (uint16_t)zune_le32(fields[i].field_data);
             else if (fields[i].field_size >= 2)
-                out->disc_number = rd16(fields[i].field_data);
+                out->disc_number = zune_le16(fields[i].field_data);
             break;
         case 0x70: /* last_played timestamp (FILETIME) */
             if (fields[i].field_size >= 8)
@@ -354,11 +375,12 @@ static int zmdb_parse_track(ZMDBState *st, const uint8_t *rec, uint32_t rec_size
 
 static int zmdb_parse_video(ZMDBState *st, const uint8_t *rec, uint32_t rec_size,
                              uint32_t atom_id, ZuneVideoFile *out) {
+    (void)st;   /* same signature as the other record parsers */
     if (rec_size < ENTRY_SIZE_VIDEO) return -1;
 
-    uint32_t folder_ref   = rd32(rec + 0);
-    uint32_t title_ref    = rd32(rec + 4);
-    uint32_t filename_ref = rd32(rec + 12);
+    uint32_t folder_ref   = zune_le32(rec + 0);
+    uint32_t title_ref    = zune_le32(rec + 4);
+    uint32_t filename_ref = zune_le32(rec + 12);
 
     /* Skip root entries */
     if (folder_ref == 0 && title_ref == 0 && filename_ref == 0)
@@ -377,13 +399,13 @@ static int zmdb_parse_video(ZMDBState *st, const uint8_t *rec, uint32_t rec_size
     out->title = strdup(out->filename ? out->filename : "");
     /* This record exposes Name, not the on-disk ObjectFileName. */
     out->object_filename = strdup("");
-    out->object_format = rec_size >= 34 ? rd16(rec + 32) : 0;
+    out->object_format = rec_size >= 34 ? zune_le16(rec + 32) : 0;
 
     /* Filesize at +12 (treating as direct value, not a reference).
      * B1 guard: MTP objects cap at 4GB (32-bit ObjectCompressedSize);
      * anything larger read here is a misparsed field, not a size. */
     if (rec_size >= 20)
-        out->filesize = (uint64_t)rd32(rec + 16);
+        out->filesize = (uint64_t)zune_le32(rec + 16);
     else
         out->filesize = 0;
     if (out->filesize > 0xFFFFFF00ull)
@@ -405,7 +427,7 @@ static int zmdb_parse_video(ZMDBState *st, const uint8_t *rec, uint32_t rec_size
      *   +38: zuneType (uint16) — MetaGenre equivalent
      */
     if (rec_size >= 40) {
-        uint16_t zune_type = rd16(rec + 38);
+        uint16_t zune_type = zune_le16(rec + 38);
         switch (zune_type) {
         case 0x0002: out->metagenre = 0x25; break;  /* Movie */
         case 0x0004: out->metagenre = 0x26; break;  /* TV Show — confirmed via diagnostic */
@@ -425,10 +447,10 @@ static int zmdb_parse_picture(ZMDBState *st, const uint8_t *rec, uint32_t rec_si
                                uint32_t atom_id, ZunePhotoFile *out) {
     if (rec_size < ENTRY_SIZE_PICTURE) return -1;
 
-    uint32_t filename_ref = rd32(rec + 8);
+    uint32_t filename_ref = zune_le32(rec + 8);
 
     /* Skip root entries */
-    if (rd32(rec + 0) == 0 && rd32(rec + 4) == 0 && filename_ref == 0)
+    if (zune_le32(rec + 0) == 0 && zune_le32(rec + 4) == 0 && filename_ref == 0)
         return -1;
 
     out->item_id   = atom_id;
@@ -439,7 +461,7 @@ static int zmdb_parse_picture(ZMDBState *st, const uint8_t *rec, uint32_t rec_si
     out->filesize  = (uint64_t)rdi32(rec + 12);
     if (out->filesize > (1024ull * 1024 * 1024))
         out->filesize = 0;
-    out->parent_id = rd32(rec + 0);
+    out->parent_id = zune_le32(rec + 0);
     return 0;
 }
 
@@ -450,7 +472,7 @@ static int zmdb_parse_album(ZMDBState *st, const uint8_t *rec, uint32_t rec_size
     int es = st->is_hd ? ENTRY_SIZE_ALBUM_HD : ENTRY_SIZE_ALBUM_CLASSIC;
     if (rec_size < (uint32_t)es) return -1;
 
-    uint32_t artist_ref = rd32(rec + 0);
+    uint32_t artist_ref = zune_le32(rec + 0);
 
     /* Skip root entries */
     if (artist_ref == 0 && rec_size <= (uint32_t)es)
@@ -465,11 +487,11 @@ static int zmdb_parse_album(ZMDBState *st, const uint8_t *rec, uint32_t rec_size
 
     /* HD: extract year from FILETIME at +12 */
     if (st->is_hd && rec_size >= 20) {
-        uint64_t ticks = (uint64_t)rd32(rec + 12) | ((uint64_t)rd32(rec + 16) << 32);
+        uint64_t ticks = (uint64_t)zune_le32(rec + 12) | ((uint64_t)zune_le32(rec + 16) << 32);
         if (ticks > 0) {
-            int64_t unix_ts = (int64_t)(ticks / 10000000ULL) - 11644473600LL;
-            struct tm *tm = gmtime((time_t *)&unix_ts);
-            if (tm) out->year = (uint16_t)(tm->tm_year + 1900);
+            time_t unix_ts = (time_t)((int64_t)(ticks / 10000000ULL) - 11644473600LL);
+            struct tm tm;
+            if (gmtime_r(&unix_ts, &tm)) out->year = (uint16_t)(tm.tm_year + 1900);
         }
     }
 
@@ -547,12 +569,14 @@ static void zmdb_discover(ZMDBState *st, const uint8_t *data, size_t data_len,
     disc->album = disc->playlist = disc->artist = -1;
     disc->genre = disc->photo_album = -1;
 
-    for (int i = 1; i < 96; i++) {  /* skip desc 0 (index) */
+    for (int i = 1; i < st->desc_count; i++) {  /* skip desc 0 (index) */
         ZMDBDescriptor *d = &st->descs[i];
         if (d->entry_count == 0) continue;
-        if (d->data_offset + 4 > data_len) continue;
+        /* Only a readable first atom makes a candidate; whichever descriptor
+         * is chosen must then pass zmdb_desc_ok in full before it is walked. */
+        if (!zmdb_span_ok(data_len, d->data_offset, 4)) continue;
 
-        uint32_t first_atom = rd32(data + d->data_offset);
+        uint32_t first_atom = zune_le32(data + d->data_offset);
         int schema = (first_atom >> 24) & 0xFF;
 
         /* Store FIRST descriptor found for each schema */
@@ -569,109 +593,208 @@ static void zmdb_discover(ZMDBState *st, const uint8_t *data, size_t data_len,
     }
 }
 
-/* ---- Main parser ---- */
+/* ---- Shared header, descriptor table and index loading ----
+ *
+ * Fail closed, like podcast_state.c: a database that is truncated or points
+ * outside itself yields an error and no partial library, never a silently
+ * shortened one. The index is validated in full here (every record offset
+ * and size), so later lookups cannot leave the payload. */
 
-static ZuneLibrary *zmdb_parse(const uint8_t *data, size_t data_len) {
-    if (data_len < 0x40) return NULL;
+/* Fixed capacities of a full scan (larger libraries are truncated). */
+enum {
+    ZMDB_MAX_TRACKS = 10000, ZMDB_MAX_VIDEOS = 1000, ZMDB_MAX_PHOTOS = 5000,
+    ZMDB_MAX_ALBUMS = 2000, ZMDB_MAX_ARTISTS = 2000, ZMDB_MAX_PLAYLISTS = 200,
+    ZMDB_MAX_PHOTO_ALBUMS = 100
+};
+
+static int zmdb_fail(ZMDBState *st, const char *tag, const char *why) {
+    ZLOG(ZUNE_CHATTER_SCREAM, tag, "%s", why);
+    zune_set_error("ZMDB rejected: %s", why);
+    free(st->index);
+    st->index = NULL;
+    st->index_count = 0;
+    return -1;
+}
+
+static int zmdb_load(ZMDBState *st, const uint8_t *data, size_t data_len,
+                     const char *tag) {
+    memset(st, 0, sizeof(*st));
+    if (!data || data_len < 0x40)
+        return zmdb_fail(st, tag, "database too short for a ZMDB header");
 
     /* Verify ZMDB magic */
-    if (memcmp(data, "ZMDB", 4) != 0) {
-        fprintf(stderr, "[libzune-zmdb] bad magic\n");
-        return NULL;
-    }
+    if (memcmp(data, "ZMDB", 4) != 0)
+        return zmdb_fail(st, tag, "bad magic");
 
     /* Verify ZMed header and detect version */
-    if (memcmp(data + 0x20, "ZMed", 4) != 0) {
-        fprintf(stderr, "[libzune-zmdb] missing ZMed header\n");
-        return NULL;
-    }
-    uint16_t version = rd16(data + 0x24);
-    int is_hd = (version >= 5);
-    fprintf(stderr, "[libzune-zmdb] ZMed version=%d, is_hd=%d\n", version, is_hd);
+    if (memcmp(data + 0x20, "ZMed", 4) != 0)
+        return zmdb_fail(st, tag, "missing ZMed header");
+    uint16_t version = zune_le16(data + 0x24);
 
     /* Find ZArr descriptor block (search 0x30 to 0x100) */
-    uint32_t zarr_offset = 0;
-    for (uint32_t off = 0x30; off < 0x100 && off + 4 <= data_len; off += 4) {
+    size_t zarr_offset = 0;
+    for (size_t off = 0x30; off < 0x100 && zmdb_span_ok(data_len, off, 4); off += 4) {
         if (memcmp(data + off, "ZArr", 4) == 0) {
             zarr_offset = off;
             break;
         }
     }
-    if (!zarr_offset) {
-        fprintf(stderr, "[libzune-zmdb] ZArr not found\n");
-        return NULL;
+    if (!zarr_offset)
+        return zmdb_fail(st, tag, "ZArr not found");
+    if (!zmdb_span_ok(data_len, zarr_offset, ZMDB_DESCRIPTOR_SIZE))
+        return zmdb_fail(st, tag, "index descriptor is truncated");
+
+    /* Read descriptor 0 first: its index offset bounds the Classic v2
+     * table. Keel/Draco have 33 descriptors, not 96; requiring room for 96
+     * before finding this bound rejects complete small databases. The index
+     * may have alignment padding before it, so round down to whole slots.
+     * Keep the full table requirement for HD and unrecognized versions. */
+    st->desc_count = ZMDB_DESCRIPTORS;
+    uint32_t index_at = zune_le32(data + zarr_offset + 16);
+    uint32_t index_entries = zune_le32(data + zarr_offset + 8);
+    if (version == 2 && (index_entries || index_at)) {
+        if (index_at <= zarr_offset)
+            return zmdb_fail(st, tag, "index overlaps the descriptor table");
+        size_t fit = (index_at - zarr_offset) / ZMDB_DESCRIPTOR_SIZE;
+        /* All supported Classic media slots (through 16) must exist. */
+        if (fit <= 16)
+            return zmdb_fail(st, tag, "index overlaps required media descriptors");
+        if (fit < ZMDB_DESCRIPTORS)
+            st->desc_count = (int)fit;
+    }
+    if (!zmdb_array_ok(data_len, zarr_offset, (size_t)st->desc_count, ZMDB_DESCRIPTOR_SIZE))
+        return zmdb_fail(st, tag, "descriptor table is truncated");
+
+    st->data = data;
+    st->data_len = data_len;
+    st->is_hd = (version >= 5);
+
+    /* Only the validated table slots are descriptors. Classic bytes after
+     * that boundary belong to the index/records and must never be discovered
+     * as additional media descriptors. */
+    for (size_t i = 0; i < (size_t)st->desc_count; i++) {
+        const uint8_t *d = data + zarr_offset + i * ZMDB_DESCRIPTOR_SIZE;
+        st->descs[i].entry_size  = zune_le16(d + 6);
+        st->descs[i].entry_count = zune_le32(d + 8);
+        st->descs[i].data_offset = zune_le32(d + 16);
     }
 
-    /* Initialize parser state */
-    ZMDBState st = {0};
-    st.data = data;
-    st.data_len = data_len;
-    st.is_hd = is_hd;
+    /* Build index table from descriptor 0. Its whole extent is checked
+     * before anything is allocated. */
+    const ZMDBDescriptor *ix = &st->descs[0];
+    if (ix->entry_count == 0) return 0;
+    if (ix->entry_size != 8)
+        return zmdb_fail(st, tag, "index entries are not 8 bytes");
+    if (!zmdb_array_ok(data_len, ix->data_offset, ix->entry_count, 8))
+        return zmdb_fail(st, tag, "index extends past the end of the database");
 
-    /* Parse 96 descriptors (20 bytes each) */
-    for (int i = 0; i < 96; i++) {
-        uint32_t doff = zarr_offset + (i * 20);
-        if (doff + 20 > data_len) break;
-        st.descs[i].entry_size  = rd16(data + doff + 6);
-        st.descs[i].entry_count = rd32(data + doff + 8);
-        st.descs[i].data_offset = rd32(data + doff + 16);
+    size_t count = ix->entry_count;
+    st->index = calloc(count, sizeof(ZMDBIndexEntry));
+    if (!st->index)
+        return zmdb_fail(st, tag, "out of memory for the index");
+    for (size_t i = 0; i < count; i++) {
+        const uint8_t *e = data + ix->data_offset + i * 8;
+        ZMDBIndexEntry *entry = &st->index[i];
+        entry->atom_id  = zune_le32(e);
+        entry->position = i;
+        uint32_t offset = zune_le32(e + 4);
+        /* A record is preceded by a 4-byte header: size in the low 24 bits,
+         * sign bit set when the record must not be used. */
+        if (offset < 4 || offset > data_len)
+            return zmdb_fail(st, tag, "index record offset is outside the database");
+        uint32_t header = zune_le32(data + offset - 4);
+        if (header & 0x80000000) continue;          /* unusable: lookups miss */
+        uint32_t size = header & 0x00FFFFFF;
+        if (!zmdb_span_ok(data_len, offset, size))
+            return zmdb_fail(st, tag, "index record extends past the end of the database");
+        entry->record_offset = offset;
+        entry->record_size   = size;
     }
+    qsort(st->index, count, sizeof(ZMDBIndexEntry), zmdb_index_order);
+    st->index_count = count;
+    return 0;
+}
 
-    /* Build index table from descriptor 0 */
-    if (st.descs[0].entry_count > 0 && st.descs[0].entry_size == 8) {
-        st.index_count = (int)st.descs[0].entry_count;
-        st.index = calloc(st.index_count, sizeof(ZMDBIndexEntry));
-        if (st.index) {
-            for (int i = 0; i < st.index_count; i++) {
-                uint32_t eoff = st.descs[0].data_offset + (i * 8);
-                if (eoff + 8 > data_len) { st.index_count = i; break; }
-                st.index[i].atom_id       = rd32(data + eoff);
-                st.index[i].record_offset = rd32(data + eoff + 4);
-            }
+/* 1 if a descriptor this parser walks is a 4-byte atom array that lies
+ * entirely inside the payload. */
+static int zmdb_desc_ok(const ZMDBState *st, int idx) {
+    const ZMDBDescriptor *d = &st->descs[idx];
+    return d->entry_count == 0
+        || (d->entry_size >= 4
+            && zmdb_array_ok(st->data_len, d->data_offset, d->entry_count, d->entry_size));
+}
+
+/* Descriptors that hold media on both Classic and HD (music, album, artist,
+ * playlist, video, photo album, picture). Discovery skips unreadable
+ * descriptors, so a corrupt one here must fail the scan instead of quietly
+ * yielding a library without that media. Slots past the table (index bytes on
+ * Classic) are never discovered, so they are not required to be atom arrays. */
+static const int ZMDB_MEDIA_SLOTS[] = { 1, 3, 4, 11, 12, 15, 16 };
+
+static int zmdb_media_slots_ok(const ZMDBState *st) {
+    for (size_t i = 0; i < sizeof(ZMDB_MEDIA_SLOTS) / sizeof(ZMDB_MEDIA_SLOTS[0]); i++) {
+        const ZMDBDescriptor *d = &st->descs[ZMDB_MEDIA_SLOTS[i]];
+        if (d->entry_count && !zmdb_span_ok(st->data_len, d->data_offset, 4))
+            return 0;
+    }
+    return 1;
+}
+
+/* Atom ID of entry i of a descriptor that passed zmdb_desc_ok. */
+static uint32_t zmdb_desc_atom(const ZMDBState *st, const ZMDBDescriptor *d, size_t i) {
+    return zune_le32(st->data + d->data_offset + i * d->entry_size);
+}
+
+/* ---- Main parser ---- */
+
+static ZuneLibrary *zmdb_parse(const uint8_t *data, size_t data_len) {
+    ZMDBState st;
+    if (zmdb_load(&st, data, data_len, "libzune-zmdb") < 0) return NULL;
+    ZLOG(ZUNE_CHATTER_WHISPER, "libzune-zmdb", "ZMed version=%d, is_hd=%d",
+            zune_le16(data + 0x24), st.is_hd);
+    ZLOG(ZUNE_CHATTER_WHISPER, "libzune-zmdb", "%zu index entries", st.index_count);
+
+    /* Walk descriptors and parse media */
+    const ZMDBDescMap *desc_map = st.is_hd ? HD_DESC_MAP : CLASSIC_DESC_MAP;
+    for (int m = 0; desc_map[m].desc_idx >= 0; m++) {
+        if (!zmdb_desc_ok(&st, desc_map[m].desc_idx)) {
+            zmdb_fail(&st, "libzune-zmdb", "media descriptor extends past the end of the database");
+            return NULL;
         }
     }
-    fprintf(stderr, "[libzune-zmdb] %d index entries\n", st.index_count);
 
     /* Allocate result */
     ZuneLibrary *lib = calloc(1, sizeof(ZuneLibrary));
-    if (!lib) { free(st.index); return NULL; }
+    if (!lib) {
+        zmdb_fail(&st, "libzune-zmdb", "out of memory for the library");
+        return NULL;
+    }
 
     /* Pre-allocate arrays (we'll realloc down later) */
-    int max_tracks = 10000, max_videos = 1000, max_photos = 5000;
+    const int max_tracks = ZMDB_MAX_TRACKS, max_videos = ZMDB_MAX_VIDEOS,
+              max_photos = ZMDB_MAX_PHOTOS;
     lib->tracks = calloc(max_tracks, sizeof(ZuneTrack));
     lib->videos = calloc(max_videos, sizeof(ZuneVideoFile));
     lib->photos = calloc(max_photos, sizeof(ZunePhotoFile));
 
     if (!lib->tracks || !lib->videos || !lib->photos) {
         free(lib->tracks); free(lib->videos); free(lib->photos);
-        free(lib); free(st.index);
+        free(lib);
+        zmdb_fail(&st, "libzune-zmdb", "out of memory for the library");
         return NULL;
     }
 
-    /* Walk descriptors and parse media */
-    const ZMDBDescMap *desc_map = is_hd ? HD_DESC_MAP : CLASSIC_DESC_MAP;
-
     for (int m = 0; desc_map[m].desc_idx >= 0; m++) {
-        int di = desc_map[m].desc_idx;
         int schema = desc_map[m].schema;
-        if (di >= 96) continue;
+        const ZMDBDescriptor *desc = &st.descs[desc_map[m].desc_idx];
 
-        ZMDBDescriptor *desc = &st.descs[di];
-        if (!desc->entry_count) continue;
-
-        for (uint32_t i = 0; i < desc->entry_count; i++) {
-            uint32_t eoff = desc->data_offset + (i * desc->entry_size);
-            if (eoff + 4 > data_len) break;
-
-            uint32_t atom_id = rd32(data + eoff);
+        for (size_t i = 0; i < desc->entry_count; i++) {
+            uint32_t atom_id = zmdb_desc_atom(&st, desc, i);
             int atom_schema = (atom_id >> 24) & 0xFF;
             if (atom_schema != schema) continue;
 
-            uint32_t rec_offset = zmdb_lookup(&st, atom_id);
-            if (!rec_offset) continue;
-
             uint32_t rec_size = 0;
-            const uint8_t *rec = zmdb_read_record(&st, rec_offset, &rec_size);
+            const uint8_t *rec = zmdb_find_record(&st, atom_id, &rec_size);
             if (!rec) continue;
 
             switch (schema) {
@@ -707,7 +830,7 @@ static ZuneLibrary *zmdb_parse(const uint8_t *data, size_t data_len) {
 
     free(st.index);
 
-    fprintf(stderr, "[libzune-zmdb] parsed %d tracks, %d videos, %d photos\n",
+    ZLOG(ZUNE_CHATTER_TALK, "libzune-zmdb", "parsed %d tracks, %d videos, %d photos",
             lib->track_count, lib->video_count, lib->photo_count);
     return lib;
 }
@@ -717,9 +840,10 @@ static ZuneLibrary *zmdb_parse(const uint8_t *data, size_t data_len) {
 /* ---- Public API: Read ZMDB from device ---- */
 
 int zune_infiltrate_legacy(ZuneDevice *dev, ZuneLibrary **out) {
+    zune_clear_error();
     if (!dev || !out) {
         zune_set_error("Invalid parameters for ZMDB read");
-        return -1;
+        return ZUNE_BLOWN;
     }
 
     *out = NULL;
@@ -727,173 +851,146 @@ int zune_infiltrate_legacy(ZuneDevice *dev, ZuneLibrary **out) {
     uint8_t *payload = NULL;
     uint32_t received = 0;
     int ret = zune_zmdb_read_payload(&dev->usb, &payload, &received);
-    if (ret != 0) return -1;
+    if (ret != 0) return ZUNE_BLOWN;
 
-    /* Parse the ZMDB binary data */
+    /* Parse the ZMDB binary data; a rejection sets its own error. */
     ZuneLibrary *lib = zmdb_parse(payload, received);
     free(payload);
 
     if (!lib) {
-        zune_set_error("ZMDB parse failed");
-        return -1;
+        return ZUNE_BLOWN;
     }
 
     *out = lib;
-    return 0;
+    return ZUNE_OK;
 }
 
 /* ---- ZuneDB: Full library scan with discovery-based parsing ---- */
 
-static ZuneDBLibrary *zmdb_parse_full(const uint8_t *data, size_t data_len) {
-    if (data_len < 0x40) return NULL;
-
-    if (memcmp(data, "ZMDB", 4) != 0) {
-        fprintf(stderr, "[zunedb] bad magic\n");
-        return NULL;
-    }
-    if (memcmp(data + 0x20, "ZMed", 4) != 0) {
-        fprintf(stderr, "[zunedb] missing ZMed header\n");
-        return NULL;
-    }
-
-    uint16_t version = rd16(data + 0x24);
-    int is_hd = (version >= 5);
-
-    /* Find ZArr */
-    uint32_t zarr_offset = 0;
-    for (uint32_t off = 0x30; off < 0x100 && off + 4 <= data_len; off += 4) {
-        if (memcmp(data + off, "ZArr", 4) == 0) {
-            zarr_offset = off;
-            break;
-        }
-    }
-    if (!zarr_offset) {
-        fprintf(stderr, "[zunedb] ZArr not found\n");
-        return NULL;
-    }
-
-    /* Init parser state */
-    ZMDBState st = {0};
-    st.data = data;
-    st.data_len = data_len;
-    st.is_hd = is_hd;
-
-    for (int i = 0; i < 96; i++) {
-        uint32_t doff = zarr_offset + (i * 20);
-        if (doff + 20 > data_len) break;
-        st.descs[i].entry_size  = rd16(data + doff + 6);
-        st.descs[i].entry_count = rd32(data + doff + 8);
-        st.descs[i].data_offset = rd32(data + doff + 16);
-    }
-
-    /* Build index from descriptor 0 */
-    if (st.descs[0].entry_count > 0 && st.descs[0].entry_size == 8) {
-        st.index_count = (int)st.descs[0].entry_count;
-        st.index = calloc(st.index_count, sizeof(ZMDBIndexEntry));
-        if (st.index) {
-            for (int i = 0; i < st.index_count; i++) {
-                uint32_t eoff = st.descs[0].data_offset + (i * 8);
-                if (eoff + 8 > data_len) { st.index_count = i; break; }
-                st.index[i].atom_id       = rd32(data + eoff);
-                st.index[i].record_offset = rd32(data + eoff + 4);
-            }
-        }
+/* Load the database, discover its descriptors and check that every
+ * descriptor walked below lies inside it. -1 (index freed) on rejection. */
+static int zmdb_full_preflight(ZMDBState *st, const uint8_t *data, size_t data_len,
+                               ZMDBDiscovered *disc) {
+    if (zmdb_load(st, data, data_len, "zunedb") < 0) return -1;
+    if (!zmdb_media_slots_ok(st)) {
+        zmdb_fail(st, "zunedb", "media descriptor points outside the database");
+        return -1;
     }
 
     /* Discover descriptors dynamically */
-    ZMDBDiscovered disc;
-    zmdb_discover(&st, data, data_len, &disc);
+    zmdb_discover(st, data, data_len, disc);
 
+    /* Every descriptor walked below must lie entirely inside the payload. */
+    const int walked[] = { disc->music, disc->video, disc->photo, disc->album,
+                           disc->artist, disc->photo_album, disc->playlist };
+    for (size_t i = 0; i < sizeof(walked) / sizeof(walked[0]); i++) {
+        if (walked[i] >= 0 && !zmdb_desc_ok(st, walked[i])) {
+            zmdb_fail(st, "zunedb", "media descriptor extends past the end of the database");
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
+/* The library and its fixed-capacity arrays. NULL (index freed) when out of
+ * memory. */
+static ZuneDBLibrary *zmdb_alloc_library(ZMDBState *st) {
     /* Allocate library */
     ZuneDBLibrary *lib = calloc(1, sizeof(ZuneDBLibrary));
-    if (!lib) { free(st.index); return NULL; }
-    lib->is_hd = is_hd;
+    if (!lib) {
+        zmdb_fail(st, "zunedb", "out of memory for the library");
+        return NULL;
+    }
+    lib->is_hd = st->is_hd;
 
     /* Pre-allocate arrays */
-    int max_tracks = 10000, max_videos = 1000, max_photos = 5000;
-    int max_albums = 2000, max_artists = 2000, max_playlists = 200;
-    int max_photo_albums = 100;
-
-    lib->tracks       = calloc(max_tracks, sizeof(ZuneTrack));
-    lib->videos       = calloc(max_videos, sizeof(ZuneVideoFile));
-    lib->photos       = calloc(max_photos, sizeof(ZunePhotoFile));
-    lib->albums       = calloc(max_albums, sizeof(ZuneDBAlbum));
-    lib->artists      = calloc(max_artists, sizeof(ZuneDBArtist));
-    lib->playlists    = calloc(max_playlists, sizeof(ZunePlaylist));
-    lib->photo_albums = calloc(max_photo_albums, sizeof(ZuneDBPhotoAlbum));
+    lib->tracks       = calloc(ZMDB_MAX_TRACKS, sizeof(ZuneTrack));
+    lib->videos       = calloc(ZMDB_MAX_VIDEOS, sizeof(ZuneVideoFile));
+    lib->photos       = calloc(ZMDB_MAX_PHOTOS, sizeof(ZunePhotoFile));
+    lib->albums       = calloc(ZMDB_MAX_ALBUMS, sizeof(ZuneDBAlbum));
+    lib->artists      = calloc(ZMDB_MAX_ARTISTS, sizeof(ZuneDBArtist));
+    lib->playlists    = calloc(ZMDB_MAX_PLAYLISTS, sizeof(ZunePlaylist));
+    lib->photo_albums = calloc(ZMDB_MAX_PHOTO_ALBUMS, sizeof(ZuneDBPhotoAlbum));
 
     if (!lib->tracks || !lib->videos || !lib->photos) {
         /* Critical arrays failed */
         free(lib->tracks); free(lib->videos); free(lib->photos);
         free(lib->albums); free(lib->artists); free(lib->playlists);
         free(lib->photo_albums);
-        free(lib); free(st.index);
+        free(lib);
+        zmdb_fail(st, "zunedb", "out of memory for the library");
         return NULL;
     }
 
-    /* Helper: iterate a descriptor and parse each entry */
-    #define PARSE_DESC(desc_idx, schema_id, parse_fn, array, count, max, type) \
-        if ((desc_idx) >= 0 && (desc_idx) < 96) { \
-            ZMDBDescriptor *_d = &st.descs[(desc_idx)]; \
-            for (uint32_t _i = 0; _i < _d->entry_count; _i++) { \
-                uint32_t _eoff = _d->data_offset + (_i * _d->entry_size); \
-                if (_eoff + 4 > data_len) break; \
-                uint32_t _aid = rd32(data + _eoff); \
+    return lib;
+}
+
+/* Parse every record of each media descriptor into the library's arrays. */
+static void zmdb_parse_media(ZMDBState *st, const ZMDBDiscovered *disc, ZuneDBLibrary *lib) {
+    /* Helper: iterate a validated descriptor and parse each entry */
+    #define PARSE_DESC(desc_idx, schema_id, parse_fn, array, count, max) \
+        if ((desc_idx) >= 0 && (array)) { \
+            const ZMDBDescriptor *_d = &st->descs[(desc_idx)]; \
+            for (size_t _i = 0; _i < _d->entry_count && (count) < (max); _i++) { \
+                uint32_t _aid = zmdb_desc_atom(st, _d, _i); \
                 if (((_aid >> 24) & 0xFF) != (schema_id)) continue; \
-                uint32_t _roff = zmdb_lookup(&st, _aid); \
-                if (!_roff) continue; \
                 uint32_t _rsz = 0; \
-                const uint8_t *_rec = zmdb_read_record(&st, _roff, &_rsz); \
+                const uint8_t *_rec = zmdb_find_record(st, _aid, &_rsz); \
                 if (!_rec) continue; \
-                if ((count) < (max)) { \
-                    if (parse_fn(&st, _rec, _rsz, _aid, &(array)[(count)]) == 0) \
-                        (count)++; \
-                } \
+                if (parse_fn(st, _rec, _rsz, _aid, &(array)[(count)]) == 0) \
+                    (count)++; \
             } \
         }
 
-    PARSE_DESC(disc.music, SCHEMA_MUSIC, zmdb_parse_track, lib->tracks, lib->track_count, max_tracks, ZuneTrack);
+    PARSE_DESC(disc->music, SCHEMA_MUSIC, zmdb_parse_track, lib->tracks, lib->track_count, ZMDB_MAX_TRACKS);
     /* HD video records have a different layout than Classic's 40-byte
      * fixed records; zmdb_parse_video would misread them and tag every
      * video as "Other". Skip on HD — AppState falls back to live MTP reads. */
-    if (!is_hd) {
-        PARSE_DESC(disc.video, SCHEMA_VIDEO, zmdb_parse_video, lib->videos, lib->video_count, max_videos, ZuneVideoFile);
+    if (!st->is_hd) {
+        PARSE_DESC(disc->video, SCHEMA_VIDEO, zmdb_parse_video, lib->videos, lib->video_count, ZMDB_MAX_VIDEOS);
     }
-    PARSE_DESC(disc.photo, SCHEMA_PICTURE, zmdb_parse_picture, lib->photos, lib->photo_count, max_photos, ZunePhotoFile);
-    PARSE_DESC(disc.album, SCHEMA_ALBUM, zmdb_parse_album, lib->albums, lib->album_count, max_albums, ZuneDBAlbum);
-    PARSE_DESC(disc.artist, SCHEMA_ARTIST, zmdb_parse_artist, lib->artists, lib->artist_count, max_artists, ZuneDBArtist);
-    PARSE_DESC(disc.photo_album, SCHEMA_PHOTOALBUM, zmdb_parse_photo_album, lib->photo_albums, lib->photo_album_count, max_photo_albums, ZuneDBPhotoAlbum);
+    PARSE_DESC(disc->photo, SCHEMA_PICTURE, zmdb_parse_picture, lib->photos, lib->photo_count, ZMDB_MAX_PHOTOS);
+    PARSE_DESC(disc->album, SCHEMA_ALBUM, zmdb_parse_album, lib->albums, lib->album_count, ZMDB_MAX_ALBUMS);
+    PARSE_DESC(disc->artist, SCHEMA_ARTIST, zmdb_parse_artist, lib->artists, lib->artist_count, ZMDB_MAX_ARTISTS);
+    PARSE_DESC(disc->photo_album, SCHEMA_PHOTOALBUM, zmdb_parse_photo_album, lib->photo_albums, lib->photo_album_count, ZMDB_MAX_PHOTO_ALBUMS);
 
     #undef PARSE_DESC
+}
 
-    /* Playlists: hex dump for research, then fall back to MTP internally later */
-    if (disc.playlist >= 0 && disc.playlist < 96) {
-        ZMDBDescriptor *pd = &st.descs[disc.playlist];
-        for (uint32_t i = 0; i < pd->entry_count && i < 5; i++) {
-            uint32_t eoff = pd->data_offset + (i * pd->entry_size);
-            if (eoff + 4 > data_len) break;
-            uint32_t aid = rd32(data + eoff);
+/* Playlist records are not decoded yet: log the first few for research
+ * (zune_infiltrate falls back to MTP for playlists). */
+static void zmdb_log_playlists(ZMDBState *st, const ZMDBDiscovered *disc) {
+    if (disc->playlist >= 0) {
+        const ZMDBDescriptor *pd = &st->descs[disc->playlist];
+        for (size_t i = 0; i < pd->entry_count && i < 5; i++) {
+            uint32_t aid = zmdb_desc_atom(st, pd, i);
             if (((aid >> 24) & 0xFF) != SCHEMA_PLAYLIST) continue;
-            uint32_t roff = zmdb_lookup(&st, aid);
-            if (!roff) continue;
             uint32_t rsz = 0;
-            const uint8_t *rec = zmdb_read_record(&st, roff, &rsz);
+            const uint8_t *rec = zmdb_find_record(st, aid, &rsz);
             if (!rec) continue;
-            fprintf(stderr, "[zunedb] playlist record atom=%08X size=%u\n", aid, rsz);
+            ZLOG(ZUNE_CHATTER_WHISPER, "zunedb", "playlist record atom=%08X size=%u", aid, rsz);
             /* Hex dump first 64 bytes for analysis */
-            uint32_t dlen = rsz < 64 ? rsz : 64;
-            for (uint32_t b = 0; b < dlen; b++) {
-                if (b % 16 == 0) fprintf(stderr, "  %04x: ", b);
-                fprintf(stderr, "%02x ", rec[b]);
-                if (b % 16 == 15 || b == dlen - 1) fprintf(stderr, "\n");
-            }
+            zmdb_log_hex(ZUNE_CHATTER_WHISPER, rec, rsz < 64 ? rsz : 64);
         }
     }
+}
+
+static ZuneDBLibrary *zmdb_parse_full(const uint8_t *data, size_t data_len) {
+    ZMDBState st;
+    ZMDBDiscovered disc;
+    if (zmdb_full_preflight(&st, data, data_len, &disc) < 0)
+        return NULL;
+    ZuneDBLibrary *lib = zmdb_alloc_library(&st);
+    if (!lib)
+        return NULL;
+    zmdb_parse_media(&st, &disc, lib);
+    zmdb_log_playlists(&st, &disc);
 
     free(st.index);
 
-    fprintf(stderr, "[zunedb] scanned: %d tracks, %d videos, %d photos, "
-            "%d albums, %d artists, %d playlists, %d photo albums\n",
+    ZLOG(ZUNE_CHATTER_TALK, "zunedb", "scanned: %d tracks, %d videos, %d photos, "
+            "%d albums, %d artists, %d playlists, %d photo albums",
             lib->track_count, lib->video_count, lib->photo_count,
             lib->album_count, lib->artist_count, lib->playlist_count,
             lib->photo_album_count);
@@ -901,27 +998,29 @@ static ZuneDBLibrary *zmdb_parse_full(const uint8_t *data, size_t data_len) {
 }
 
 int zune_infiltrate(ZuneDevice *dev, ZuneDBLibrary **out) {
+    zune_clear_error();
     if (!dev || !out) {
         zune_set_error("Invalid parameters for ZuneDB scan");
-        return -1;
+        return ZUNE_BLOWN;
     }
     *out = NULL;
 
     uint8_t *payload = NULL;
     uint32_t received = 0;
     int ret = zune_zmdb_read_payload(&dev->usb, &payload, &received);
-    if (ret != 0) return -1;
+    if (ret != 0) return ZUNE_BLOWN;
 
-    /* Parse */
+    /* Parse; a rejection sets its own error. */
     ZuneDBLibrary *lib = zmdb_parse_full(payload, received);
     free(payload);
 
     if (!lib) {
-        zune_set_error("ZuneDB parse failed");
-        return -1;
+        return ZUNE_BLOWN;
     }
 
-    /* Playlists: internal MTP fallback (ZMDB playlist format not yet decoded) */
+    /* Playlists: internal MTP fallback (ZMDB playlist format not yet decoded).
+     * The scan itself succeeded, so a failed fallback is logged rather than
+     * left as this call's error. */
     if (lib->playlist_count == 0) {
         int pl_count = 0;
         ZunePlaylist *pls = zune_get_playlists(dev, &pl_count);
@@ -929,6 +1028,9 @@ int zune_infiltrate(ZuneDevice *dev, ZuneDBLibrary **out) {
             free(lib->playlists);
             lib->playlists = pls;
             lib->playlist_count = pl_count;
+        } else if (zune_get_error()) {
+            ZLOG(ZUNE_CHATTER_SHOUT, "zunedb", "playlist fallback failed: %s", zune_get_error());
+            zune_clear_error();
         }
     }
 
@@ -936,7 +1038,7 @@ int zune_infiltrate(ZuneDevice *dev, ZuneDBLibrary **out) {
     dev->cached_library = lib;
 
     *out = lib;
-    return 0;
+    return ZUNE_OK;
 }
 
 void zune_free_scan(ZuneDBLibrary *lib) {
@@ -986,127 +1088,85 @@ void zune_free_scan(ZuneDBLibrary *lib) {
 /* ---- Research/Debug: Dump raw ZMDB binary to file ---- */
 
 int zune_dump_raw(ZuneDevice *dev, const char *output_path) {
-    if (!dev || !output_path) return -1;
+    zune_clear_error();
+    if (!dev || !output_path) return ZUNE_BLOWN;
 
-    const zune_usb_backend_t *be = dev->usb.backend;
-    uint8_t outep = dev->usb.bulk_out_ep;
-    uint8_t inep  = dev->usb.bulk_in_ep;
+    /* The shared reader validates the header, reads the whole payload and
+     * consumes the device's answer after it; a leftover answer would be
+     * taken by the next transaction as its own and wedge the session. */
+    uint8_t header[12];
+    uint8_t *payload = NULL;
+    uint32_t received = 0;
+    if (zune_zmdb_read_response(&dev->usb, header, &payload, &received) != 0)
+        return ZUNE_BLOWN;
 
-    /* Send ZMDB request */
-    uint8_t request[16] = {0};
-    request[0] = 0x10; request[4] = 0x01;
-    request[6] = 0x17; request[7] = 0x92;
-    request[8] = 0x03; request[9] = 0x92; request[10] = 0x1f;
-    request[12] = 0x01;
-
-    uint32_t transferred = 0;
-    if (be->bulk_write(&dev->usb, outep, request, 16, &transferred, 5000) != 0)
-        return -1;
-
-    usleep(250000);
-
-    /* Read first chunk */
-    uint8_t *first = malloc(65536);
-    if (!first) return -1;
-    transferred = 0;
-    if (be->bulk_read(&dev->usb, inep, first, 65536, &transferred, 5000) != 0 ||
-        transferred < 12) {
-        free(first); return -1;
-    }
-
-    uint32_t total = rd32(first);
-    uint32_t psize = total - 12;
-
-    /* Write the FULL response (header + payload) to file */
+    /* The file holds the full response: 12-byte header, then the payload. */
     FILE *fp = fopen(output_path, "wb");
-    if (!fp) { free(first); return -1; }
-
-    /* Write the 12-byte header */
-    fwrite(first, 1, 12, fp);
-
-    /* Write initial payload */
-    uint32_t initial = transferred - 12;
-    if (initial > psize) initial = psize;
-    fwrite(first + 12, 1, initial, fp);
-    free(first);
-
-    /* Read remaining chunks */
-    uint32_t received = initial;
-    uint8_t *chunk = malloc(65536);
-    if (chunk) {
-        while (received < psize) {
-            uint32_t want = psize - received;
-            if (want > 65536) want = 65536;
-            transferred = 0;
-            int r = be->bulk_read(&dev->usb, inep, chunk, want, &transferred, 10000);
-            if (r != 0 || transferred == 0) break;
-            fwrite(chunk, 1, transferred, fp);
-            received += transferred;
-        }
-        free(chunk);
+    int ok = fp && fwrite(header, 1, sizeof(header), fp) == sizeof(header) &&
+             fwrite(payload, 1, received, fp) == received;
+    if (fp && fclose(fp) != 0) ok = 0;
+    free(payload);
+    if (!ok) {
+        if (fp) unlink(output_path);
+        zune_set_error("ZMDB dump: cannot write %s", output_path);
+        return ZUNE_BLOWN;
     }
 
-    fclose(fp);
-
-    /* Drain */
-    uint8_t drain[512];
-    uint32_t dt = 0;
-    be->bulk_read(&dev->usb, inep, drain, 512, &dt, 100);
-
-    fprintf(stderr, "[zunedb] dumped %u bytes (payload=%u) to %s\n",
+    ZLOG(ZUNE_CHATTER_TALK, "zunedb", "dumped %u bytes (payload=%u) to %s",
             received + 12, received, output_path);
-    return 0;
+    return ZUNE_OK;
 }
 
 /* ---- Research/Debug: Scan all 96 descriptors ---- */
 
 int zune_infiltrate_deep(ZuneDevice *dev) {
-    if (!dev) return -1;
+    zune_clear_error();
+    if (!dev) return ZUNE_BLOWN;
 
     /* Read ZMDB payload using shared helper */
     uint8_t *payload = NULL;
     uint32_t received = 0;
     int ret = zune_zmdb_read_payload(&dev->usb, &payload, &received);
-    if (ret != 0) return -1;
+    if (ret != 0) return ZUNE_BLOWN;
 
     /* Parse headers */
     if (received < 0x40 || memcmp(payload, "ZMDB", 4) != 0) {
         free(payload);
-        fprintf(stderr, "[zunedb] not a ZMDB (bad magic or too small)\n");
-        return -1;
+        ZLOG(ZUNE_CHATTER_SCREAM, "zunedb", "not a ZMDB (bad magic or too small)");
+        return ZUNE_BLOWN;
     }
 
-    uint16_t version = rd16(payload + 0x24);
-    fprintf(stderr, "\n[zunedb] === DESCRIPTOR SCAN ===\n");
-    fprintf(stderr, "[zunedb] ZMed version: %d (%s)\n", version, version >= 5 ? "HD" : "Classic");
-    fprintf(stderr, "[zunedb] Payload: %u bytes\n\n", received);
+    uint16_t version = zune_le16(payload + 0x24);
+    ZLOG(ZUNE_CHATTER_TALK, "zunedb", "=== DESCRIPTOR SCAN ===");
+    ZLOG(ZUNE_CHATTER_TALK, "zunedb", "ZMed version: %d (%s)", version, version >= 5 ? "HD" : "Classic");
+    ZLOG(ZUNE_CHATTER_TALK, "zunedb", "Payload: %u bytes", received);
 
     /* Find ZArr */
-    uint32_t zarr = 0;
-    for (uint32_t off = 0x30; off < 0x100 && off + 4 <= received; off += 4) {
+    size_t zarr = 0;
+    for (size_t off = 0x30; off < 0x100 && zmdb_span_ok(received, off, 4); off += 4) {
         if (memcmp(payload + off, "ZArr", 4) == 0) { zarr = off; break; }
     }
-    if (!zarr) { free(payload); fprintf(stderr, "[zunedb] ZArr not found\n"); return -1; }
+    if (!zarr) { free(payload); ZLOG(ZUNE_CHATTER_SCREAM, "zunedb", "ZArr not found"); return ZUNE_BLOWN; }
 
-    fprintf(stderr, "[zunedb] ZArr at offset 0x%04x\n\n", zarr);
-    fprintf(stderr, "  Desc  EntrySize  EntryCount  DataOffset  FirstAtomSchema\n");
-    fprintf(stderr, "  ----  ---------  ----------  ----------  ---------------\n");
+    ZLOG(ZUNE_CHATTER_TALK, "zunedb", "ZArr at offset 0x%04zx", zarr);
+    ZLOG(ZUNE_CHATTER_TALK, "zunedb", "  Desc  EntrySize  EntryCount  DataOffset  FirstAtomSchema");
+    ZLOG(ZUNE_CHATTER_TALK, "zunedb", "  ----  ---------  ----------  ----------  ---------------");
 
     /* Scan all 96 descriptors */
-    for (int i = 0; i < 96; i++) {
-        uint32_t doff = zarr + (i * 20);
-        if (doff + 20 > received) break;
+    for (size_t i = 0; i < ZMDB_DESCRIPTORS; i++) {
+        size_t doff = zarr + i * ZMDB_DESCRIPTOR_SIZE;
+        if (!zmdb_span_ok(received, doff, ZMDB_DESCRIPTOR_SIZE)) break;
 
-        uint16_t entry_size  = rd16(payload + doff + 6);
-        uint32_t entry_count = rd32(payload + doff + 8);
-        uint32_t data_offset = rd32(payload + doff + 16);
+        uint16_t entry_size  = zune_le16(payload + doff + 6);
+        uint32_t entry_count = zune_le32(payload + doff + 8);
+        uint32_t data_offset = zune_le32(payload + doff + 16);
 
         if (entry_count == 0) continue;  /* skip empty descriptors */
 
         /* Peek at first atom to determine schema */
         char schema_str[32] = "???";
-        if (data_offset + 4 <= received) {
-            uint32_t first_atom = rd32(payload + data_offset);
+        if (zmdb_span_ok(received, data_offset, 4)) {
+            uint32_t first_atom = zune_le32(payload + data_offset);
             uint8_t schema_byte = (first_atom >> 24) & 0xFF;
             switch (schema_byte) {
                 case 0x01: snprintf(schema_str, sizeof(schema_str), "Music (0x%02x)", schema_byte); break;
@@ -1128,68 +1188,69 @@ int zune_infiltrate_deep(ZuneDevice *dev) {
             }
         }
 
-        fprintf(stderr, "  %3d   %7u    %8u    0x%08x  %s\n",
-                i, entry_size, entry_count, data_offset, schema_str);
+        ZLOG(ZUNE_CHATTER_TALK, "zunedb", "  %3zu   %7u    %8u    0x%08x  %s",
+             i, entry_size, entry_count, data_offset, schema_str);
     }
 
     /* Dump first 3 video records in hex for analysis */
-    fprintf(stderr, "\n[zunedb] === SAMPLE VIDEO RECORDS ===\n");
+    ZLOG(ZUNE_CHATTER_TALK, "zunedb", "=== SAMPLE VIDEO RECORDS ===");
     int videos_shown = 0;
-    for (int i = 0; i < 96 && videos_shown < 3; i++) {
-        uint32_t doff = zarr + (i * 20);
-        if (doff + 20 > received) break;
-        uint16_t entry_size  = rd16(payload + doff + 6);
-        uint32_t entry_count = rd32(payload + doff + 8);
-        uint32_t data_offset = rd32(payload + doff + 16);
-        if (entry_count == 0) continue;
-        if (data_offset + 4 > received) continue;
+    /* Index entries need at least 8 bytes; a smaller declared size would
+     * reread overlapping bytes (or loop forever at 0). */
+    size_t idx_esize = 0, idx_count = 0, idx_off = 0;
+    if (zmdb_span_ok(received, zarr, ZMDB_DESCRIPTOR_SIZE)) {
+        idx_esize = zune_le16(payload + zarr + 6);
+        idx_count = zune_le32(payload + zarr + 8);
+        idx_off   = zune_le32(payload + zarr + 16);
+    }
+    if (idx_esize < 8 || !zmdb_array_ok(received, idx_off, idx_count, idx_esize))
+        idx_count = 0;
+    for (size_t i = 0; i < ZMDB_DESCRIPTORS && videos_shown < 3; i++) {
+        size_t doff = zarr + i * ZMDB_DESCRIPTOR_SIZE;
+        if (!zmdb_span_ok(received, doff, ZMDB_DESCRIPTOR_SIZE)) break;
+        uint16_t entry_size  = zune_le16(payload + doff + 6);
+        uint32_t entry_count = zune_le32(payload + doff + 8);
+        uint32_t data_offset = zune_le32(payload + doff + 16);
+        if (entry_count == 0 || entry_size < 4) continue;
+        if (!zmdb_span_ok(received, data_offset, 4)) continue;
 
-        uint32_t first_atom = rd32(payload + data_offset);
+        uint32_t first_atom = zune_le32(payload + data_offset);
         if (((first_atom >> 24) & 0xFF) != 0x02) continue;  /* Not video */
 
-        for (uint32_t j = 0; j < entry_count && videos_shown < 3; j++) {
-            uint32_t eoff = data_offset + (j * entry_size);
-            if (eoff + 4 > received) break;
-
-            uint32_t atom_id = rd32(payload + eoff);
+        /* Only the entries that fit; this is a diagnostic scan. */
+        size_t usable = (received - data_offset) / entry_size;
+        if (usable > entry_count) usable = entry_count;
+        for (size_t j = 0; j < usable && videos_shown < 3; j++) {
+            uint32_t atom_id = zune_le32(payload + data_offset + j * entry_size);
             if (((atom_id >> 24) & 0xFF) != 0x02) continue;
 
             /* Look up record in index (descriptor 0) */
-            uint32_t idx_esize = rd16(payload + zarr + 6);
-            uint32_t idx_count = rd32(payload + zarr + 8);
-            uint32_t idx_off   = rd32(payload + zarr + 16);
-            uint32_t rec_offset = 0;
-            for (uint32_t k = 0; k < idx_count; k++) {
-                uint32_t io = idx_off + (k * idx_esize);
-                if (io + 8 > received) break;
-                if (rd32(payload + io) == atom_id) {
-                    rec_offset = rd32(payload + io + 4);
+            size_t rec_offset = 0;
+            for (size_t k = 0; k < idx_count; k++) {
+                size_t io = idx_off + k * idx_esize;
+                if (zune_le32(payload + io) == atom_id) {
+                    rec_offset = zune_le32(payload + io + 4);
                     break;
                 }
             }
-            if (!rec_offset || rec_offset < 4 || rec_offset >= received) continue;
+            if (rec_offset < 4 || rec_offset > received) continue;
 
-            uint32_t hdr = rd32(payload + rec_offset - 4);
+            uint32_t hdr = zune_le32(payload + rec_offset - 4);
             uint32_t rec_size = hdr & 0x00FFFFFF;
-            if (rec_offset + rec_size > received) continue;
+            if (!zmdb_span_ok(received, rec_offset, rec_size)) continue;
 
-            fprintf(stderr, "\n  Video atom_id=0x%08x, record at 0x%08x, size=%u bytes\n",
-                    atom_id, rec_offset, rec_size);
+            ZLOG(ZUNE_CHATTER_TALK, "zunedb", "Video atom_id=0x%08x, record at 0x%08zx, size=%u bytes",
+                 atom_id, rec_offset, rec_size);
 
-            /* Hex dump first 48 bytes (or full record if shorter) */
-            uint32_t dump_len = rec_size < 64 ? rec_size : 64;
-            for (uint32_t b = 0; b < dump_len; b++) {
-                if (b % 16 == 0) fprintf(stderr, "  %04x: ", b);
-                fprintf(stderr, "%02x ", payload[rec_offset + b]);
-                if (b % 16 == 15 || b == dump_len - 1) fprintf(stderr, "\n");
-            }
+            /* Hex dump first 64 bytes (or full record if shorter) */
+            zmdb_log_hex(ZUNE_CHATTER_TALK, payload + rec_offset, rec_size < 64 ? rec_size : 64);
             videos_shown++;
         }
     }
 
-    fprintf(stderr, "\n[zunedb] === SCAN COMPLETE ===\n\n");
+    ZLOG(ZUNE_CHATTER_TALK, "zunedb", "=== SCAN COMPLETE ===");
     free(payload);
-    return 0;
+    return ZUNE_OK;
 }
 
 void zune_free_library(ZuneLibrary *lib) {

@@ -26,9 +26,11 @@
 # endif
 #endif
 #include "ptp.h"
+#include "wiretap.h"
 
 #include <gcrypt.h>
 
+#include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -47,6 +49,36 @@ static unsigned char *MTPZ_MODULUS         = NULL;
 static unsigned char *MTPZ_PRIVATE_KEY     = NULL;
 static char          *MTPZ_CERTIFICATES    = NULL;
 
+/* Allocation sizes, so each buffer can be wiped before it is freed. */
+static size_t MTPZ_ENCRYPTION_KEY_SIZE, MTPZ_PUBLIC_EXPONENT_SIZE, MTPZ_MODULUS_SIZE,
+              MTPZ_PRIVATE_KEY_SIZE, MTPZ_CERTIFICATES_SIZE;
+
+/* Keys load at most once per process; mtpz_free_keys re-arms the loader.
+ * pthread_once cannot be re-armed after zune_go_dark, hence a mutex. */
+static pthread_mutex_t mtpz_keys_lock = PTHREAD_MUTEX_INITIALIZER;
+static int mtpz_keys_state;             /* 0 not tried, 1 loaded, -1 unavailable */
+
+/* Overwrite secret bytes; the volatile pointer keeps the stores. */
+static void mtpz_wipe(void *p, size_t n)
+{
+    volatile unsigned char *v = p;
+    if (!v) return;
+    while (n--) *v++ = 0;
+}
+
+/* An allocation that fails during a handshake is recorded here. Helpers then
+ * return without computing, and mtpz_handshake stops before sending anything
+ * built after the failure. Per thread: several devices may authenticate at once. */
+static __thread int mtpz_out_of_memory;
+
+static void *mtpz_alloc(size_t n)
+{
+    void *p = malloc(n);
+    if (p == NULL)
+        mtpz_out_of_memory = 1;
+    return p;
+}
+
 /* ===================================================================
  * Utility: strip trailing newline/CR from fgets result
  * =================================================================== */
@@ -55,6 +87,8 @@ static char *fgets_strip(char **str, int num, FILE *stream)
 {
     *str = (char *)malloc(num);
     char *result = *str;
+    if (result == NULL)
+        return NULL;
     if (fgets(result, num, stream) != NULL) {
         size_t newlen = strlen(result);
         if (newlen > 0 && (result[newlen - 1] == '\n' || result[newlen - 1] == '\r')) {
@@ -77,6 +111,8 @@ static char *hex_to_bytes(char *hex, size_t len)
         return NULL;
 
     char *bytes = malloc(len / 2);
+    if (bytes == NULL)
+        return NULL;
     unsigned int u;
     unsigned int i = 0;
 
@@ -92,27 +128,53 @@ static char *hex_to_bytes(char *hex, size_t len)
  * Key loading / freeing
  * =================================================================== */
 
+/* Wipe and free every key buffer. Caller holds mtpz_keys_lock or is loading. */
+static void mtpz_release_keys(void)
+{
+    mtpz_wipe(MTPZ_ENCRYPTION_KEY, MTPZ_ENCRYPTION_KEY_SIZE);
+    mtpz_wipe(MTPZ_PUBLIC_EXPONENT, MTPZ_PUBLIC_EXPONENT_SIZE);
+    mtpz_wipe(MTPZ_MODULUS, MTPZ_MODULUS_SIZE);
+    mtpz_wipe(MTPZ_PRIVATE_KEY, MTPZ_PRIVATE_KEY_SIZE);
+    mtpz_wipe(MTPZ_CERTIFICATES, MTPZ_CERTIFICATES_SIZE);
+    free(MTPZ_ENCRYPTION_KEY);  MTPZ_ENCRYPTION_KEY  = NULL;
+    free(MTPZ_PUBLIC_EXPONENT); MTPZ_PUBLIC_EXPONENT = NULL;
+    free(MTPZ_MODULUS);         MTPZ_MODULUS         = NULL;
+    free(MTPZ_PRIVATE_KEY);     MTPZ_PRIVATE_KEY     = NULL;
+    free(MTPZ_CERTIFICATES);    MTPZ_CERTIFICATES    = NULL;
+    MTPZ_ENCRYPTION_KEY_SIZE = MTPZ_PUBLIC_EXPONENT_SIZE = MTPZ_MODULUS_SIZE = 0;
+    MTPZ_PRIVATE_KEY_SIZE = MTPZ_CERTIFICATES_SIZE = 0;
+}
+
 /* Load keys from embedded defaults (compiled into binary) */
 #ifdef ZUNE_HAS_EMBEDDED_MTPZ
 static int mtpz_load_embedded_keys(void)
 {
     MTPZ_PUBLIC_EXPONENT = (unsigned char *)strdup(MTPZ_DEFAULT_PUBLIC_EXPONENT);
+    MTPZ_PUBLIC_EXPONENT_SIZE = strlen(MTPZ_DEFAULT_PUBLIC_EXPONENT) + 1;
     MTPZ_MODULUS         = (unsigned char *)strdup(MTPZ_DEFAULT_MODULUS);
+    MTPZ_MODULUS_SIZE    = strlen(MTPZ_DEFAULT_MODULUS) + 1;
     MTPZ_PRIVATE_KEY     = (unsigned char *)strdup(MTPZ_DEFAULT_PRIVATE_KEY);
+    MTPZ_PRIVATE_KEY_SIZE = strlen(MTPZ_DEFAULT_PRIVATE_KEY) + 1;
+    if (!MTPZ_PUBLIC_EXPONENT || !MTPZ_MODULUS || !MTPZ_PRIVATE_KEY) {
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtpz", "out of memory loading embedded keys");
+        return -1;
+    }
 
     MTPZ_ENCRYPTION_KEY = (unsigned char *)hex_to_bytes(
         (char *)MTPZ_DEFAULT_ENCRYPTION_KEY_HEX,
         strlen(MTPZ_DEFAULT_ENCRYPTION_KEY_HEX));
+    MTPZ_ENCRYPTION_KEY_SIZE = strlen(MTPZ_DEFAULT_ENCRYPTION_KEY_HEX) / 2;
     if (!MTPZ_ENCRYPTION_KEY) {
-        fprintf(stderr, "[mtpz] failed to parse embedded encryption key\n");
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtpz", "failed to parse embedded encryption key");
         return -1;
     }
 
     MTPZ_CERTIFICATES = hex_to_bytes(
         (char *)MTPZ_DEFAULT_CERTIFICATES_HEX,
         strlen(MTPZ_DEFAULT_CERTIFICATES_HEX));
+    MTPZ_CERTIFICATES_SIZE = strlen(MTPZ_DEFAULT_CERTIFICATES_HEX) / 2;
     if (!MTPZ_CERTIFICATES) {
-        fprintf(stderr, "[mtpz] failed to parse embedded certificates\n");
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtpz", "failed to parse embedded certificates");
         return -1;
     }
 
@@ -133,6 +195,8 @@ static int mtpz_load_keys_from_file(void)
 
     FILE *fdata = fopen(path, "r");
     if (!fdata) return -1;
+    /* Unbuffered: no stdio buffer keeps a copy of the key text after fclose. */
+    setvbuf(fdata, NULL, _IONBF, 0);
 
     int ret = -1;
 
@@ -140,90 +204,106 @@ static int mtpz_load_keys_from_file(void)
     const size_t MAX_LINE_ENDING_LENGTH = 2 + 1;
 
     /* Line 1: public exponent (6 hex chars) */
+    MTPZ_PUBLIC_EXPONENT_SIZE = 6 + MAX_LINE_ENDING_LENGTH;
     if (!fgets_strip((char **)&MTPZ_PUBLIC_EXPONENT, 6 + MAX_LINE_ENDING_LENGTH, fdata)) {
-        fprintf(stderr, "[mtpz] failed to read public exponent\n");
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtpz", "failed to read public exponent");
         goto cleanup;
     }
 
     /* Line 2: encryption key (32 hex chars -> 16 bytes) */
     char *hexenckey;
     if (!fgets_strip(&hexenckey, 33 + MAX_LINE_ENDING_LENGTH, fdata)) {
-        fprintf(stderr, "[mtpz] failed to read encryption key\n");
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtpz", "failed to read encryption key");
+        mtpz_wipe(hexenckey, 33 + MAX_LINE_ENDING_LENGTH);
         free(hexenckey);
         goto cleanup;
     }
     MTPZ_ENCRYPTION_KEY = (unsigned char *)hex_to_bytes(hexenckey, strlen(hexenckey));
+    MTPZ_ENCRYPTION_KEY_SIZE = strlen(hexenckey) / 2;
+    mtpz_wipe(hexenckey, 33 + MAX_LINE_ENDING_LENGTH);
     free(hexenckey);
     if (!MTPZ_ENCRYPTION_KEY) {
-        fprintf(stderr, "[mtpz] failed to parse encryption key\n");
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtpz", "failed to parse encryption key");
         goto cleanup;
     }
 
     /* Line 3: modulus (256 hex chars) */
+    MTPZ_MODULUS_SIZE = 256 + MAX_LINE_ENDING_LENGTH;
     if (!fgets_strip((char **)&MTPZ_MODULUS, 256 + MAX_LINE_ENDING_LENGTH, fdata)) {
-        fprintf(stderr, "[mtpz] failed to read modulus\n");
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtpz", "failed to read modulus");
         goto cleanup;
     }
 
     /* Line 4: private key (256 hex chars) */
+    MTPZ_PRIVATE_KEY_SIZE = 256 + MAX_LINE_ENDING_LENGTH;
     if (!fgets_strip((char **)&MTPZ_PRIVATE_KEY, 256 + MAX_LINE_ENDING_LENGTH, fdata)) {
-        fprintf(stderr, "[mtpz] failed to read private key\n");
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtpz", "failed to read private key");
         goto cleanup;
     }
 
     /* Line 5: certificate data (1258 hex chars -> ~629 bytes) */
     char *hexcerts;
     if (!fgets_strip(&hexcerts, 1258 + MAX_LINE_ENDING_LENGTH, fdata)) {
-        fprintf(stderr, "[mtpz] failed to read certificates\n");
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtpz", "failed to read certificates");
+        mtpz_wipe(hexcerts, 1258 + MAX_LINE_ENDING_LENGTH);
         free(hexcerts);
         goto cleanup;
     }
     MTPZ_CERTIFICATES = hex_to_bytes(hexcerts, strlen(hexcerts));
+    MTPZ_CERTIFICATES_SIZE = strlen(hexcerts) / 2;
+    mtpz_wipe(hexcerts, 1258 + MAX_LINE_ENDING_LENGTH);
     free(hexcerts);
     if (!MTPZ_CERTIFICATES) {
-        fprintf(stderr, "[mtpz] failed to parse certificates\n");
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtpz", "failed to parse certificates");
         goto cleanup;
     }
 
     ret = 0;
 
 cleanup:
-    if (ret != 0) {
-        free(MTPZ_ENCRYPTION_KEY);  MTPZ_ENCRYPTION_KEY  = NULL;
-        free(MTPZ_PUBLIC_EXPONENT); MTPZ_PUBLIC_EXPONENT = NULL;
-        free(MTPZ_MODULUS);         MTPZ_MODULUS         = NULL;
-        free(MTPZ_PRIVATE_KEY);     MTPZ_PRIVATE_KEY     = NULL;
-        free(MTPZ_CERTIFICATES);    MTPZ_CERTIFICATES    = NULL;
-    }
+    if (ret != 0)
+        mtpz_release_keys();
     fclose(fdata);
     return ret;
 }
 
-int mtpz_load_keys(void)
+static int mtpz_load_keys_now(void)
 {
     /* Try ~/.mtpz-data first (user override) */
     if (mtpz_load_keys_from_file() == 0) {
-        fprintf(stderr, "[mtpz] loaded keys from ~/.mtpz-data\n");
+        ZLOG(ZUNE_CHATTER_TALK, "mtpz", "loaded keys from ~/.mtpz-data");
         return 0;
     }
 
     /* Fall back only when this is a private build with embedded defaults. */
 #ifdef ZUNE_HAS_EMBEDDED_MTPZ
-    fprintf(stderr, "[mtpz] ~/.mtpz-data not found, using embedded keys\n");
-    return mtpz_load_embedded_keys();
+    ZLOG(ZUNE_CHATTER_TALK, "mtpz", "~/.mtpz-data not found, using embedded keys");
+    if (mtpz_load_embedded_keys() == 0)
+        return 0;
+    mtpz_release_keys();
+    return -1;
 #else
-    fprintf(stderr, "[mtpz] credentials unavailable; provide ~/.mtpz-data to authenticate a Zune\n");
+    ZLOG(ZUNE_CHATTER_SCREAM, "mtpz", "credentials unavailable; provide ~/.mtpz-data to authenticate a Zune");
     return -1;
 #endif
 }
 
+int mtpz_load_keys(void)
+{
+    pthread_mutex_lock(&mtpz_keys_lock);
+    if (mtpz_keys_state == 0)
+        mtpz_keys_state = mtpz_load_keys_now() == 0 ? 1 : -1;
+    int loaded = mtpz_keys_state == 1;
+    pthread_mutex_unlock(&mtpz_keys_lock);
+    return loaded ? 0 : -1;
+}
+
 void mtpz_free_keys(void)
 {
-    free(MTPZ_ENCRYPTION_KEY);  MTPZ_ENCRYPTION_KEY  = NULL;
-    free(MTPZ_PUBLIC_EXPONENT); MTPZ_PUBLIC_EXPONENT = NULL;
-    free(MTPZ_MODULUS);         MTPZ_MODULUS         = NULL;
-    free(MTPZ_PRIVATE_KEY);     MTPZ_PRIVATE_KEY     = NULL;
-    free(MTPZ_CERTIFICATES);    MTPZ_CERTIFICATES    = NULL;
+    pthread_mutex_lock(&mtpz_keys_lock);
+    mtpz_release_keys();
+    mtpz_keys_state = 0;
+    pthread_mutex_unlock(&mtpz_keys_lock);
 }
 
 int mtpz_keys_available(void)
@@ -233,6 +313,30 @@ int mtpz_keys_available(void)
             MTPZ_MODULUS         != NULL &&
             MTPZ_PRIVATE_KEY     != NULL &&
             MTPZ_CERTIFICATES    != NULL) ? 1 : 0;
+}
+
+/* libgcrypt: initialize only when the host application has not. */
+static pthread_once_t mtpz_gcrypt_once = PTHREAD_ONCE_INIT;
+static int mtpz_gcrypt_state;           /* 1 ready, -1 too old */
+
+static void mtpz_gcrypt_setup(void)
+{
+    if (gcry_control(GCRYCTL_INITIALIZATION_FINISHED_P)) {
+        mtpz_gcrypt_state = 1;
+        return;
+    }
+    if (!gcry_check_version(GCRYPT_VERSION)) {
+        mtpz_gcrypt_state = -1;
+        return;
+    }
+    gcry_control(GCRYCTL_INITIALIZATION_FINISHED, 0);
+    mtpz_gcrypt_state = 1;
+}
+
+int mtpz_init_gcrypt(void)
+{
+    pthread_once(&mtpz_gcrypt_once, mtpz_gcrypt_setup);
+    return mtpz_gcrypt_state == 1 ? 0 : -1;
 }
 
 /* ===================================================================
@@ -358,7 +462,7 @@ static void mtpz_hash_compute_hash(char *state, char *msg, int len);
 
 static char *mtpz_hash_init_state(void)
 {
-    char *s = (char *)malloc(92);
+    char *s = (char *)mtpz_alloc(92);
     if (s != NULL)
         memset(s, 0, 92);
     return s;
@@ -430,7 +534,9 @@ static void mtpz_hash_finalize_hash(char *state, char *out)
     if (v2 <= 8)
         v2 += 64;
 
-    char *v5 = (char *)malloc(72);
+    char *v5 = (char *)mtpz_alloc(72);
+    if (v5 == NULL)
+        return;
     memset(v5, 0, 72);
 
     v5[0] = '\x80';
@@ -461,9 +567,15 @@ static void mtpz_hash_finalize_hash(char *state, char *out)
 static char *mtpz_hash_custom6A5DC(char *state, char *msg, int len, int a4)
 {
     int v11 = (a4 / 20) + 1;
-    char *v13 = (char *)malloc(v11 * 20);
-    char *v5  = (char *)malloc(len + 4);
+    char *v13 = (char *)mtpz_alloc(v11 * 20);
+    char *v5  = (char *)mtpz_alloc(len + 4);
     int i, k;
+
+    if (v13 == NULL || v5 == NULL) {
+        free(v13);
+        free(v5);
+        return NULL;
+    }
 
     memset(v13, 0, v11 * 20);
     memset(v5, 0, len + 4);
@@ -1069,31 +1181,6 @@ static void mtpz_encryption_decrypt_custom(unsigned char *data, unsigned char *s
 static void mtpz_encryption_encrypt_custom(unsigned char *data, unsigned char *seed, unsigned char *expanded);
 static void mtpz_encryption_encrypt_mac(unsigned char *hash, unsigned int hash_length, unsigned char *seed, unsigned int seed_len, unsigned char *out);
 
-static void mtpz_encryption_cipher(unsigned char *data, unsigned int len, char encrypt)
-{
-    unsigned char *expanded = NULL;
-    int offset = 0, count = len;
-
-    if ((count & 0x0F) == 0) {
-        int exp_len = 0;
-        expanded = mtpz_encryption_expand_key((unsigned char *)MTPZ_ENCRYPTION_KEY, 16, 10, &exp_len);
-
-        if (count != 0) {
-            do {
-                if (encrypt)
-                    mtpz_encryption_encrypt_custom(data + offset, NULL, expanded);
-                else
-                    mtpz_encryption_decrypt_custom(data + offset, NULL, expanded);
-
-                count -= 16;
-                offset += 16;
-            } while (count != 0);
-        }
-
-        free(expanded);
-    }
-}
-
 static void mtpz_encryption_cipher_advanced(unsigned char *key, unsigned int key_len,
                                             unsigned char *data, unsigned int data_len, char encrypt)
 {
@@ -1103,10 +1190,16 @@ static void mtpz_encryption_cipher_advanced(unsigned char *key, unsigned int key
     unsigned char *expanded = mtpz_encryption_expand_key(key, key_len, len, &exp_len);
 
     int offset = 0, count = data_len;
-    unsigned char *out = (unsigned char *)malloc(16);
+    unsigned char *out = (unsigned char *)mtpz_alloc(16);
     unsigned int *out_int = (unsigned int *)out;
     unsigned int *data_int = (unsigned int *)data;
-    unsigned int *dtf = (unsigned int *)malloc(16);
+    unsigned int *dtf = (unsigned int *)mtpz_alloc(16);
+    if (expanded == NULL || out == NULL || dtf == NULL) {
+        free(out);
+        free(dtf);
+        free(expanded);
+        return;
+    }
     memset((unsigned char *)dtf, 0, 16);
 
     while (count != 0) {
@@ -1158,20 +1251,32 @@ static unsigned char *mtpz_encryption_expand_key(unsigned char *constant, int ke
 {
     int i = 0;
     int seek = 0;
-    unsigned char *back = (unsigned char *)malloc(484);
+    unsigned char *back = (unsigned char *)mtpz_alloc(484);
+    if (back == NULL) {
+        *out_len = 0;
+        return NULL;
+    }
     memset(back, 0, 484);
     *out_len = 484;
 
     unsigned char *inner;
     int inner_len;
     mtpz_encryption_expand_key_inner(constant, key_len, &inner, &inner_len);
+    if (inner == NULL && mtpz_out_of_memory) {
+        free(back);
+        *out_len = 0;
+        return NULL;
+    }
 
     back[i] = (unsigned char)(count % 0xFF);
     i += 4;
 
-    memcpy(back + i, inner, inner_len);
+    /* An unsupported key length expands to nothing (inner NULL, length 0). */
+    if (inner != NULL)
+        memcpy(back + i, inner, inner_len);
     i += inner_len;
-    memcpy(back + i, inner, inner_len);
+    if (inner != NULL)
+        memcpy(back + i, inner, inner_len);
     i += inner_len;
 
     switch (count) {
@@ -1204,8 +1309,15 @@ static void mtpz_encryption_expand_key_inner(unsigned char *constant, int key_le
         return;
     }
 
-    unsigned char *key = (unsigned char *)malloc(ks);
-    unsigned char *temp = (unsigned char *)malloc(4);
+    unsigned char *key = (unsigned char *)mtpz_alloc(ks);
+    unsigned char *temp = (unsigned char *)mtpz_alloc(4);
+    if (key == NULL || temp == NULL) {
+        free(key);
+        free(temp);
+        *out = NULL;
+        *out_len = 0;
+        return;
+    }
     memcpy(key, constant, key_len);
     unsigned char t0, t1, t2, t3;
 
@@ -1409,14 +1521,24 @@ static void mtpz_encryption_encrypt_mac(unsigned char *hash, unsigned int hash_l
     if (hash == NULL || hash_length != 16)
         return;
 
-    unsigned char *loop1 = (unsigned char *)malloc(17);
+    unsigned char *loop1 = (unsigned char *)mtpz_alloc(17);
+    unsigned char *loop2 = (unsigned char *)mtpz_alloc(17);
+    if (loop1 == NULL || loop2 == NULL) {
+        free(loop1);
+        free(loop2);
+        return;
+    }
     memset(loop1, 0, 17);
-    unsigned char *loop2 = (unsigned char *)malloc(17);
     memset(loop2, 0, 17);
     int i = 0;
 
     {
-        unsigned char *enc_hash = (unsigned char *)malloc(17);
+        unsigned char *enc_hash = (unsigned char *)mtpz_alloc(17);
+        if (enc_hash == NULL) {
+            free(loop1);
+            free(loop2);
+            return;
+        }
         memset(enc_hash, 0, 17);
         mtpz_encryption_cipher_advanced(hash, hash_length, enc_hash, 16, 1);
 
@@ -1441,7 +1563,14 @@ static void mtpz_encryption_encrypt_mac(unsigned char *hash, unsigned int hash_l
         int exp_len;
         unsigned char *expanded = mtpz_encryption_expand_key(hash, hash_length, len, &exp_len);
 
-        unsigned char *actual_seed = (unsigned char *)malloc(16);
+        unsigned char *actual_seed = (unsigned char *)mtpz_alloc(16);
+        if (expanded == NULL || actual_seed == NULL) {
+            free(expanded);
+            free(actual_seed);
+            free(loop1);
+            free(loop2);
+            return;
+        }
         memset(actual_seed, 0, 16);
 
         unsigned int i = 0;
@@ -1487,11 +1616,17 @@ mtpz_make_application_certificate_message(unsigned int *out_len, unsigned char *
 {
     *out_len = 785;
 
-    unsigned char *acm = (unsigned char *)malloc(785);
+    unsigned char *acm = (unsigned char *)mtpz_alloc(785);
     unsigned char *target = acm;
+    unsigned char *random = (unsigned char *)mtpz_alloc(16);
+    if (acm == NULL || random == NULL) {
+        free(acm);
+        free(random);
+        *out_len = 0;
+        *out_random = NULL;
+        return NULL;
+    }
     memset(acm, 0, 785);
-
-    unsigned char *random = (unsigned char *)malloc(16);
 
     int i = 0;
     int certsLength = 0x275;
@@ -1521,9 +1656,23 @@ mtpz_make_application_certificate_message(unsigned int *out_len, unsigned char *
 
     /* Hash and sign */
     char *state = mtpz_hash_init_state();
-    char *v16 = (char *)malloc(28); memset(v16, 0, 28);
-    char *hash = (char *)malloc(20); memset(hash, 0, 20);
-    char *odata = (char *)malloc(128); memset(odata, 0, 128);
+    char *v16 = (char *)mtpz_alloc(28);
+    char *hash = (char *)mtpz_alloc(20);
+    char *odata = (char *)mtpz_alloc(128);
+    if (state == NULL || v16 == NULL || hash == NULL || odata == NULL) {
+        free(state);
+        free(v16);
+        free(hash);
+        free(odata);
+        free(acm);
+        free(random);
+        *out_len = 0;
+        *out_random = NULL;
+        return NULL;
+    }
+    memset(v16, 0, 28);
+    memset(hash, 0, 20);
+    memset(odata, 0, 128);
 
     mtpz_hash_reset_state(state);
     mtpz_hash_transform_hash(state, (char *)acm + 2, (target - acm - 2));
@@ -1545,7 +1694,7 @@ mtpz_make_application_certificate_message(unsigned int *out_len, unsigned char *
             odata[i] ^= v17[i];
 
         odata[0] &= 127;
-        odata[127] = 188;
+        ((unsigned char *)odata)[127] = 0xBC;   /* 188, the trailer byte */
     }
 
     free(state); state = NULL;
@@ -1556,7 +1705,7 @@ mtpz_make_application_certificate_message(unsigned int *out_len, unsigned char *
     /* RSA sign */
     mtpz_rsa_t *rsa = mtpz_rsa_init(MTPZ_MODULUS, MTPZ_PRIVATE_KEY, MTPZ_PUBLIC_EXPONENT);
     if (!rsa) {
-        fprintf(stderr, "[mtpz] failed to init RSA for certificate message\n");
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtpz", "failed to init RSA for certificate message");
         *out_len = 0;
         free(odata);
         free(acm);
@@ -1565,7 +1714,16 @@ mtpz_make_application_certificate_message(unsigned int *out_len, unsigned char *
         return NULL;
     }
 
-    char *signature = (char *)malloc(128);
+    char *signature = (char *)mtpz_alloc(128);
+    if (signature == NULL) {
+        mtpz_rsa_free(rsa);
+        free(odata);
+        free(acm);
+        free(random);
+        *out_len = 0;
+        *out_random = NULL;
+        return NULL;
+    }
     memset(signature, 0, 128);
     mtpz_rsa_sign(128, (unsigned char *)odata, 128, (unsigned char *)signature, rsa);
 
@@ -1607,7 +1765,7 @@ mtpz_validate_handshake_response(ptp_session_t *session, unsigned char *random, 
         &rc, NULL, NULL);
 
     if (ret != 0 || rc != PTP_RC_OK) {
-        fprintf(stderr, "[mtpz] failed to get handshake response (rc=0x%04x)\n", rc);
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtpz", "failed to get handshake response (rc=0x%04x)", rc);
         free(response);
         return -1;
     }
@@ -1622,17 +1780,23 @@ mtpz_validate_handshake_response(ptp_session_t *session, unsigned char *random, 
     reader++;
     if (*(reader++) != '\x80') { free(response); return -1; }
 
-    char *message = (char *)malloc(128);
+    char *message = (char *)mtpz_alloc(128);
+    char *msg_dec = (char *)mtpz_alloc(128);
+    if (message == NULL || msg_dec == NULL) {
+        free(message);
+        free(msg_dec);
+        free(response);
+        return -1;
+    }
     memcpy(message, reader, 128);
     reader += 128;
 
     /* RSA decrypt the hash-key-message */
-    char *msg_dec = (char *)malloc(128);
     memset(msg_dec, 0, 128);
 
     mtpz_rsa_t *rsa = mtpz_rsa_init(MTPZ_MODULUS, MTPZ_PRIVATE_KEY, MTPZ_PUBLIC_EXPONENT);
     if (!rsa) {
-        fprintf(stderr, "[mtpz] failed to init RSA for response validation\n");
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtpz", "failed to init RSA for response validation");
         free(message);
         free(msg_dec);
         free(response);
@@ -1640,7 +1804,7 @@ mtpz_validate_handshake_response(ptp_session_t *session, unsigned char *random, 
     }
 
     if (mtpz_rsa_decrypt(128, (unsigned char *)message, 128, (unsigned char *)msg_dec, rsa) == 0) {
-        fprintf(stderr, "[mtpz] RSA decryption failed\n");
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtpz", "RSA decryption failed");
         free(message);
         free(msg_dec);
         mtpz_rsa_free(rsa);
@@ -1652,13 +1816,40 @@ mtpz_validate_handshake_response(ptp_session_t *session, unsigned char *random, 
     rsa = NULL;
 
     char *state = mtpz_hash_init_state();
-    char *hash_key = (char *)malloc(16);
+    char *hash_key = (char *)mtpz_alloc(16);
+    if (state == NULL || hash_key == NULL) {
+        free(state);
+        free(hash_key);
+        free(message);
+        free(msg_dec);
+        free(response);
+        return -1;
+    }
     char *v10 = mtpz_hash_custom6A5DC(state, msg_dec + 21, 107, 20);
+    if (v10 == NULL || mtpz_out_of_memory) {
+        free(v10);
+        free(state);
+        free(hash_key);
+        free(message);
+        free(msg_dec);
+        free(response);
+        return -1;
+    }
 
     for (i = 0; i < 20; i++)
         msg_dec[i + 1] ^= v10[i];
 
     char *v11 = mtpz_hash_custom6A5DC(state, msg_dec + 1, 20, 107);
+    if (v11 == NULL || mtpz_out_of_memory) {
+        free(v11);
+        free(v10);
+        free(state);
+        free(hash_key);
+        free(message);
+        free(msg_dec);
+        free(response);
+        return -1;
+    }
 
     for (i = 0; i < 107; i++)
         msg_dec[i + 21] ^= v11[i];
@@ -1678,12 +1869,34 @@ mtpz_validate_handshake_response(ptp_session_t *session, unsigned char *random, 
         return -1;
     }
 
-    unsigned char *act_msg = (unsigned char *)malloc(832);
+    unsigned char *act_msg = (unsigned char *)mtpz_alloc(832);
+    if (act_msg == NULL) {
+        free(v10);
+        free(v11);
+        free(hash_key);
+        free(message);
+        free(msg_dec);
+        free(state);
+        free(response);
+        return -1;
+    }
     unsigned char *act_reader = act_msg;
     memcpy(act_msg, reader, 832);
     reader = NULL;
 
     mtpz_encryption_cipher_advanced((unsigned char *)hash_key, 16, act_msg, 832, 0);
+    if (mtpz_out_of_memory) {
+        /* act_msg was not decrypted; its lengths must not be trusted. */
+        free(v10);
+        free(v11);
+        free(hash_key);
+        free(message);
+        free(msg_dec);
+        free(state);
+        free(act_msg);
+        free(response);
+        return -1;
+    }
 
     act_reader++;
     unsigned int certs_length = MTPZ_SWAP(*(unsigned int *)(act_reader));
@@ -1692,10 +1905,21 @@ mtpz_validate_handshake_response(ptp_session_t *session, unsigned char *random, 
 
     unsigned int rand_length = MTPZ_SWAP(*(unsigned short *)(act_reader) << 16);
     act_reader += 2;
-    unsigned char *rand_data = (unsigned char *)malloc(rand_length);
+    unsigned char *rand_data = (unsigned char *)mtpz_alloc(rand_length);
+    if (rand_data == NULL) {
+        free(hash_key);
+        free(v10);
+        free(v11);
+        free(message);
+        free(msg_dec);
+        free(state);
+        free(act_msg);
+        free(response);
+        return -1;
+    }
     memcpy(rand_data, act_reader, rand_length);
     if (memcmp(rand_data, random, 16) != 0) {
-        fprintf(stderr, "[mtpz] random nonce mismatch in response\n");
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtpz", "random nonce mismatch in response");
         free(rand_data);
         free(hash_key);
         free(v10);
@@ -1724,7 +1948,18 @@ mtpz_validate_handshake_response(ptp_session_t *session, unsigned char *random, 
 
     unsigned int machash_length = MTPZ_SWAP(*(unsigned short *)(act_reader) << 16);
     act_reader += 2;
-    unsigned char *machash_data = (unsigned char *)malloc(machash_length);
+    unsigned char *machash_data = (unsigned char *)mtpz_alloc(machash_length);
+    if (machash_data == NULL) {
+        free(message);
+        free(msg_dec);
+        free(state);
+        free(v10);
+        free(v11);
+        free(act_msg);
+        free(hash_key);
+        free(response);
+        return -1;
+    }
     memcpy(machash_data, act_reader, machash_length);
     act_reader += machash_length;
 
@@ -1752,13 +1987,19 @@ static unsigned char *
 mtpz_make_confirmation_message(unsigned char *hash, unsigned int *out_len)
 {
     *out_len = 20;
-    unsigned char *message = (unsigned char *)malloc(20);
+    unsigned char *message = (unsigned char *)mtpz_alloc(20);
+    unsigned char *seed = (unsigned char *)mtpz_alloc(16);
+    if (message == NULL || seed == NULL) {
+        free(message);
+        free(seed);
+        *out_len = 0;
+        return NULL;
+    }
     message[0] = (unsigned char)0x02;
     message[1] = (unsigned char)0x03;
     message[2] = (unsigned char)0x00;
     message[3] = (unsigned char)0x10;
 
-    unsigned char *seed = (unsigned char *)malloc(16);
     memset(seed, 0, 16);
     seed[15] = (unsigned char)(0x01);
 
@@ -1781,6 +2022,10 @@ mtpz_open_secure_sync_session(ptp_session_t *session, unsigned char *hash)
     unsigned int macCount = *(unsigned int *)(hash + 16);
 
     mtpz_encryption_encrypt_mac(hash, 16, (unsigned char *)(&macCount), 4, mch);
+    if (mtpz_out_of_memory) {
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtpz", "out of memory computing the session MAC");
+        return -1;
+    }
 
     uint32_t params[4];
     params[0] = MTPZ_SWAP(hashparams[0]);
@@ -1798,7 +2043,7 @@ mtpz_open_secure_sync_session(ptp_session_t *session, unsigned char *hash)
         &rc, NULL, NULL);
 
     if (ret != 0 || rc != PTP_RC_OK) {
-        fprintf(stderr, "[mtpz] EnableTrustedFilesOperations failed (rc=0x%04x)\n", rc);
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtpz", "EnableTrustedFilesOperations failed (rc=0x%04x)", rc);
         return -1;
     }
 
@@ -1818,7 +2063,11 @@ static uint8_t *mtpz_encode_mtp_string(const char *utf8, uint32_t *out_len)
     uint8_t count = (uint8_t)(slen + 1);
     /* total bytes: 1 (count) + count * 2 (UCS-2LE chars including null) */
     uint32_t total = 1 + count * 2;
-    uint8_t *buf = (uint8_t *)malloc(total);
+    uint8_t *buf = (uint8_t *)mtpz_alloc(total);
+    if (buf == NULL) {
+        *out_len = 0;
+        return NULL;
+    }
 
     buf[0] = count;
 
@@ -1847,21 +2096,26 @@ int mtpz_handshake(ptp_session_t *session)
     unsigned char *random = NULL;
 
     if (!mtpz_keys_available()) {
-        fprintf(stderr, "[mtpz] keys not loaded\n");
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtpz", "keys not loaded");
         return -1;
     }
+    mtpz_out_of_memory = 0;
 
     /* Step 1: Set SessionInitiatorInfo device property */
-    fprintf(stderr, "[mtpz] setting session initiator info\n");
+    ZLOG(ZUNE_CHATTER_WHISPER, "mtpz", "setting session initiator info");
     {
         uint32_t prop_len;
         uint8_t *prop_data = mtpz_encode_mtp_string(
             "libmtp/Sajid Anwar - MTPZClassDriver", &prop_len);
+        if (prop_data == NULL) {
+            ZLOG(ZUNE_CHATTER_SCREAM, "mtpz", "out of memory building SessionInitiatorInfo");
+            return -1;
+        }
 
-        fprintf(stderr, "[mtpz] SessionInitiatorInfo data (%u bytes): ", prop_len);
+        char hex[2 * 20 + 1] = "";
         for (uint32_t i = 0; i < prop_len && i < 20; i++)
-            fprintf(stderr, "%02x", prop_data[i]);
-        fprintf(stderr, "...\n");
+            snprintf(hex + 2 * i, 3, "%02x", prop_data[i]);
+        ZLOG(ZUNE_CHATTER_WHISPER, "mtpz", "SessionInitiatorInfo data (%u bytes): %s...", prop_len, hex);
 
         ret = ptp_set_device_prop_value(session,
             MTP_DPC_SessionInitiatorInfo,
@@ -1869,12 +2123,12 @@ int mtpz_handshake(ptp_session_t *session)
         free(prop_data);
 
         if (ret != 0) {
-            fprintf(stderr, "[mtpz] SessionInitiatorInfo failed (continuing anyway)\n");
+            ZLOG(ZUNE_CHATTER_SHOUT, "mtpz", "SessionInitiatorInfo failed (continuing anyway)");
         }
     }
 
     /* Step 2: Reset handshake (EndTrustedAppSession) */
-    fprintf(stderr, "[mtpz] resetting handshake\n");
+    ZLOG(ZUNE_CHATTER_WHISPER, "mtpz", "resetting handshake");
     ret = ptp_transaction(session,
         MTP_OC_WMDRMPD_EndTrustedAppSession,
         NULL, 0,
@@ -1883,29 +2137,32 @@ int mtpz_handshake(ptp_session_t *session)
         NULL, NULL,
         &rc, NULL, NULL);
     if (ret != 0 || rc != PTP_RC_OK) {
-        fprintf(stderr, "[mtpz] EndTrustedAppSession failed (rc=0x%04x)\n", rc);
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtpz", "EndTrustedAppSession failed (rc=0x%04x)", rc);
         return -1;
     }
 
     /* Step 3: Send application certificate message */
-    fprintf(stderr, "[mtpz] sending application certificate\n");
+    ZLOG(ZUNE_CHATTER_WHISPER, "mtpz", "sending application certificate");
     {
         unsigned int cert_len;
         unsigned char *cert_msg = mtpz_make_application_certificate_message(&cert_len, &random);
-        if (!cert_msg) {
-            fprintf(stderr, "[mtpz] failed to build certificate message\n");
+        if (!cert_msg || mtpz_out_of_memory) {
+            ZLOG(ZUNE_CHATTER_SCREAM, "mtpz", "failed to build certificate message");
+            free(cert_msg);
+            free(random);
             return -1;
         }
 
         /* Hex dump first 32 and last 16 bytes of cert message for debugging */
-        fprintf(stderr, "[mtpz] cert message: %u bytes\n", cert_len);
-        fprintf(stderr, "[mtpz] first 32: ");
+        ZLOG(ZUNE_CHATTER_WHISPER, "mtpz", "cert message: %u bytes", cert_len);
+        char head[2 * 32 + 1] = "", tail[2 * 16 + 1] = "";
         for (unsigned int i = 0; i < 32 && i < cert_len; i++)
-            fprintf(stderr, "%02x", cert_msg[i]);
-        fprintf(stderr, "\n[mtpz] last 16:  ");
-        for (unsigned int i = (cert_len > 16 ? cert_len - 16 : 0); i < cert_len; i++)
-            fprintf(stderr, "%02x", cert_msg[i]);
-        fprintf(stderr, "\n");
+            snprintf(head + 2 * i, 3, "%02x", cert_msg[i]);
+        unsigned int from = cert_len > 16 ? cert_len - 16 : 0;
+        for (unsigned int i = from; i < cert_len; i++)
+            snprintf(tail + 2 * (i - from), 3, "%02x", cert_msg[i]);
+        ZLOG(ZUNE_CHATTER_WHISPER, "mtpz", "first 32: %s", head);
+        ZLOG(ZUNE_CHATTER_WHISPER, "mtpz", "last 16:  %s", tail);
 
         ret = ptp_transaction(session,
             MTP_OC_WMDRMPD_SendWMDRMPDAppRequest,
@@ -1917,26 +2174,33 @@ int mtpz_handshake(ptp_session_t *session)
         free(cert_msg);
 
         if (ret != 0 || rc != PTP_RC_OK) {
-            fprintf(stderr, "[mtpz] SendWMDRMPDAppRequest (cert) failed (rc=0x%04x)\n", rc);
+            ZLOG(ZUNE_CHATTER_SCREAM, "mtpz", "SendWMDRMPDAppRequest (cert) failed (rc=0x%04x)", rc);
             free(random);
             return -1;
         }
     }
 
     /* Step 4: Validate handshake response */
-    fprintf(stderr, "[mtpz] validating handshake response\n");
+    ZLOG(ZUNE_CHATTER_WHISPER, "mtpz", "validating handshake response");
     ret = mtpz_validate_handshake_response(session, random, &hash);
     if (ret != 0) {
-        fprintf(stderr, "[mtpz] handshake response validation failed\n");
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtpz", "handshake response validation failed");
         free(random);
         return -1;
     }
 
     /* Step 5: Send confirmation message */
-    fprintf(stderr, "[mtpz] sending confirmation\n");
+    ZLOG(ZUNE_CHATTER_WHISPER, "mtpz", "sending confirmation");
     {
         unsigned int conf_len;
         unsigned char *conf_msg = mtpz_make_confirmation_message(hash, &conf_len);
+        if (!conf_msg || mtpz_out_of_memory) {
+            ZLOG(ZUNE_CHATTER_SCREAM, "mtpz", "failed to build confirmation message");
+            free(conf_msg);
+            free(hash);
+            free(random);
+            return -1;
+        }
 
         ret = ptp_transaction(session,
             MTP_OC_WMDRMPD_SendWMDRMPDAppRequest,
@@ -1948,7 +2212,7 @@ int mtpz_handshake(ptp_session_t *session)
         free(conf_msg);
 
         if (ret != 0 || rc != PTP_RC_OK) {
-            fprintf(stderr, "[mtpz] SendWMDRMPDAppRequest (confirm) failed (rc=0x%04x)\n", rc);
+            ZLOG(ZUNE_CHATTER_SCREAM, "mtpz", "SendWMDRMPDAppRequest (confirm) failed (rc=0x%04x)", rc);
             free(hash);
             free(random);
             return -1;
@@ -1956,17 +2220,17 @@ int mtpz_handshake(ptp_session_t *session)
     }
 
     /* Step 6: Open secure sync session */
-    fprintf(stderr, "[mtpz] opening secure sync session\n");
+    ZLOG(ZUNE_CHATTER_WHISPER, "mtpz", "opening secure sync session");
     ret = mtpz_open_secure_sync_session(session, hash);
 
     free(hash);
     free(random);
 
     if (ret != 0) {
-        fprintf(stderr, "[mtpz] secure sync session failed\n");
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtpz", "secure sync session failed");
         return -1;
     }
 
-    fprintf(stderr, "[mtpz] handshake complete\n");
+    ZLOG(ZUNE_CHATTER_TALK, "mtpz", "handshake complete");
     return 0;
 }

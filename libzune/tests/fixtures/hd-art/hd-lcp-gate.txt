@@ -1,0 +1,9 @@
+hd-tunnel-probe-v1
+scope	experimental USB PPP LCP only; no catalog or artwork
+client-handshake	complete
+lcp-request	valid
+identifier	0
+options	ACCM-zero,PFC,ACFC
+lcp-ack	sent; full negotiation not attempted
+cleanup	mode-ended-and-stream-closed
+status	complete

@@ -7,4 +7,5 @@ QtObject {
     property var podcastEpisodesList: []
     function ensureSpokenMedia() {}
     function podcastDeviceStatus(feed, source) { return { known: false, onDevice: false, played: false, playedKnown: false, bookmarkMs: 0 } }
+    function podcastDeviceSources(feed, played) { return [] }
 }

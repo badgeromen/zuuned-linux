@@ -15,59 +15,17 @@
  */
 
 #include "mtp.h"
+#include "bytes.h"
 #include "mtp_text.h"
+#include "wiretap.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 
-/* ===================================================================
- * Little-Endian Pack/Unpack Helpers
- *
- * Duplicated from ptp.c since those are static. These are simple
- * inline helpers with no external dependencies.
- * =================================================================== */
-
-static inline void le16_pack(uint8_t *buf, uint16_t val)
-{
-    buf[0] = (uint8_t)(val & 0xFF);
-    buf[1] = (uint8_t)((val >> 8) & 0xFF);
-}
-
-static inline void le32_pack(uint8_t *buf, uint32_t val)
-{
-    buf[0] = (uint8_t)(val & 0xFF);
-    buf[1] = (uint8_t)((val >> 8) & 0xFF);
-    buf[2] = (uint8_t)((val >> 16) & 0xFF);
-    buf[3] = (uint8_t)((val >> 24) & 0xFF);
-}
-
-static inline void le64_pack(uint8_t *buf, uint64_t val)
-{
-    for (int i = 0; i < 8; i++)
-        buf[i] = (uint8_t)((val >> (i * 8)) & 0xFF);
-}
-
-static inline uint16_t le16_unpack(const uint8_t *buf)
-{
-    return (uint16_t)buf[0] | ((uint16_t)buf[1] << 8);
-}
-
-static inline uint32_t le32_unpack(const uint8_t *buf)
-{
-    return (uint32_t)buf[0]
-        | ((uint32_t)buf[1] << 8)
-        | ((uint32_t)buf[2] << 16)
-        | ((uint32_t)buf[3] << 24);
-}
-
-static inline uint64_t le64_unpack(const uint8_t *buf)
-{
-    uint64_t val = 0;
-    for (int i = 0; i < 8; i++)
-        val |= (uint64_t)buf[i] << (i * 8);
-    return val;
-}
 
 /* ===================================================================
  * MTP String Helpers
@@ -115,21 +73,21 @@ static int utf8_to_ucs2_chars(const char *utf8, uint16_t **out_chars,
             q += 1;
         } else if ((*q & 0xE0) == 0xC0) {
             if ((q[1] & 0xC0) != 0x80) {
-                fprintf(stderr, "[mtp] invalid UTF-8 at byte offset %ld\n",
+                ZLOG(ZUNE_CHATTER_SCREAM, "mtp", "invalid UTF-8 at byte offset %ld",
                         (long)(q - p));
                 return -1;
             }
             q += 2;
         } else if ((*q & 0xF0) == 0xE0) {
             if ((q[1] & 0xC0) != 0x80 || (q[2] & 0xC0) != 0x80) {
-                fprintf(stderr, "[mtp] invalid UTF-8 at byte offset %ld\n",
+                ZLOG(ZUNE_CHATTER_SCREAM, "mtp", "invalid UTF-8 at byte offset %ld",
                         (long)(q - p));
                 return -1;
             }
             q += 3;
         } else {
             /* 4-byte or invalid — skip as replacement character */
-            fprintf(stderr, "[mtp] skipping non-BMP character at byte offset %ld\n",
+            ZLOG(ZUNE_CHATTER_SHOUT, "mtp", "skipping non-BMP character at byte offset %ld",
                     (long)(q - p));
             if ((*q & 0xF8) == 0xF0 &&
                 (q[1] & 0xC0) == 0x80 &&
@@ -145,7 +103,7 @@ static int utf8_to_ucs2_chars(const char *utf8, uint16_t **out_chars,
 
     chars = (uint16_t *)malloc(alloc_count * sizeof(uint16_t));
     if (!chars) {
-        fprintf(stderr, "[mtp] malloc failed for UCS-2 conversion\n");
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtp", "malloc failed for UCS-2 conversion");
         return -1;
     }
 
@@ -244,7 +202,7 @@ uint8_t *mtp_string_to_ucs2(const char *utf8, uint32_t *out_len)
      * byte clamped at 255 — a malformed dataset the device chokes on.
      * Truncate the CHARACTERS to match the count instead. */
     if (char_count > 254) {
-        fprintf(stderr, "[mtp] string truncated to 254 chars (was %u)\n",
+        ZLOG(ZUNE_CHATTER_SHOUT, "mtp", "string truncated to 254 chars (was %u)",
                 char_count);
         char_count = 254;
     }
@@ -261,10 +219,10 @@ uint8_t *mtp_string_to_ucs2(const char *utf8, uint32_t *out_len)
 
     /* Pack UCS-2LE characters */
     for (uint32_t i = 0; i < char_count; i++) {
-        le16_pack(wire + 1 + i * 2, chars[i]);
+        zune_put_le16(wire + 1 + i * 2, chars[i]);
     }
     /* Null terminator */
-    le16_pack(wire + 1 + char_count * 2, 0x0000);
+    zune_put_le16(wire + 1 + char_count * 2, 0x0000);
 
     free(chars);
 
@@ -296,7 +254,7 @@ char *mtp_ucs2_to_string(const uint8_t *data, uint32_t len)
     /* Validate that enough bytes are present */
     uint32_t needed = 1 + (uint32_t)num_chars * 2;
     if (len < needed) {
-        fprintf(stderr, "[mtp] ucs2_to_string: need %u bytes but only %u available\n",
+        ZLOG(ZUNE_CHATTER_SHOUT, "mtp", "ucs2_to_string: need %u bytes but only %u available",
                 needed, len);
         return NULL;
     }
@@ -307,7 +265,7 @@ char *mtp_ucs2_to_string(const uint8_t *data, uint32_t len)
      */
     utf8_total = 0;
     for (i = 0; i < (uint32_t)(num_chars - 1); i++) {
-        uint16_t cp = le16_unpack(data + 1 + i * 2);
+        uint16_t cp = zune_le16(data + 1 + i * 2);
         if (cp == 0) break; /* early null terminator */
         utf8_total += (uint32_t)ucs2_char_to_utf8(cp, utf8_buf);
     }
@@ -318,7 +276,7 @@ char *mtp_ucs2_to_string(const uint8_t *data, uint32_t len)
     /* Second pass: write UTF-8 */
     offset = 0;
     for (i = 0; i < (uint32_t)(num_chars - 1); i++) {
-        uint16_t cp = le16_unpack(data + 1 + i * 2);
+        uint16_t cp = zune_le16(data + 1 + i * 2);
         if (cp == 0) break;
         offset += (uint32_t)ucs2_char_to_utf8(cp, (uint8_t *)result + offset);
     }
@@ -346,7 +304,7 @@ static char *mtp_read_string(const uint8_t *data, uint32_t data_len,
     str_wire_len = 1 + (uint32_t)num_chars * 2;
 
     if (*offset + str_wire_len > data_len) {
-        fprintf(stderr, "[mtp] read_string: truncated at offset %u\n", *offset);
+        ZLOG(ZUNE_CHATTER_SHOUT, "mtp", "read_string: truncated at offset %u", *offset);
         return NULL;
     }
 
@@ -354,30 +312,6 @@ static char *mtp_read_string(const uint8_t *data, uint32_t data_len,
     *offset += str_wire_len;
 
     return result;
-}
-
-/*
- * mtp_pack_string — Pack an MTP string into a buffer at an offset.
- *
- * Writes the MTP string wire format at buf + *offset and advances
- * *offset. Returns 0 on success, -1 on error.
- */
-static int mtp_pack_string(uint8_t *buf, uint32_t buf_len,
-                            uint32_t *offset, const char *str)
-{
-    uint32_t wire_len = 0;
-    uint8_t *wire = mtp_string_to_ucs2(str, &wire_len);
-    if (!wire) return -1;
-
-    if (*offset + wire_len > buf_len) {
-        free(wire);
-        return -1;
-    }
-
-    memcpy(buf + *offset, wire, wire_len);
-    *offset += wire_len;
-    free(wire);
-    return 0;
 }
 
 /* ===================================================================
@@ -401,22 +335,27 @@ int mtp_get_storage_ids(ptp_session_t *s, uint32_t **ids, int *count)
                           &data, &len,
                           &resp, NULL, NULL);
     if (ret < 0) {
-        fprintf(stderr, "[mtp] get_storage_ids: failed (response 0x%04X)\n", resp);
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtp", "get_storage_ids: failed (response 0x%04X)", resp);
+        free(data);   /* a data phase that completed before the failed response */
         return -1;
     }
 
     if (!data || len < 4) {
-        fprintf(stderr, "[mtp] get_storage_ids: no data or too short (%u bytes)\n", len);
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtp", "get_storage_ids: no data or too short (%u bytes)", len);
         free(data);
         return -1;
     }
 
-    uint32_t n = le32_unpack(data);
-    if (len < 4 + n * 4) {
-        fprintf(stderr, "[mtp] get_storage_ids: truncated (count=%u, len=%u)\n", n, len);
+    uint32_t n = zune_le32(data);
+    /* Subtract before comparing: 4 + n * 4 wraps for a device-chosen n. */
+    if (n > (len - 4) / 4) {
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtp", "get_storage_ids: truncated (count=%u, len=%u)", n, len);
         free(data);
         return -1;
     }
+
+    /* No storage is a valid answer, independent of malloc(0). */
+    if (n == 0) { free(data); return 0; }
 
     uint32_t *result = (uint32_t *)malloc(n * sizeof(uint32_t));
     if (!result) {
@@ -425,7 +364,7 @@ int mtp_get_storage_ids(ptp_session_t *s, uint32_t **ids, int *count)
     }
 
     for (uint32_t i = 0; i < n; i++)
-        result[i] = le32_unpack(data + 4 + i * 4);
+        result[i] = zune_le32(data + 4 + i * 4);
 
     free(data);
 
@@ -457,8 +396,9 @@ int mtp_get_storage_info(ptp_session_t *s, uint32_t storage_id,
                           &data, &len,
                           &resp, NULL, NULL);
     if (ret < 0) {
-        fprintf(stderr, "[mtp] get_storage_info 0x%08X: failed (response 0x%04X)\n",
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtp", "get_storage_info 0x%08X: failed (response 0x%04X)",
                 storage_id, resp);
+        free(data);   /* a data phase that completed before the failed response */
         return -1;
     }
 
@@ -476,16 +416,16 @@ int mtp_get_storage_info(ptp_session_t *s, uint32_t storage_id,
      * Minimum fixed portion: 2+2+2+8+8+4 = 26 bytes
      */
     if (!data || len < 26) {
-        fprintf(stderr, "[mtp] get_storage_info: data too short (%u bytes)\n", len);
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtp", "get_storage_info: data too short (%u bytes)", len);
         free(data);
         return -1;
     }
 
-    info->storage_type      = le16_unpack(data + 0);
-    info->filesystem_type   = le16_unpack(data + 2);
-    info->access_capability = le16_unpack(data + 4);
-    info->max_capacity      = le64_unpack(data + 6);
-    info->free_space        = le64_unpack(data + 14);
+    info->storage_type      = zune_le16(data + 0);
+    info->filesystem_type   = zune_le16(data + 2);
+    info->access_capability = zune_le16(data + 4);
+    info->max_capacity      = zune_le64(data + 6);
+    info->free_space        = zune_le64(data + 14);
     /* FreeSpaceInImages at offset 22 — skip (uint32) */
 
     offset = 26;
@@ -533,22 +473,22 @@ int mtp_get_object_handles(ptp_session_t *s, uint32_t storage,
                           &data, &len,
                           &resp, NULL, NULL);
     if (ret < 0) {
-        fprintf(stderr, "[mtp] get_object_handles: failed (response 0x%04X)\n", resp);
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtp", "get_object_handles: failed (response 0x%04X)", resp);
         free(data);
         return -1;
     }
 
     if (!data || len < 4) {
-        fprintf(stderr, "[mtp] get_object_handles: no data or too short\n");
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtp", "get_object_handles: no data or too short");
         free(data);
         /* Empty inventory still has its uint32 zero count. A missing payload
          * is not proof that creation is safe. */
         return -1;
     }
 
-    uint32_t n = le32_unpack(data);
+    uint32_t n = zune_le32(data);
     if (n > (len - 4) / 4) {
-        fprintf(stderr, "[mtp] get_object_handles: truncated (count=%u, len=%u)\n",
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtp", "get_object_handles: truncated (count=%u, len=%u)",
                 n, len);
         free(data);
         return -1;
@@ -563,7 +503,7 @@ int mtp_get_object_handles(ptp_session_t *s, uint32_t storage,
     }
 
     for (uint32_t i = 0; i < n; i++)
-        result[i] = le32_unpack(data + 4 + i * 4);
+        result[i] = zune_le32(data + 4 + i * 4);
 
     free(data);
 
@@ -594,8 +534,9 @@ int mtp_get_object_info(ptp_session_t *s, uint32_t handle,
                           &data, &len,
                           &resp, NULL, NULL);
     if (ret < 0) {
-        fprintf(stderr, "[mtp] get_object_info 0x%08X: failed (response 0x%04X)\n",
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtp", "get_object_info 0x%08X: failed (response 0x%04X)",
                 handle, resp);
+        free(data);   /* a data phase that completed before the failed response */
         return -1;
     }
 
@@ -625,19 +566,19 @@ int mtp_get_object_info(ptp_session_t *s, uint32_t handle,
      * Fixed portion: 52 bytes minimum.
      */
     if (!data || len < 52) {
-        fprintf(stderr, "[mtp] get_object_info: data too short (%u bytes)\n", len);
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtp", "get_object_info: data too short (%u bytes)", len);
         free(data);
         return -1;
     }
 
-    info->storage_id             = le32_unpack(data + 0);
-    info->object_format          = le16_unpack(data + 4);
+    info->storage_id             = zune_le32(data + 0);
+    info->object_format          = zune_le16(data + 4);
     /* ProtectionStatus at offset 6 — skip */
-    info->object_compressed_size = le32_unpack(data + 8);
+    info->object_compressed_size = zune_le32(data + 8);
     /* ThumbFormat, ThumbCompressedSize, ThumbPixWidth, ThumbPixHeight — skip */
     /* ImagePixWidth, ImagePixHeight, ImageBitDepth — skip */
-    info->parent_object          = le32_unpack(data + 38);
-    info->association_type       = le16_unpack(data + 42);
+    info->parent_object          = zune_le32(data + 38);
+    info->association_type       = zune_le16(data + 42);
     /* AssociationDesc at 44, SequenceNumber at 48 — skip */
 
     /* Parse the Filename string at offset 52 */
@@ -657,6 +598,17 @@ void mtp_free_object_info(mtp_object_info_t *info)
     info->filename = NULL;
 }
 
+/* A transaction can fail after its data phase completed: the reply the caller
+ * asked for is then released, so a failure never hands back a buffer. */
+static void drop_reply(uint8_t **data, uint32_t *len)
+{
+    if (data) {
+        free(*data);
+        *data = NULL;
+    }
+    if (len) *len = 0;
+}
+
 int mtp_get_object(ptp_session_t *s, uint32_t handle,
                    uint8_t **data, uint32_t *len)
 {
@@ -674,8 +626,9 @@ int mtp_get_object(ptp_session_t *s, uint32_t handle,
                           data, len,
                           &resp, NULL, NULL);
     if (ret < 0) {
-        fprintf(stderr, "[mtp] get_object 0x%08X: failed (response 0x%04X)\n",
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtp", "get_object 0x%08X: failed (response 0x%04X)",
                 handle, resp);
+        drop_reply(data, len);
         return -1;
     }
 
@@ -695,13 +648,13 @@ int mtp_get_object_to_file(ptp_session_t *s, uint32_t handle,
 
     if (!data || len == 0) {
         free(data);
-        fprintf(stderr, "[mtp] get_object_to_file 0x%08X: empty data\n", handle);
+        ZLOG(ZUNE_CHATTER_SHOUT, "mtp", "get_object_to_file 0x%08X: empty data", handle);
         return -1;
     }
 
     fp = fopen(path, "wb");
     if (!fp) {
-        fprintf(stderr, "[mtp] get_object_to_file: cannot open '%s' for writing\n",
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtp", "get_object_to_file: cannot open '%s' for writing",
                 path);
         free(data);
         return -1;
@@ -712,7 +665,7 @@ int mtp_get_object_to_file(ptp_session_t *s, uint32_t handle,
     free(data);
 
     if (written != len) {
-        fprintf(stderr, "[mtp] get_object_to_file: wrote %zu of %u bytes to '%s'\n",
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtp", "get_object_to_file: wrote %zu of %u bytes to '%s'",
                 written, len, path);
         return -1;
     }
@@ -753,21 +706,21 @@ static uint8_t *mtp_pack_object_info(mtp_object_info_t *info, uint32_t *out_len)
     }
 
     /* Pack fixed fields */
-    le32_pack(buf + 0,  info->storage_id);
-    le16_pack(buf + 4,  info->object_format);
-    le16_pack(buf + 6,  0x0000);  /* ProtectionStatus: no protection */
-    le32_pack(buf + 8,  info->object_compressed_size);
-    le16_pack(buf + 12, 0x0000);  /* ThumbFormat */
-    le32_pack(buf + 14, 0);       /* ThumbCompressedSize */
-    le32_pack(buf + 18, 0);       /* ThumbPixWidth */
-    le32_pack(buf + 22, 0);       /* ThumbPixHeight */
-    le32_pack(buf + 26, 0);       /* ImagePixWidth */
-    le32_pack(buf + 30, 0);       /* ImagePixHeight */
-    le32_pack(buf + 34, 0);       /* ImageBitDepth */
-    le32_pack(buf + 38, info->parent_object);
-    le16_pack(buf + 42, info->association_type);
-    le32_pack(buf + 44, 0);       /* AssociationDesc */
-    le32_pack(buf + 48, 0);       /* SequenceNumber */
+    zune_put_le32(buf + 0,  info->storage_id);
+    zune_put_le16(buf + 4,  info->object_format);
+    zune_put_le16(buf + 6,  0x0000);  /* ProtectionStatus: no protection */
+    zune_put_le32(buf + 8,  info->object_compressed_size);
+    zune_put_le16(buf + 12, 0x0000);  /* ThumbFormat */
+    zune_put_le32(buf + 14, 0);       /* ThumbCompressedSize */
+    zune_put_le32(buf + 18, 0);       /* ThumbPixWidth */
+    zune_put_le32(buf + 22, 0);       /* ThumbPixHeight */
+    zune_put_le32(buf + 26, 0);       /* ImagePixWidth */
+    zune_put_le32(buf + 30, 0);       /* ImagePixHeight */
+    zune_put_le32(buf + 34, 0);       /* ImageBitDepth */
+    zune_put_le32(buf + 38, info->parent_object);
+    zune_put_le16(buf + 42, info->association_type);
+    zune_put_le32(buf + 44, 0);       /* AssociationDesc */
+    zune_put_le32(buf + 48, 0);       /* SequenceNumber */
 
     /* Pack Filename */
     uint32_t off = 52;
@@ -798,7 +751,7 @@ int mtp_send_object_info(ptp_session_t *s, uint32_t storage,
 
     packed = mtp_pack_object_info(info, &packed_len);
     if (!packed) {
-        fprintf(stderr, "[mtp] send_object_info: failed to pack ObjectInfo\n");
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtp", "send_object_info: failed to pack ObjectInfo");
         return -1;
     }
 
@@ -828,7 +781,7 @@ int mtp_send_object_info(ptp_session_t *s, uint32_t storage,
     free(packed);
 
     if (ret < 0) {
-        fprintf(stderr, "[mtp] send_object_info: failed (response 0x%04X)\n", resp);
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtp", "send_object_info: failed (response 0x%04X)", resp);
         return -1;
     }
 
@@ -838,8 +791,8 @@ int mtp_send_object_info(ptp_session_t *s, uint32_t storage,
     if (new_handle) {
         *new_handle = (resp_nparams >= 3) ? resp_params[2] : 0;
         if (*new_handle == 0) {
-            fprintf(stderr, "[mtp] send_object_info: OK but no handle in "
-                    "response (%d params)\n", resp_nparams);
+            ZLOG(ZUNE_CHATTER_SHOUT, "mtp", "send_object_info: OK but no handle in "
+                    "response (%d params)", resp_nparams);
             return -1;
         }
     }
@@ -859,47 +812,39 @@ int mtp_send_object(ptp_session_t *s, const uint8_t *data, uint32_t len)
                           NULL, NULL,
                           &resp, NULL, NULL);
     if (ret < 0) {
-        fprintf(stderr, "[mtp] send_object: failed (response 0x%04X)\n", resp);
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtp", "send_object: failed (response 0x%04X)", resp);
         return -1;
     }
 
     return 0;
 }
 
+int mtp_send_object_from_fd(ptp_session_t *s, int fd, uint32_t len)
+{
+    uint16_t resp = 0;
+    struct stat st;
+    if (fd < 0 || fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || (uint64_t)st.st_size != len) {
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtp", "send_object: the source is not a %u-byte regular file", len);
+        return -1;
+    }
+    /* Streamed from the file chunk by chunk: no file-sized buffer. */
+    if (ptp_transaction_file(s, PTP_OC_SendObject, NULL, 0, fd, len, &resp) < 0) {
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtp", "send_object: failed (response 0x%04X)", resp);
+        return -1;
+    }
+    return 0;
+}
+
 int mtp_send_object_from_file(ptp_session_t *s, const char *path,
                               uint32_t len)
 {
-    FILE *fp;
-    uint8_t *data;
-    size_t bytes_read;
-    int ret;
-
-    fp = fopen(path, "rb");
-    if (!fp) {
-        fprintf(stderr, "[mtp] send_object_from_file: cannot open '%s'\n", path);
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtp", "send_object_from_file: cannot open '%s'", path);
         return -1;
     }
-
-    data = (uint8_t *)malloc(len);
-    if (!data) {
-        fprintf(stderr, "[mtp] send_object_from_file: malloc failed for %u bytes\n",
-                len);
-        fclose(fp);
-        return -1;
-    }
-
-    bytes_read = fread(data, 1, len, fp);
-    fclose(fp);
-
-    if (bytes_read != len) {
-        fprintf(stderr, "[mtp] send_object_from_file: read %zu of %u bytes from '%s'\n",
-                bytes_read, len, path);
-        free(data);
-        return -1;
-    }
-
-    ret = mtp_send_object(s, data, len);
-    free(data);
+    int ret = mtp_send_object_from_fd(s, fd, len);
+    close(fd);
     return ret;
 }
 
@@ -924,7 +869,7 @@ int mtp_delete_object(ptp_session_t *s, uint32_t handle)
                           NULL, NULL,
                           &resp, NULL, NULL);
     if (ret < 0) {
-        fprintf(stderr, "[mtp] delete_object 0x%08X: failed (response 0x%04X)\n",
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtp", "delete_object 0x%08X: failed (response 0x%04X)",
                 handle, resp);
         return -1;
     }
@@ -957,8 +902,9 @@ int mtp_get_object_prop_value(ptp_session_t *s, uint32_t handle,
                           data, len,
                           &resp, NULL, NULL);
     if (ret < 0) {
-        fprintf(stderr, "[mtp] get_object_prop_value 0x%08X prop 0x%04X: "
-                "failed (response 0x%04X)\n", handle, prop, resp);
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtp", "get_object_prop_value 0x%08X prop 0x%04X: "
+                "failed (response 0x%04X)", handle, prop, resp);
+        drop_reply(data, len);
         return -1;
     }
 
@@ -976,7 +922,7 @@ int mtp_set_object_prop_value_u16(ptp_session_t *s, uint32_t handle,
     params[0] = handle;
     params[1] = (uint32_t)prop;
 
-    le16_pack(data, val);
+    zune_put_le16(data, val);
 
     ret = ptp_transaction(s, MTP_OC_SetObjectPropValue,
                           params, 2,
@@ -985,8 +931,8 @@ int mtp_set_object_prop_value_u16(ptp_session_t *s, uint32_t handle,
                           NULL, NULL,
                           &resp, NULL, NULL);
     if (ret < 0) {
-        fprintf(stderr, "[mtp] set_object_prop_value_u16 0x%08X prop 0x%04X "
-                "val 0x%04X: failed (response 0x%04X)\n",
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtp", "set_object_prop_value_u16 0x%08X prop 0x%04X "
+                "val 0x%04X: failed (response 0x%04X)",
                 handle, prop, val, resp);
         return -1;
     }
@@ -1005,7 +951,7 @@ int mtp_set_object_prop_value_u32(ptp_session_t *s, uint32_t handle,
     params[0] = handle;
     params[1] = (uint32_t)prop;
 
-    le32_pack(data, val);
+    zune_put_le32(data, val);
 
     ret = ptp_transaction(s, MTP_OC_SetObjectPropValue,
                           params, 2,
@@ -1014,8 +960,8 @@ int mtp_set_object_prop_value_u32(ptp_session_t *s, uint32_t handle,
                           NULL, NULL,
                           &resp, NULL, NULL);
     if (ret < 0) {
-        fprintf(stderr, "[mtp] set_object_prop_value_u32 0x%08X prop 0x%04X "
-                "val 0x%08X: failed (response 0x%04X)\n",
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtp", "set_object_prop_value_u32 0x%08X prop 0x%04X "
+                "val 0x%08X: failed (response 0x%04X)",
                 handle, prop, val, resp);
         return -1;
     }
@@ -1037,7 +983,7 @@ int mtp_set_object_prop_value_str(ptp_session_t *s, uint32_t handle,
 
     wire = mtp_string_to_ucs2(str, &wire_len);
     if (!wire) {
-        fprintf(stderr, "[mtp] set_object_prop_value_str: string conversion failed\n");
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtp", "set_object_prop_value_str: string conversion failed");
         return -1;
     }
 
@@ -1050,8 +996,8 @@ int mtp_set_object_prop_value_str(ptp_session_t *s, uint32_t handle,
     free(wire);
 
     if (ret < 0) {
-        fprintf(stderr, "[mtp] set_object_prop_value_str 0x%08X prop 0x%04X: "
-                "failed (response 0x%04X)\n", handle, prop, resp);
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtp", "set_object_prop_value_str 0x%08X prop 0x%04X: "
+                "failed (response 0x%04X)", handle, prop, resp);
         return -1;
     }
 
@@ -1078,16 +1024,20 @@ int mtp_set_object_prop_value_ucs2(ptp_session_t *s, uint32_t handle,
      *
      * Total: 4 + count * 2 bytes
      */
+    if (count > (UINT32_MAX - 4) / 2) {
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtp", "set_object_prop_value_ucs2: %u elements is too many", count);
+        return -1;
+    }
     data_len = 4 + count * 2;
     data = (uint8_t *)malloc(data_len);
     if (!data) {
-        fprintf(stderr, "[mtp] set_object_prop_value_ucs2: malloc failed\n");
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtp", "set_object_prop_value_ucs2: malloc failed");
         return -1;
     }
 
-    le32_pack(data, count);
+    zune_put_le32(data, count);
     for (uint32_t i = 0; i < count; i++)
-        le16_pack(data + 4 + i * 2, ucs2[i]);
+        zune_put_le16(data + 4 + i * 2, ucs2[i]);
 
     ret = ptp_transaction(s, MTP_OC_SetObjectPropValue,
                           params, 2,
@@ -1098,8 +1048,8 @@ int mtp_set_object_prop_value_ucs2(ptp_session_t *s, uint32_t handle,
     free(data);
 
     if (ret < 0) {
-        fprintf(stderr, "[mtp] set_object_prop_value_ucs2 0x%08X prop 0x%04X: "
-                "failed (response 0x%04X)\n", handle, prop, resp);
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtp", "set_object_prop_value_ucs2 0x%08X prop 0x%04X: "
+                "failed (response 0x%04X)", handle, prop, resp);
         return -1;
     }
 
@@ -1131,8 +1081,9 @@ int mtp_get_object_prop_list(ptp_session_t *s, uint32_t handle,
                           data, len,
                           &resp, NULL, NULL);
     if (ret < 0) {
-        fprintf(stderr, "[mtp] get_object_prop_list 0x%08X: "
-                "failed (response 0x%04X)\n", handle, resp);
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtp", "get_object_prop_list 0x%08X: "
+                "failed (response 0x%04X)", handle, resp);
+        drop_reply(data, len);
         return -1;
     }
 
@@ -1162,8 +1113,9 @@ int mtp_get_object_references(ptp_session_t *s, uint32_t handle,
                           &data, &len,
                           &resp, NULL, NULL);
     if (ret < 0) {
-        fprintf(stderr, "[mtp] get_object_references 0x%08X: "
-                "failed (response 0x%04X)\n", handle, resp);
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtp", "get_object_references 0x%08X: "
+                "failed (response 0x%04X)", handle, resp);
+        free(data);   /* a data phase that completed before the failed response */
         return -1;
     }
 
@@ -1173,13 +1125,17 @@ int mtp_get_object_references(ptp_session_t *s, uint32_t handle,
         return 0;
     }
 
-    uint32_t n = le32_unpack(data);
-    if (len < 4 + n * 4) {
-        fprintf(stderr, "[mtp] get_object_references: truncated "
-                "(count=%u, len=%u)\n", n, len);
+    uint32_t n = zune_le32(data);
+    /* Subtract before comparing: 4 + n * 4 wraps for a device-chosen n. */
+    if (n > (len - 4) / 4) {
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtp", "get_object_references: truncated "
+                "(count=%u, len=%u)", n, len);
         free(data);
         return -1;
     }
+
+    /* An empty list is NULL/0, independent of malloc(0). */
+    if (n == 0) { free(data); return 0; }
 
     uint32_t *result = (uint32_t *)malloc(n * sizeof(uint32_t));
     if (!result) {
@@ -1188,7 +1144,7 @@ int mtp_get_object_references(ptp_session_t *s, uint32_t handle,
     }
 
     for (uint32_t i = 0; i < n; i++)
-        result[i] = le32_unpack(data + 4 + i * 4);
+        result[i] = zune_le32(data + 4 + i * 4);
 
     free(data);
 
@@ -1214,16 +1170,20 @@ int mtp_set_object_references(ptp_session_t *s, uint32_t handle,
      *   uint32  count
      *   uint32  handles[count]
      */
+    if (count < 0 || (uint32_t)count > (UINT32_MAX - 4) / 4) {
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtp", "set_object_references: invalid count %d", count);
+        return -1;
+    }
     data_len = 4 + (uint32_t)count * 4;
     data = (uint8_t *)malloc(data_len);
     if (!data) {
-        fprintf(stderr, "[mtp] set_object_references: malloc failed\n");
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtp", "set_object_references: malloc failed");
         return -1;
     }
 
-    le32_pack(data, (uint32_t)count);
+    zune_put_le32(data, (uint32_t)count);
     for (int i = 0; i < count; i++)
-        le32_pack(data + 4 + i * 4, refs[i]);
+        zune_put_le32(data + 4 + i * 4, refs[i]);
 
     ret = ptp_transaction(s, MTP_OC_SetObjectReferences,
                           &param, 1,
@@ -1234,8 +1194,8 @@ int mtp_set_object_references(ptp_session_t *s, uint32_t handle,
     free(data);
 
     if (ret < 0) {
-        fprintf(stderr, "[mtp] set_object_references 0x%08X: "
-                "failed (response 0x%04X)\n", handle, resp);
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtp", "set_object_references 0x%08X: "
+                "failed (response 0x%04X)", handle, resp);
         return -1;
     }
 
@@ -1263,7 +1223,7 @@ int mtp_create_folder(ptp_session_t *s, uint32_t parent,
 
     ret = mtp_send_object_info(s, storage, parent, &folder_info, new_handle);
     if (ret < 0) {
-        fprintf(stderr, "[mtp] create_folder '%s': send_object_info failed\n", name);
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtp", "create_folder '%s': send_object_info failed", name);
         return -1;
     }
 
@@ -1304,20 +1264,17 @@ int mtp_get_representative_sample(ptp_session_t *s, uint32_t handle,
 
     if (!raw || raw_len < 4) {
         free(raw);
-        fprintf(stderr, "[mtp] get_representative_sample 0x%08X: "
-                "empty or short response (%u bytes)\n", handle, raw_len);
+        ZLOG(ZUNE_CHATTER_WHISPER, "mtp", "get_representative_sample 0x%08X: "
+                "empty or short response (%u bytes)", handle, raw_len);
         return -1;
     }
 
     /* AUINT8 wire format: 4-byte LE count + bytes (matches send path). */
-    uint32_t count = (uint32_t)raw[0]
-                   | ((uint32_t)raw[1] << 8)
-                   | ((uint32_t)raw[2] << 16)
-                   | ((uint32_t)raw[3] << 24);
+    uint32_t count = zune_le32(raw);
 
     if (count == 0 || count > raw_len - 4) {
-        fprintf(stderr, "[mtp] get_representative_sample 0x%08X: "
-                "bad AUINT8 count %u in %u-byte payload\n",
+        ZLOG(ZUNE_CHATTER_SHOUT, "mtp", "get_representative_sample 0x%08X: "
+                "bad AUINT8 count %u in %u-byte payload",
                 handle, count, raw_len);
         free(raw);
         return -1;
@@ -1371,8 +1328,8 @@ int mtp_send_representative_sample(ptp_session_t *s, uint32_t handle,
     free(payload);
 
     if (ret < 0) {
-        fprintf(stderr, "[mtp] send_representative_sample 0x%08X: "
-                "failed (response 0x%04X)\n", handle, resp);
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtp", "send_representative_sample 0x%08X: "
+                "failed (response 0x%04X)", handle, resp);
         return -1;
     }
 
@@ -1425,7 +1382,7 @@ static uint8_t *mtp_pack_prop_list(mtp_prop_entry_t *props, int num_props,
         /* Empty list: just the count */
         buf = (uint8_t *)malloc(4);
         if (!buf) return NULL;
-        le32_pack(buf, 0);
+        zune_put_le32(buf, 0);
         if (out_len) *out_len = 4;
         return buf;
     }
@@ -1468,8 +1425,8 @@ static uint8_t *mtp_pack_prop_list(mtp_prop_entry_t *props, int num_props,
             uint32_t wire_len = 0;
             str_wires[i] = mtp_string_to_ucs2(props[i].value.str, &wire_len);
             if (!str_wires[i]) {
-                fprintf(stderr, "[mtp] pack_prop_list: string conversion "
-                        "failed for prop 0x%04X\n", props[i].prop_code);
+                ZLOG(ZUNE_CHATTER_SCREAM, "mtp", "pack_prop_list: string conversion "
+                        "failed for prop 0x%04X", props[i].prop_code);
                 goto fail;
             }
             str_lens[i] = wire_len;
@@ -1482,8 +1439,8 @@ static uint8_t *mtp_pack_prop_list(mtp_prop_entry_t *props, int num_props,
             total_size += str_lens[i];
             break;
         default:
-            fprintf(stderr, "[mtp] pack_prop_list: unsupported data type "
-                    "0x%04X for prop 0x%04X\n",
+            ZLOG(ZUNE_CHATTER_SCREAM, "mtp", "pack_prop_list: unsupported data type "
+                    "0x%04X for prop 0x%04X",
                     props[i].data_type, props[i].prop_code);
             goto fail;
         }
@@ -1497,20 +1454,20 @@ static uint8_t *mtp_pack_prop_list(mtp_prop_entry_t *props, int num_props,
     off = 0;
 
     /* Number of elements */
-    le32_pack(buf + off, (uint32_t)num_props);
+    zune_put_le32(buf + off, (uint32_t)num_props);
     off += 4;
 
     for (i = 0; i < num_props; i++) {
         /* ObjectHandle */
-        le32_pack(buf + off, props[i].handle);
+        zune_put_le32(buf + off, props[i].handle);
         off += 4;
 
         /* PropertyCode */
-        le16_pack(buf + off, props[i].prop_code);
+        zune_put_le16(buf + off, props[i].prop_code);
         off += 2;
 
         /* DataType */
-        le16_pack(buf + off, props[i].data_type);
+        zune_put_le16(buf + off, props[i].data_type);
         off += 2;
 
         /* Value */
@@ -1522,17 +1479,17 @@ static uint8_t *mtp_pack_prop_list(mtp_prop_entry_t *props, int num_props,
             break;
         case PTP_DTC_INT16:
         case PTP_DTC_UINT16:
-            le16_pack(buf + off, props[i].value.u16);
+            zune_put_le16(buf + off, props[i].value.u16);
             off += 2;
             break;
         case PTP_DTC_INT32:
         case PTP_DTC_UINT32:
-            le32_pack(buf + off, props[i].value.u32);
+            zune_put_le32(buf + off, props[i].value.u32);
             off += 4;
             break;
         case PTP_DTC_INT64:
         case PTP_DTC_UINT64:
-            le64_pack(buf + off, props[i].value.u64);
+            zune_put_le64(buf + off, props[i].value.u64);
             off += 8;
             break;
         case PTP_DTC_AUINT16:
@@ -1588,7 +1545,7 @@ int mtp_send_object_prop_list(ptp_session_t *s,
 
     packed = mtp_pack_prop_list(props, num_props, &packed_len);
     if (!packed) {
-        fprintf(stderr, "[mtp] send_object_prop_list: failed to pack property list\n");
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtp", "send_object_prop_list: failed to pack property list");
         return -1;
     }
 
@@ -1617,7 +1574,7 @@ int mtp_send_object_prop_list(ptp_session_t *s,
     free(packed);
 
     if (ret < 0) {
-        fprintf(stderr, "[mtp] send_object_prop_list: failed (response 0x%04X)\n", resp);
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtp", "send_object_prop_list: failed (response 0x%04X)", resp);
         return -1;
     }
 
@@ -1626,8 +1583,8 @@ int mtp_send_object_prop_list(ptp_session_t *s,
     if (new_handle) {
         *new_handle = (resp_nparams >= 3) ? resp_params[2] : 0;
         if (*new_handle == 0) {
-            fprintf(stderr, "[mtp] send_object_prop_list: OK but no handle in "
-                    "response (%d params)\n", resp_nparams);
+            ZLOG(ZUNE_CHATTER_SHOUT, "mtp", "send_object_prop_list: OK but no handle in "
+                    "response (%d params)", resp_nparams);
             return -1;
         }
     }
@@ -1646,7 +1603,7 @@ int mtp_set_object_prop_list(ptp_session_t *s,
 
     packed = mtp_pack_prop_list(props, num_props, &packed_len);
     if (!packed) {
-        fprintf(stderr, "[mtp] set_object_prop_list: failed to pack property list\n");
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtp", "set_object_prop_list: failed to pack property list");
         return -1;
     }
 
@@ -1665,7 +1622,7 @@ int mtp_set_object_prop_list(ptp_session_t *s,
     free(packed);
 
     if (ret < 0) {
-        fprintf(stderr, "[mtp] set_object_prop_list: failed (response 0x%04X)\n", resp);
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtp", "set_object_prop_list: failed (response 0x%04X)", resp);
         return -1;
     }
 
@@ -1696,25 +1653,25 @@ int mtp_get_props_supported(ptp_session_t *s, uint16_t format_code,
                           &data, &len,
                           &resp, NULL, NULL);
     if (ret < 0) {
-        fprintf(stderr, "[mtp] get_props_supported format 0x%04X: "
-                "failed (response 0x%04X)\n", format_code, resp);
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtp", "get_props_supported format 0x%04X: "
+                "failed (response 0x%04X)", format_code, resp);
         free(data);
         return -1;
     }
 
     if (!data || len < 4) {
-        fprintf(stderr, "[mtp] get_props_supported: no data or too short (%u bytes)\n",
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtp", "get_props_supported: no data or too short (%u bytes)",
                 len);
         free(data);
         return -1;
     }
 
-    uint32_t n = le32_unpack(data);
+    uint32_t n = zune_le32(data);
     /* Subtract before comparing so a device-controlled count cannot wrap
      * the byte calculation. Property codes are uint16, at most 65536 values. */
     if (n > 65536u || n > (len - 4) / 2) {
-        fprintf(stderr, "[mtp] get_props_supported: truncated "
-                "(count=%u, len=%u)\n", n, len);
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtp", "get_props_supported: truncated "
+                "(count=%u, len=%u)", n, len);
         free(data);
         return -1;
     }
@@ -1732,7 +1689,7 @@ int mtp_get_props_supported(ptp_session_t *s, uint16_t format_code,
     }
 
     for (uint32_t i = 0; i < n; i++)
-        result[i] = le16_unpack(data + 4 + i * 2);
+        result[i] = zune_le16(data + 4 + i * 2);
 
     free(data);
 
@@ -1771,8 +1728,9 @@ int mtp_get_prop_desc(ptp_session_t *s, uint16_t prop_code,
                           data, len,
                           &resp, NULL, NULL);
     if (ret < 0) {
-        fprintf(stderr, "[mtp] get_prop_desc prop 0x%04X format 0x%04X: "
-                "failed (response 0x%04X)\n", prop_code, format_code, resp);
+        ZLOG(ZUNE_CHATTER_SCREAM, "mtp", "get_prop_desc prop 0x%04X format 0x%04X: "
+                "failed (response 0x%04X)", prop_code, format_code, resp);
+        drop_reply(data, len);
         return -1;
     }
 
@@ -1804,8 +1762,9 @@ int mtp_vendor_operation(ptp_session_t *s, uint16_t opcode,
                           recv_data, recv_len,
                           &resp, NULL, NULL);
     if (ret < 0) {
-        fprintf(stderr, "[mtp] vendor_operation 0x%04X: "
-                "failed (response 0x%04X)\n", opcode, resp);
+        ZLOG(ZUNE_CHATTER_SHOUT, "mtp", "vendor_operation 0x%04X: "
+                "failed (response 0x%04X)", opcode, resp);
+        drop_reply(recv_data, recv_len);
         return -1;
     }
 

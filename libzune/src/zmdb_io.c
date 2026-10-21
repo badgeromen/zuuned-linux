@@ -4,11 +4,9 @@
  * transaction, so it uses the backend directly. Caller owns serialization.
  * Reading the database never authorizes mutation. Partial payloads fail closed. */
 #include "zune_internal.h"
-static uint16_t rd16(const uint8_t *p) { return (uint16_t)(p[0] | (uint16_t)p[1] << 8); }
-static uint32_t rd32(const uint8_t *p) { return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24; }
 
-int zune_zmdb_read_payload(zune_usb_handle_t *usb, uint8_t **out_payload,
-                          uint32_t *out_len) {
+int zune_zmdb_read_response(zune_usb_handle_t *usb, uint8_t header[12],
+                            uint8_t **out_payload, uint32_t *out_len) {
     if (out_payload) *out_payload = NULL;
     if (out_len) *out_len = 0;
     if (!usb || !out_payload || !out_len || !usb->backend ||
@@ -20,7 +18,7 @@ int zune_zmdb_read_payload(zune_usb_handle_t *usb, uint8_t **out_payload,
     uint8_t outep = usb->bulk_out_ep;
     uint8_t inep  = usb->bulk_in_ep;
 
-    fprintf(stderr, "[libzune-zmdb] using endpoints: OUT=0x%02x, IN=0x%02x\n",
+    ZLOG(ZUNE_CHATTER_WHISPER, "libzune-zmdb", "using endpoints: OUT=0x%02x, IN=0x%02x",
             outep, inep);
 
     /* Step 1: Build 16-byte ZMDB request */
@@ -41,7 +39,7 @@ int zune_zmdb_read_payload(zune_usb_handle_t *usb, uint8_t **out_payload,
         zune_set_error("ZMDB request send failed (transferred=%u)", transferred);
         return -1;
     }
-    fprintf(stderr, "[libzune-zmdb] request sent (16 bytes)\n");
+    ZLOG(ZUNE_CHATTER_WHISPER, "libzune-zmdb", "request sent (16 bytes)");
 
     /* Step 3: Wait 250ms for device to prepare response */
     usleep(250000);
@@ -62,18 +60,19 @@ int zune_zmdb_read_payload(zune_usb_handle_t *usb, uint8_t **out_payload,
     }
 
     /* Step 5: Parse header — totalSize at offset 0 */
-    uint32_t total_size = rd32(first_chunk);
+    uint32_t total_size = zune_le32(first_chunk);
     if (total_size <= 12 || total_size > 64 * 1024 * 1024 ||
-        transferred > total_size || rd16(first_chunk + 4) != 2 ||
-        rd16(first_chunk + 6) != 0x9217) {
+        transferred > total_size || zune_le16(first_chunk + 4) != 2 ||
+        zune_le16(first_chunk + 6) != 0x9217) {
         free(first_chunk);
         zune_set_error("ZMDB invalid header or total size: %u", total_size);
         return -1;
     }
 
     uint32_t payload_size = total_size - 12;
-    fprintf(stderr, "[libzune-zmdb] totalSize=%u, payloadSize=%u, first chunk=%u bytes\n",
+    ZLOG(ZUNE_CHATTER_WHISPER, "libzune-zmdb", "totalSize=%u, payloadSize=%u, first chunk=%u bytes",
             total_size, payload_size, transferred);
+    if (header) memcpy(header, first_chunk, 12);
 
     /* Step 6: Allocate full payload buffer and copy what we already have */
     uint8_t *payload = malloc(payload_size);
@@ -99,7 +98,7 @@ int zune_zmdb_read_payload(zune_usb_handle_t *usb, uint8_t **out_payload,
         ret = be->bulk_read(usb, inep, payload + received, chunk,
                             &transferred, 10000);
         if (ret != 0 || transferred > chunk) {
-            fprintf(stderr, "[libzune-zmdb] read error at %u/%u\n",
+            ZLOG(ZUNE_CHATTER_SCREAM, "libzune-zmdb", "read error at %u/%u",
                     received, payload_size);
             break;
         }
@@ -107,13 +106,35 @@ int zune_zmdb_read_payload(zune_usb_handle_t *usb, uint8_t **out_payload,
         received += transferred;
     }
 
-    /* Step 8: Drain residual data (race 512-byte read against 100ms timeout).
-     * Matches zune-explorer: errors are expected and silently ignored. */
-    uint8_t drain[512];
-    uint32_t drain_transferred = 0;
-    be->bulk_read(usb, inep, drain, sizeof(drain), &drain_transferred, 100);
+    /* Step 8: Consume the device's 12-byte OK response. A payload that ends on
+     * a packet boundary is followed by a zero-length packet first, and a busy
+     * device can answer after more than 100 ms. A response left unread is
+     * taken by the next PTP transaction as its own, whose real data then
+     * blocks the pipe: the device stops accepting commands (Draco,
+     * 2026-10-19). Stop at the response, or when nothing more arrives. */
+    for (int reads = 0; reads < 4; reads++) {
+        uint8_t tail[512];
+        uint32_t got = 0;
+        if (be->bulk_read(usb, inep, tail, sizeof(tail), &got, 1000) != 0) {
+            ZLOG(ZUNE_CHATTER_WHISPER, "libzune-zmdb", "no response after the payload");
+            break;
+        }
+        if (got == 0) {
+            ZLOG(ZUNE_CHATTER_WHISPER, "libzune-zmdb", "zero-length packet after the payload");
+            continue;
+        }
+        if (got >= 12 && got <= sizeof(tail) && zune_le16(tail + 4) == 3) {
+            uint16_t code = zune_le16(tail + 6);
+            if (code == 0x2001)
+                ZLOG(ZUNE_CHATTER_WHISPER, "libzune-zmdb", "response OK consumed");
+            else
+                ZLOG(ZUNE_CHATTER_SHOUT, "libzune-zmdb", "response 0x%04X after the payload", code);
+            break;
+        }
+        ZLOG(ZUNE_CHATTER_SHOUT, "libzune-zmdb", "discarded %u unexpected bytes after the payload", got);
+    }
 
-    fprintf(stderr, "[libzune-zmdb] received %u/%u bytes\n", received, payload_size);
+    ZLOG(ZUNE_CHATTER_WHISPER, "libzune-zmdb", "received %u/%u bytes", received, payload_size);
 
     if (received != payload_size) {
         free(payload);
@@ -124,4 +145,9 @@ int zune_zmdb_read_payload(zune_usb_handle_t *usb, uint8_t **out_payload,
     *out_payload = payload;
     *out_len = received;
     return 0;
+}
+
+int zune_zmdb_read_payload(zune_usb_handle_t *usb, uint8_t **out_payload,
+                          uint32_t *out_len) {
+    return zune_zmdb_read_response(usb, NULL, out_payload, out_len);
 }

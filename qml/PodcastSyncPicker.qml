@@ -12,30 +12,40 @@ Popup {
     onEpisodeCountChanged: countField.text = String(episodeCount)
     property bool unplayedOnly: true
     property var checks: ({})
+    // Manual choice scrolls through the whole show, 25 at a time; newest and
+    // oldest list just the N chosen.
+    EpisodeList { id: manualEpisodes; show: picker.mode === "manual" ? (picker.show.id || "") : "" }
     readonly property var rows: {
         void SpokenMediaService.revision
         void DeviceService.podcastEpisodesList
-        if (!show.id) return []
-        if (mode === "manual") return SpokenMediaService.entries(show.id)
-        return SpokenMediaService.selectPodcastEpisodes(show.id, mode, 5000, false)
-            .filter(e => !unplayedOnly || !podcastStatus.played(e)).slice(0, episodeCount)
+        if (!show.id || mode === "manual") return []
+        return SpokenMediaService.selectPodcastEpisodes(show.id, mode, episodeCount, unplayedOnly,
+            unplayedOnly ? DeviceService.podcastDeviceSources(show.identity || "", true) : [])
     }
-    readonly property var selectedIds: rows.filter(e => checks[e.id] && !podcastStatus.deviceFor(e.id).onDevice).map(e => e.id)
+    // Checks persist across manual pages; on-device episodes are never checked.
+    readonly property var selectedIds: Object.keys(checks)
     signal picked(var ids)
+    function rowsKey() { return mode + ":" + rows.map(e => e.id).join(",") }
     function selectPreview() {
         const next = {}
-        if (mode !== "manual") for (const row of rows) if (!podcastStatus.deviceFor(row.id).onDevice) next[row.id] = true
+        if (mode !== "manual") for (const row of rows) if (!podcastStatus.deviceFor(row).onDevice) next[row.id] = true
         checks = next
+        previewKey = rowsKey()
     }
+    // The chosen rows' IDs: the preview selection resets only when they
+    // change, not on every library change (each older feed page is one).
+    property string previewKey: ""
     onModeChanged: selectPreview()
     onRowsChanged: {
-        if (mode !== "manual") { selectPreview(); return }
-        const next = {}
-        for (const row of rows) if (checks[row.id]) next[row.id] = true
+        if (mode !== "manual" && rowsKey() !== previewKey) { selectPreview(); return }
+        const next = Object.assign({}, checks)
+        for (const row of rows) if (next[row.id] && podcastStatus.deviceFor(row).onDevice) delete next[row.id]
         checks = next
     }
-    function toggle(id) {
-        if (podcastStatus.deviceFor(id).onDevice) return
+    // entry: an episode row or its ID.
+    function toggle(entry) {
+        if (podcastStatus.deviceFor(entry).onDevice) return
+        const id = typeof entry === "object" ? entry.id : entry
         const next = Object.assign({}, checks)
         if (next[id]) delete next[id]; else next[id] = true
         checks = next
@@ -116,16 +126,24 @@ Popup {
             wrapMode: Text.Wrap; color: Theme.textSecondary; font.pixelSize: Theme.spokenCaption
         }
         ListView {
+            id: pickerList
             objectName: "podcastSelectionRows"
             Layout.fillWidth: true; Layout.fillHeight: true; clip: true
-            model: picker.rows
+            model: picker.mode === "manual" ? manualEpisodes : picker.rows
             boundsBehavior: Flickable.StopAtBounds
+            function fill() {
+                if (picker.mode === "manual" && contentHeight - contentY - height < Theme.spokenRowHeight * 4) manualEpisodes.loadMore()
+            }
+            onContentYChanged: fill()
+            onContentHeightChanged: Qt.callLater(fill)
+            onHeightChanged: Qt.callLater(fill)
+            Connections { target: manualEpisodes; function onReloaded() { pickerList.positionViewAtBeginning() } }
             ScrollBar.vertical: ZuneScrollBar {}
             delegate: RowLayout {
                 required property var modelData
-                readonly property var deviceStatus: podcastStatus.deviceFor(modelData.id)
+                readonly property var deviceStatus: podcastStatus.deviceFor(modelData)
                 width: ListView.view.width; height: Theme.spokenRowHeight
-                SpokenCheckBox { enabled: !parent.deviceStatus.onDevice; checked: !!picker.checks[modelData.id] && !parent.deviceStatus.onDevice; Accessible.name: "Include " + modelData.title; onClicked: picker.toggle(modelData.id) }
+                SpokenCheckBox { enabled: !parent.deviceStatus.onDevice; checked: !!picker.checks[modelData.id] && !parent.deviceStatus.onDevice; Accessible.name: "Include " + modelData.title; onClicked: picker.toggle(modelData) }
                 OnDeviceBadge {
                     objectName: "podcastPickerOnDevice"
                     visible: !!parent.deviceStatus.onDevice
@@ -137,7 +155,7 @@ Popup {
                     Text { Layout.fillWidth: true; text: (modelData.published ? new Date(modelData.published).toLocaleDateString() : "date unknown") + (podcastStatus.played(modelData) ? " · " + podcastStatus.playedLabel(modelData) : "") + (modelData.keepOnDevice ? " · kept on Zune" : ""); elide: Text.ElideRight; color: Theme.textDim; font.pixelSize: Theme.spokenCaption }
                 }
             }
-            Text { anchors.centerIn: parent; visible: picker.rows.length === 0; text: "No episodes match this selection"; color: Theme.textSecondary; font.pixelSize: Theme.spokenCaption }
+            Text { anchors.centerIn: parent; visible: pickerList.count === 0; text: "No episodes match this selection"; color: Theme.textSecondary; font.pixelSize: Theme.spokenCaption }
         }
         RowLayout {
             Layout.fillWidth: true

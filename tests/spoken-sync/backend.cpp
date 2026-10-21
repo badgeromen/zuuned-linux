@@ -31,6 +31,7 @@ struct DeviceSpokenTestAccess {
         d.m_busy = false; d.m_ejecting = false; d.m_awaitingDisconnect = false;
     }
     static void seedPodcasts(DeviceService &d, const QVariantList &rows) { d.m_podcastEpisodesList = rows; }
+    static void libraryUnreadable(DeviceService &d, const QString &why) { d.m_libraryError = why; }
     static void seedPreview(DeviceService &d, const QVariantList &rows) {
         d.m_podcastEpisodesList = rows; d.m_spokenRequested = true;
         d.m_spokenMediaLoading = false; d.m_spokenMediaError.clear();
@@ -43,6 +44,23 @@ struct SpokenSyncTestAccess {
     static QString cleanupStage(const SyncEngine &e) { return e.m_cleanupStage; }
     static int removed(const SyncEngine &e) { return e.m_podcastsRemoved; }
     static void save(SyncEngine &e) { e.persistQueue(); }
+    static void photoActive(SyncEngine &e, const QString &id) {
+        e.m_photoEntries = {QVariantMap{{"entryId", id}, {"title", "holiday.png"},
+                                        {"filepath", "/photos/holiday.png"}, {"album", "Trip"}}};
+        e.m_photoPos = 0; e.m_isSyncing = true; e.m_inPhotoPhase = true; e.m_cancelled = false;
+        e.m_totalCount = 1;
+        // What advancePhoto does before every send.
+        e.markInflight("photo", QVariantMap{{"entryId", id}, {"title", "holiday.png"},
+                                            {"filename", "holiday.png"}});
+    }
+    static bool cancelled(const SyncEngine &e) { return e.m_cancelled; }
+    static void videoActive(SyncEngine &e, const QString &id) {
+        e.m_videoEntries = {QVariantMap{{"entryId", id}, {"title", "Pilot"}}};
+        e.m_nextSendIdx = 0; e.m_currentEntryId = id; e.m_currentSendPath.clear();
+        e.m_isSyncing = true; e.m_inVideoPhase = true; e.m_videoSending = true;
+        e.m_cancelled = false; e.m_activePrepares = 0; e.m_totalCount = 1;
+        e.markInflightVideo("Show - S01E01 - Pilot.mp4", "Pilot");   // as beginVideoSend does
+    }
     static void active(SyncEngine &e, const QString &id, QVariantMap row) {
         if (!row.contains("type")) row["type"] = "podcast"; row["entryId"] = id;
         e.m_entries = {row}; e.m_entryPos = 0; e.m_currentEntryId = id;
@@ -380,7 +398,7 @@ int main(int argc, char **argv) {
             remembered["devicePlayedSerials"] = QVariantMap{{mode == "prior-played" ? "cleanup-fixture" : "other-device", true}};
             candidates[0] = remembered;
         }
-        e.attachPodcastCleanup([&] { return candidates; });
+        e.attachPodcastCleanup([&](const QStringList &, bool) { return candidates; });
         QSettings().setValue("podcastAutoCleanup", mode != "disabled");
         int inspected = 0, persisted = 0, purges = 0, transfers = 0;
         int summaryRemoved = -1;
@@ -577,11 +595,78 @@ int main(int argc, char **argv) {
                             "unknown-result", "partial", "prior-played", "other-device-history", "cancel-purge", "reconnect-purge"}) cleanupCase(QString::fromLatin1(mode));
     QSettings().remove("podcastAutoCleanup");
     {
+        // A photo libzune refused before any device write leaves nothing to
+        // recover: the entry fails with the real reason and the sync goes on.
+        auto d = DeviceSpokenTestAccess::create();
+        SyncEngine e; e.clearQueue(); e.dismissInterruptedSend();
+        SpokenSyncTestAccess::cleanupDevice(e, d.get());
+        const QString why = "Photo is not a JPEG and could not be converted (ffmpeg not found): /photos/holiday.png";
+        check(DeviceWorker::photoRefusedBeforeWrite(why)
+              && DeviceWorker::photoRefusedBeforeWrite("Could not read the device's photo albums to find 'Trip'")
+              && !DeviceWorker::photoRefusedBeforeWrite("Failed to send photo (StoreFull 0x200C): holiday.jpg"),
+              "photo refusals before any device write are told apart from failed sends");
+        SpokenSyncTestAccess::photoActive(e, "photo-1");
+        const bool marked = QFile::exists(data + "/inflight-send");
+        e.onPhotoSendDone("photo-1", false, 0, "OK", why);
+        check(marked && !QFile::exists(data + "/inflight-send") && e.interruptedSend().isEmpty()
+              && e.lastError().contains("not a JPEG"),
+              "a photo refused before any write is skipped without a recovery marker");
+        SpokenSyncTestAccess::photoActive(e, "photo-2");
+        e.onPhotoSendDone("photo-2", false, 0, "StoreFull", QString());
+        check(QFile::exists(data + "/inflight-send") && !e.interruptedSend().isEmpty() && !e.isSyncing(),
+              "a photo that failed on the device still stops the sync and keeps its recovery marker");
+        e.dismissInterruptedSend();
+    }
+    {
+        // A video libzune refused leaves nothing behind and clears its marker;
+        // one whose partial object could not be removed keeps it for review.
+        auto d = DeviceSpokenTestAccess::create();
+        SyncEngine e; e.clearQueue(); e.dismissInterruptedSend();
+        SpokenSyncTestAccess::cleanupDevice(e, d.get());
+        SpokenSyncTestAccess::videoActive(e, "video-1");
+        e.onVideoSendDone("video-1", false, 0, "Failed to send video (StoreFull 0x200C): /tmp/pilot.mp4");
+        check(!QFile::exists(data + "/inflight-send") && e.interruptedSend().isEmpty(),
+              "a refused video clears its transfer marker");
+        SpokenSyncTestAccess::videoActive(e, "video-2");
+        e.onVideoSendDone("video-2", false, 0, "Failed to send video (IncompleteTransfer 0x02FF): /tmp/pilot.mp4; "
+                          "new object 33555750 could not be removed, inspect it before retrying");
+        check(QFile::exists(data + "/inflight-send") && e.interruptedSend() == "Pilot" && !e.isSyncing(),
+              "a video whose partial object could not be removed keeps its marker and stops the sync");
+        e.dismissInterruptedSend();
+        SpokenSyncTestAccess::videoActive(e, "video-cancel-uncertain");
+        e.cancelSync();
+        e.onVideoSendDone("video-cancel-uncertain", false, 0,
+                          "Failed to send video (IncompleteTransfer 0x02FF): /tmp/pilot.mp4; "
+                          "the device gave no usable answer and may hold an incomplete object");
+        check(QFile::exists(data + "/inflight-send") && e.interruptedSend() == "Pilot" && !e.isSyncing(),
+              "a cancelled video with an unanswered creation keeps its recovery marker");
+        e.dismissInterruptedSend();
+        SpokenSyncTestAccess::videoActive(e, "video-cancel-before-write");
+        e.cancelSync();
+        e.onVideoSendDone("video-cancel-before-write", false, 0, "Aborted: /tmp/pilot.mp4");
+        check(!QFile::exists(data + "/inflight-send") && e.interruptedSend().isEmpty() && !e.isSyncing(),
+              "a video cancelled before any write clears its marker without reporting an incomplete object");
+    }
+    {
+        // A connected Zune whose library could not be read is not an empty
+        // device: sync refuses instead of resending everything as missing.
+        auto d = DeviceSpokenTestAccess::create();
+        DeviceSpokenTestAccess::libraryUnreadable(*d, "ZMDB read incomplete: got 0 of 1000 bytes");
+        SyncEngine e; e.clearQueue(); e.dismissInterruptedSend();
+        SpokenSyncTestAccess::cleanupDevice(e, d.get());
+        int transfers = 0;
+        QObject::connect(&e, &SyncEngine::syncStateChanged, &e, [&] { if (e.isSyncing()) ++transfers; });
+        e.startSync();
+        check(!e.isSyncing() && transfers == 0 && e.lastError().contains("library could not be read"),
+              "sync refuses a Zune whose library could not be read");
+        DeviceSpokenTestAccess::libraryUnreadable(*d, QString());
+    }
+    {
         auto d = DeviceSpokenTestAccess::create();
         SyncEngine e; e.clearQueue(); e.dismissInterruptedSend();
         SpokenSyncTestAccess::cleanupDevice(e, d.get());
         QVariantList candidates{cleanupRow, cleanupTwo};
-        e.attachPodcastCleanup([&] { return candidates; });
+        e.attachPodcastCleanup([&](const QStringList &, bool) { return candidates; });
         auto live = cleanupRow;
         live["title"] = "Completed on device"; live["author"] = "Host";
         live["sourceKnown"] = true; live["playedKnown"] = true; live["played"] = true;

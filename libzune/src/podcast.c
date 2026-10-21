@@ -4,7 +4,6 @@
 #include "zune_internal.h"
 #include "mtp_text.h"
 #include <fcntl.h>
-#include <sys/mman.h>
 
 #define PODCAST_SERIES 0xba0b
 #define IS_PODCAST 0xda9c
@@ -15,7 +14,7 @@
 
 static int podcast_ready(ZuneDevice *dev)
 {
-    if (!dev || dev->disconnecting || dev->cancel_requested) {
+    if (!dev || ZUNE_FLAG_GET(dev->disconnecting) || ZUNE_FLAG_GET(dev->cancel_requested)) {
         zune_set_error("Podcast operation cancelled or device unavailable"); return 0;
     }
     return 1;
@@ -69,12 +68,12 @@ static char *podcast_read_text(ZuneDevice *dev, uint32_t id, uint16_t prop, int 
         }
     }
     if (!text) {
-        fprintf(stderr, "[libzune-podcast] unreadable text item=%u property=0x%04X array=%d bytes=%u\n", id, prop, array, size);
+        ZLOG(ZUNE_CHATTER_SHOUT, "libzune-podcast", "unreadable text item=%u property=0x%04X array=%d bytes=%u", id, prop, array, size);
         if (array && wire && size >= 4) {
-            uint32_t units = (uint32_t)wire[0] | ((uint32_t)wire[1]<<8) | ((uint32_t)wire[2]<<16) | ((uint32_t)wire[3]<<24);
+            uint32_t units = zune_le32(wire);
             unsigned trailing = 0;
             for (uint32_t pos = size; pos >= 6 && wire[pos-1] == 0 && wire[pos-2] == 0; pos -= 2) ++trailing;
-            fprintf(stderr, "[libzune-podcast] text array declared-units=%u trailing-zero-units=%u\n", units, trailing);
+            ZLOG(ZUNE_CHATTER_SHOUT, "libzune-podcast", "text array declared-units=%u trailing-zero-units=%u", units, trailing);
         }
     }
     free(wire);
@@ -93,18 +92,19 @@ void zune_free_podcast_series(ZunePodcastSeries *series, int count)
 
 int zune_get_podcast_series(ZuneDevice *dev, ZunePodcastSeries **out, int *count)
 {
+    zune_clear_error();
     if (out) *out = NULL;
     if (count) *count = 0;
-    if (!out || !count || !podcast_ready(dev)) return -1;
-    if (!dev->mtpz_authenticated) { zune_set_error("Podcast inventory requires successful MTPZ authentication"); return -1; }
+    if (!out || !count || !podcast_ready(dev)) return ZUNE_BLOWN;
+    if (!dev->mtpz_authenticated) { zune_set_error("Podcast inventory requires successful MTPZ authentication"); return ZUNE_BLOWN; }
     uint32_t *ids = NULL; int n = 0;
     if (mtp_get_object_handles(&dev->ptp, dev->storage_id, PODCAST_SERIES, 0, &ids, &n) != 0) {
-        free(ids); zune_set_error("Podcast series inventory failed"); return -1;
+        free(ids); zune_set_error("Podcast series inventory failed"); return ZUNE_BLOWN;
     }
-    if (n < 0 || n > 100000 || (n && !ids)) { free(ids); zune_set_error("Invalid podcast inventory size"); return -1; }
-    if (!n) { free(ids); return 0; }
+    if (n < 0 || n > 100000 || (n && !ids)) { free(ids); zune_set_error("Invalid podcast inventory size"); return ZUNE_BLOWN; }
+    if (!n) { free(ids); return ZUNE_OK; }
     ZunePodcastSeries *series = calloc((size_t)n, sizeof(*series));
-    if (!series) { free(ids); zune_set_error("Cannot allocate podcast inventory"); return -1; }
+    if (!series) { free(ids); zune_set_error("Cannot allocate podcast inventory"); return ZUNE_BLOWN; }
     for (int i = 0; i < n; ++i) {
         if (!podcast_ready(dev)) goto fail;
         series[i].item_id = ids[i];
@@ -115,9 +115,9 @@ int zune_get_podcast_series(ZuneDevice *dev, ZunePodcastSeries **out, int *count
         series[i].feed_url = podcast_read_text(dev, ids[i], SOURCE_URL, 1);
         if (!series[i].feed_url) goto fail;
     }
-    free(ids); *out = series; *count = n; return 0;
+    free(ids); *out = series; *count = n; return ZUNE_OK;
 fail:
-    free(ids); zune_free_podcast_series(series, n); return -1;
+    free(ids); zune_free_podcast_series(series, n); return ZUNE_BLOWN;
 }
 
 static int podcast_preflight(ZuneDevice *dev, uint16_t format, mtp_prop_entry_t *props, int count)
@@ -128,18 +128,10 @@ static int podcast_preflight(ZuneDevice *dev, uint16_t format, mtp_prop_entry_t 
     }
     for (int i = 0; i < count; ++i) {
         if (!podcast_ready(dev)) { free(supported); return -1; }
-        int found = 0;
-        for (int j = 0; j < n; ++j) found |= supported[j] == props[i].prop_code;
-        if (!found) {
+        if (!zune_prop_listed(props[i].prop_code, supported, n)) {
             free(supported); zune_set_error("Podcast property 0x%04X is not advertised", props[i].prop_code); return -1;
         }
-        uint8_t *data = NULL; uint32_t length = 0;
-        int result = mtp_get_prop_desc(&dev->ptp, props[i].prop_code, format, &data, &length);
-        int valid = result == 0 && data && length >= 5 &&
-            (data[0] | (data[1]<<8)) == props[i].prop_code &&
-            (data[2] | (data[3]<<8)) == props[i].data_type && data[4] == 1;
-        free(data);
-        if (!valid) {
+        if (!mtp_prop_desc_writable(&dev->ptp, props[i].prop_code, format, props[i].data_type)) {
             free(supported); zune_set_error("Podcast property 0x%04X has unavailable or incompatible descriptor", props[i].prop_code); return -1;
         }
     }
@@ -177,17 +169,22 @@ static int podcast_title_filename(const char *value, const char *title)
 /* Bounded, escaped metadata only. Never print source URLs or auth material. */
 static void podcast_log_filename(const char *value)
 {
-    fputs("[libzune-podcast] returned filename=\"", stderr);
+    /* 256 source bytes, each at most "\xNN", plus "..." */
+    char text[256 * 4 + 8];
+    size_t used = 0;
     if (value) {
         size_t i = 0;
         for (; value[i] && i < 256; ++i) {
             unsigned char c = (unsigned char)value[i];
-            if (c >= 32 && c < 127 && c != '\\' && c != '\"') fputc(c, stderr);
-            else fprintf(stderr, "\\x%02X", c);
+            if (c >= 32 && c < 127 && c != '\\' && c != '\"') text[used++] = (char)c;
+            else used += (size_t)snprintf(text + used, sizeof(text) - used, "\\x%02X", c);
         }
-        if (value[i]) fputs("...", stderr);
-    } else fputs("<unreadable>", stderr);
-    fputs("\"\n", stderr);
+        if (value[i]) { memcpy(text + used, "...", 3); used += 3; }
+        text[used] = '\0';
+        ZLOG(ZUNE_CHATTER_SHOUT, "libzune-podcast", "returned filename=\"%s\"", text);
+    } else {
+        ZLOG(ZUNE_CHATTER_SHOUT, "libzune-podcast", "returned filename=\"<unreadable>\"");
+    }
 }
 
 static int podcast_verify_properties(ZuneDevice *dev, uint32_t id, mtp_prop_entry_t *props, int count,
@@ -219,12 +216,12 @@ static int podcast_verify_properties(ZuneDevice *dev, uint32_t id, mtp_prop_entr
                     (native_episode && podcast_title_filename(value, title));
             if (native_episode && p->prop_code == ZUNE_OPC_SeriesName && value && !*value) same = 1;
             if (p->prop_code == 0xdc47 && value) same = podcast_date_readback(p->value.str, value);
-            if (!same) fprintf(stderr, "[libzune-podcast] text mismatch item=%u property=0x%04X expected-bytes=%zu actual-bytes=%zu\n",
+            if (!same) ZLOG(ZUNE_CHATTER_SHOUT, "libzune-podcast", "text mismatch item=%u property=0x%04X expected-bytes=%zu actual-bytes=%zu",
                                id, p->prop_code, p->value.str ? strlen(p->value.str) : 0, value ? strlen(value) : 0);
             if (!same && value && p->value.str) {
                 size_t at = 0;
                 while (value[at] && p->value.str[at] && value[at] == p->value.str[at]) ++at;
-                fprintf(stderr, "[libzune-podcast] first-difference=%zu expected-byte=%u actual-byte=%u\n",
+                ZLOG(ZUNE_CHATTER_SHOUT, "libzune-podcast", "first-difference=%zu expected-byte=%u actual-byte=%u",
                         at, (unsigned char)p->value.str[at], (unsigned char)value[at]);
             }
             if (!same && p->prop_code == MTP_OPC_ObjectFileName) podcast_log_filename(value);
@@ -241,7 +238,7 @@ static int podcast_verify_properties(ZuneDevice *dev, uint32_t id, mtp_prop_entr
             int same = result == 0 && data && size == expected_size && value == expected;
             if (native_episode && p->prop_code == MTP_OPC_MetaGenre && expected == 64 &&
                 result == 0 && data && size == 2 && value == 0) same = 1;
-            if (!same) fprintf(stderr, "[libzune-podcast] numeric mismatch item=%u property=0x%04X expected=%u actual=%u bytes=%u\n",
+            if (!same) ZLOG(ZUNE_CHATTER_SHOUT, "libzune-podcast", "numeric mismatch item=%u property=0x%04X expected=%u actual=%u bytes=%u",
                                id, p->prop_code, expected, value, size);
             free(data);
             if (!same) goto mismatch;
@@ -272,26 +269,27 @@ static int podcast_cleanup(ZuneDevice *dev, uint32_t id, uint32_t *out, const ch
     dev->ptp.last_response = original;
     zune_set_error("Podcast %s failed (0x%04X, %s); new item %u %s", stage, original, detail, id,
                    removed ? "removed" : "remains; inspect before retrying");
-    return removed ? ZUNE_PODCAST_FAILED_CLEANED : -1;
+    return removed ? ZUNE_PODCAST_FAILED_CLEANED : ZUNE_BLOWN;
 }
 
 int zune_forge_podcast_series(ZuneDevice *dev, uint32_t parent, const char *filename,
                              const char *name, const char *author, const char *feed, uint32_t *out)
 {
+    zune_clear_error();
     if (out) *out = 0;
-    if (!out || !podcast_ready(dev)) return -1;
-    if (!dev->mtpz_authenticated) { zune_set_error("Podcast writes require successful MTPZ authentication"); return -1; }
+    if (!out || !podcast_ready(dev)) return ZUNE_BLOWN;
+    if (!dev->mtpz_authenticated) { zune_set_error("Podcast writes require successful MTPZ authentication"); return ZUNE_BLOWN; }
     if (!parent || !podcast_filename_valid(filename, ".ser") || !podcast_text_valid(name, 1, 1) ||
         !podcast_text_valid(author, 0, 1) || !podcast_text_valid(feed, 1, 0)) {
-        zune_set_error("Invalid podcast series metadata or parent folder"); return -1;
+        zune_set_error("Invalid podcast series metadata or parent folder"); return ZUNE_BLOWN;
     }
     ZunePodcastSeries *series = NULL; int n = 0;
-    if (zune_get_podcast_series(dev, &series, &n) != 0) return -1;
+    if (zune_get_podcast_series(dev, &series, &n) != 0) return ZUNE_BLOWN;
     uint32_t match = 0; int matches = 0;
     for (int i = 0; i < n; ++i) if (!strcmp(series[i].feed_url, feed)) { match = series[i].item_id; ++matches; }
     zune_free_podcast_series(series, n);
-    if (matches > 1) { zune_set_error("Multiple device podcast series match this feed; no writes performed"); return -1; }
-    if (matches == 1) { *out = match; return 0; }
+    if (matches > 1) { zune_set_error("Multiple device podcast series match this feed; no writes performed"); return ZUNE_BLOWN; }
+    if (matches == 1) { *out = match; return ZUNE_OK; }
     mtp_prop_entry_t props[] = {
         {.prop_code=IS_PODCAST, .data_type=PTP_DTC_UINT8, .value.u8=1},
         {.prop_code=SERIES_FLAG, .data_type=PTP_DTC_UINT32, .value.u32=1},
@@ -300,15 +298,15 @@ int zune_forge_podcast_series(ZuneDevice *dev, uint32_t parent, const char *file
         {.prop_code=SOURCE_URL, .data_type=PTP_DTC_AUINT16, .value.str=(char *)feed},
         {.prop_code=MTP_OPC_Name, .data_type=PTP_DTC_STR, .value.str=(char *)name}
     };
-    if (podcast_preflight(dev, PODCAST_SERIES, props, 6) != 0) return -1;
+    if (podcast_preflight(dev, PODCAST_SERIES, props, 6) != 0) return ZUNE_BLOWN;
     uint32_t id = 0;
     if (mtp_send_object_prop_list(&dev->ptp, dev->storage_id, parent, PODCAST_SERIES, 0, props, 6, &id) != 0 ||
         !id || id == UINT32_MAX) {
-        zune_set_error("Podcast series creation failed or returned an invalid handle (0x%04X); inspect before retrying", dev->ptp.last_response); return -1;
+        zune_set_error("Podcast series creation failed or returned an invalid handle (0x%04X); inspect before retrying", dev->ptp.last_response); return ZUNE_BLOWN;
     }
     if (mtp_send_object(&dev->ptp, NULL, 0) != 0) return podcast_cleanup(dev, id, out, "series commit");
     if (podcast_verify_properties(dev, id, props, 6, 0) != 0) return podcast_cleanup(dev, id, out, "series readback");
-    *out = id; return 0;
+    *out = id; return ZUNE_OK;
 }
 
 static int podcast_date_valid(const char *s)
@@ -328,30 +326,13 @@ static int podcast_date_valid(const char *s)
     return day <= maximum;
 }
 
-/* The PTP layer already sends bounded bulk chunks and observes aborts. Map
- * the read-only source instead of allocating a second episode-sized buffer. */
-static int podcast_send_file(ZuneDevice *dev, const char *path, uint32_t length)
-{
-    int fd = open(path, O_RDONLY);
-    struct stat actual;
-    if (fd < 0) return -1;
-    if (fstat(fd, &actual) || !S_ISREG(actual.st_mode) || actual.st_size != length) {
-        close(fd); zune_set_error("Podcast source changed before upload"); return -1;
-    }
-    void *data = mmap(NULL, length, PROT_READ, MAP_PRIVATE, fd, 0);
-    if (data == MAP_FAILED) { close(fd); zune_set_error("Cannot map podcast source"); return -1; }
-    int result = mtp_send_object(&dev->ptp, data, length);
-    munmap(data, length);
-    close(fd);
-    return result;
-}
-
 int zune_smuggle_podcast_episode(ZuneDevice *dev, uint32_t parent, const char *path,
                                  const ZunePodcastEpisodeInput *ep, uint32_t *out)
 {
+    zune_clear_error();
     if (out) *out = 0;
-    if (!out || !podcast_ready(dev)) return -1;
-    if (!dev->mtpz_authenticated) { zune_set_error("Podcast writes require successful MTPZ authentication"); return -1; }
+    if (!out || !podcast_ready(dev)) return ZUNE_BLOWN;
+    if (!dev->mtpz_authenticated) { zune_set_error("Podcast writes require successful MTPZ authentication"); return ZUNE_BLOWN; }
     struct stat st;
     if (!ep || !parent || !path || stat(path, &st) != 0 || !S_ISREG(st.st_mode) || st.st_size <= 0 ||
         (uint64_t)st.st_size > UINT32_MAX || !ep->series_id ||
@@ -359,37 +340,37 @@ int zune_smuggle_podcast_episode(ZuneDevice *dev, uint32_t parent, const char *p
         !podcast_text_valid(ep->author, 0, 1) || !podcast_text_valid(ep->series_name, 1, 1) ||
         !podcast_text_valid(ep->source_url, 1, 0) || !podcast_text_valid(ep->description, 0, 0) ||
         !podcast_date_valid(ep->date_authored)) {
-        zune_set_error("Invalid podcast episode input; supply a prepared MP3 under 4 GiB"); return -1;
+        zune_set_error("Invalid podcast episode input; supply a prepared MP3 under 4 GiB"); return ZUNE_BLOWN;
     }
     /* Confirm the selected series still exists before making an episode. */
     ZunePodcastSeries *series = NULL; int series_count = 0, found = 0;
-    if (zune_get_podcast_series(dev, &series, &series_count) != 0) return -1;
+    if (zune_get_podcast_series(dev, &series, &series_count) != 0) return ZUNE_BLOWN;
     for (int i = 0; i < series_count; ++i)
         if (series[i].item_id == ep->series_id && !strcmp(series[i].name, ep->series_name)) found = 1;
     zune_free_podcast_series(series, series_count);
-    if (!found) { zune_set_error("Selected podcast series no longer matches the device"); return -1; }
+    if (!found) { zune_set_error("Selected podcast series no longer matches the device"); return ZUNE_BLOWN; }
     /* Exact URL + series reuse within the caller's episode folder. Never
      * collapse same-title episodes. Unreadable inventory blocks creation. */
     uint32_t *ids = NULL; int n = 0, matches = 0; uint32_t match = 0;
     if (mtp_get_object_handles(&dev->ptp, dev->storage_id, MTP_OFC_MP3, parent, &ids, &n) != 0) {
-        free(ids); zune_set_error("Podcast episode inventory failed"); return -1;
+        free(ids); zune_set_error("Podcast episode inventory failed"); return ZUNE_BLOWN;
     }
-    if (n < 0 || n > 100000 || (n && !ids)) { free(ids); zune_set_error("Invalid episode inventory size"); return -1; }
+    if (n < 0 || n > 100000 || (n && !ids)) { free(ids); zune_set_error("Invalid episode inventory size"); return ZUNE_BLOWN; }
     for (int i = 0; i < n; ++i) {
-        if (!podcast_ready(dev)) { free(ids); return -1; }
+        if (!podcast_ready(dev)) { free(ids); return ZUNE_BLOWN; }
         uint8_t *data = NULL; uint32_t size = 0;
         int r = mtp_get_object_prop_value(&dev->ptp, ids[i], SERIES_HANDLE, &data, &size);
-        if (r || !data || size != 4) { free(data); free(ids); zune_set_error("Unreadable episode series link"); return -1; }
-        uint32_t series_id = (uint32_t)data[0] | ((uint32_t)data[1]<<8) | ((uint32_t)data[2]<<16) | ((uint32_t)data[3]<<24);
+        if (r || !data || size != 4) { free(data); free(ids); zune_set_error("Unreadable episode series link"); return ZUNE_BLOWN; }
+        uint32_t series_id = zune_le32(data);
         free(data);
         if (series_id != ep->series_id) continue;
         char *url = podcast_read_text(dev, ids[i], SOURCE_URL, 1);
-        if (!url) { free(ids); return -1; }
+        if (!url) { free(ids); return ZUNE_BLOWN; }
         if (!strcmp(url, ep->source_url)) { match = ids[i]; ++matches; }
         free(url);
     }
     free(ids);
-    if (matches > 1) { zune_set_error("Multiple device episodes match this series and URL"); return -1; }
+    if (matches > 1) { zune_set_error("Multiple device episodes match this series and URL"); return ZUNE_BLOWN; }
     if (matches == 1) {
         mtp_object_info_t info = {0};
         int r = mtp_get_object_info(&dev->ptp, match, &info);
@@ -400,9 +381,9 @@ int zune_smuggle_podcast_episode(ZuneDevice *dev, uint32_t parent, const char *p
             {.prop_code=MTP_OPC_MetaGenre,.data_type=PTP_DTC_UINT16,.value.u16=64}
         };
         if (!same_size || podcast_verify_properties(dev, match, verify, 2, 0) != 0) {
-            zune_set_error("Existing podcast episode conflicts with this source; no writes performed"); return -1;
+            zune_set_error("Existing podcast episode conflicts with this source; no writes performed"); return ZUNE_BLOWN;
         }
-        *out = match; return 0;
+        *out = match; return ZUNE_OK;
     }
     mtp_prop_entry_t props[] = {
         {.prop_code=SOURCE_URL,.data_type=PTP_DTC_AUINT16,.value.str=(char *)ep->source_url},
@@ -419,77 +400,86 @@ int zune_smuggle_podcast_episode(ZuneDevice *dev, uint32_t parent, const char *p
         {.prop_code=0xdc47,.data_type=PTP_DTC_STR,.value.str=(char *)(ep->date_authored ? ep->date_authored : "")}
     };
     int count = ep->date_authored && *ep->date_authored ? 12 : 11;
-    if (podcast_preflight(dev, MTP_OFC_MP3, props, count) != 0) return -1;
+    if (podcast_preflight(dev, MTP_OFC_MP3, props, count) != 0) return ZUNE_BLOWN;
+    /* Strict: an unanswered creation is never retried, so a lost response
+     * cannot produce a second episode. */
+    zune_upload_t up = { .kind = "podcast episode", .path = path, .size = (uint32_t)st.st_size,
+                         .parent = parent, .format = MTP_OFC_MP3, .props = props, .nprops = count,
+                         .strict = 1 };
     uint32_t id = 0;
-    if (mtp_send_object_prop_list(&dev->ptp, dev->storage_id, parent, MTP_OFC_MP3, (uint64_t)st.st_size, props, count, &id) != 0 ||
-        !id || id == UINT32_MAX) {
-        zune_set_error("Podcast episode creation failed or returned an invalid handle (0x%04X); inspect before retrying", dev->ptp.last_response); return -1;
+    int sent = zune_smuggle_core(dev, &up, &id);
+    if (sent == ZUNE_UPLOAD_REMOVED) {
+        char detail[512];
+        snprintf(detail, sizeof(detail), "%s", zune_get_error() ? zune_get_error() : "");
+        zune_set_error("%s; the new episode was removed", detail);
+        return ZUNE_PODCAST_FAILED_CLEANED;
     }
-    if (podcast_send_file(dev, path, (uint32_t)st.st_size) != 0) return podcast_cleanup(dev, id, out, "episode upload");
+    if (sent == ZUNE_UPLOAD_ORPHANED) { *out = id; return ZUNE_BLOWN; }   /* inspect before retrying */
+    if (sent != ZUNE_UPLOAD_SENT) return ZUNE_BLOWN;
     if (podcast_verify_properties(dev, id, props, count, 1) != 0) return podcast_cleanup(dev, id, out, "episode readback");
     mtp_object_info_t info = {0};
     int r = mtp_get_object_info(&dev->ptp, id, &info);
     int correct = !r && info.object_format == MTP_OFC_MP3 && info.object_compressed_size == (uint32_t)st.st_size;
     mtp_free_object_info(&info);
     if (!correct) return podcast_cleanup(dev, id, out, "episode size readback");
-    *out = id; return 0;
+    *out = id; return ZUNE_OK;
 }
 
 int zune_find_podcast_episode(ZuneDevice *dev, const char *feed, const char *url,
                               uint32_t *parent, uint32_t *show, uint32_t *episode)
 {
+    zune_clear_error();
     if (parent) *parent = 0;
     if (show) *show = 0;
     if (episode) *episode = 0;
     if (!parent || !show || !episode || !podcast_ready(dev) ||
-        !podcast_text_valid(feed, 1, 0) || !podcast_text_valid(url, 1, 0)) return -1;
+        !podcast_text_valid(feed, 1, 0) || !podcast_text_valid(url, 1, 0)) return ZUNE_BLOWN;
     ZunePodcastSeries *series = NULL;
     int count = 0, matches = 0;
     uint32_t sid = 0, folder = 0, eid = 0;
-    if (zune_get_podcast_series(dev, &series, &count)) return -1;
+    if (zune_get_podcast_series(dev, &series, &count)) return ZUNE_BLOWN;
     for (int i = 0; i < count; ++i)
         if (!strcmp(series[i].feed_url, feed)) { sid = series[i].item_id; ++matches; }
     zune_free_podcast_series(series, count);
-    if (matches > 1) { zune_set_error("Multiple podcast series match this feed"); return -1; }
-    if (!sid) return 0;
+    if (matches > 1) { zune_set_error("Multiple podcast series match this feed"); return ZUNE_BLOWN; }
+    if (!sid) return ZUNE_OK;
     mtp_object_info_t info = {0};
     int ret = mtp_get_object_info(&dev->ptp, sid, &info);
     folder = info.parent_object;
     int valid = !ret && info.object_format == PODCAST_SERIES && folder && folder != UINT32_MAX;
     mtp_free_object_info(&info);
-    if (!valid) { zune_set_error("Cannot establish podcast series folder"); return -1; }
+    if (!valid) { zune_set_error("Cannot establish podcast series folder"); return ZUNE_BLOWN; }
     uint32_t *ids = NULL;
     int n = 0;
     if (mtp_get_object_handles(&dev->ptp, dev->storage_id, MTP_OFC_MP3, folder, &ids, &n) ||
         n < 0 || n > 100000 || (n && !ids)) {
-        free(ids); zune_set_error("Podcast episode inventory failed"); return -1;
+        free(ids); zune_set_error("Podcast episode inventory failed"); return ZUNE_BLOWN;
     }
     matches = 0;
     for (int i = 0; i < n; ++i) {
         uint8_t *data = NULL; uint32_t size = 0;
-        if (!podcast_ready(dev)) { free(ids); return -1; }
+        if (!podcast_ready(dev)) { free(ids); return ZUNE_BLOWN; }
         ret = mtp_get_object_prop_value(&dev->ptp, ids[i], SERIES_HANDLE, &data, &size);
         if (ret || !data || size != 4) {
-            free(data); free(ids); zune_set_error("Unreadable podcast series link"); return -1;
+            free(data); free(ids); zune_set_error("Unreadable podcast series link"); return ZUNE_BLOWN;
         }
-        uint32_t linked = (uint32_t)data[0] | ((uint32_t)data[1]<<8) |
-                          ((uint32_t)data[2]<<16) | ((uint32_t)data[3]<<24);
+        uint32_t linked = zune_le32(data);
         free(data);
         if (linked != sid) continue;
         char *source = podcast_read_text(dev, ids[i], SOURCE_URL, 1);
-        if (!source) { free(ids); return -1; }
+        if (!source) { free(ids); return ZUNE_BLOWN; }
         int same = !strcmp(source, url);
         free(source);
         if (!same) continue;
         mtp_prop_entry_t classification = {.prop_code=MTP_OPC_MetaGenre,
             .data_type=PTP_DTC_UINT16, .value.u16=64};
-        if (podcast_verify_properties(dev, ids[i], &classification, 1, 0)) { free(ids); return -1; }
+        if (podcast_verify_properties(dev, ids[i], &classification, 1, 0)) { free(ids); return ZUNE_BLOWN; }
         eid = ids[i]; ++matches;
     }
     free(ids);
-    if (matches > 1) { zune_set_error("Multiple podcast episodes match this source"); return -1; }
+    if (matches > 1) { zune_set_error("Multiple podcast episodes match this source"); return ZUNE_BLOWN; }
     *parent = folder; *show = sid; *episode = eid;
-    return 0;
+    return ZUNE_OK;
 }
 
 static int podcast_series_by_id(const void *a, const void *b)
@@ -529,6 +519,7 @@ void zune_free_podcast_episode_sources(ZunePodcastEpisodeSource *sources, int co
 
 int zune_get_podcast_episode_sources(ZuneDeviceHandle dev, ZunePodcastEpisodeSource **out, int *count)
 {
+    zune_clear_error();
     ZunePodcastSeries *series = NULL;
     ZunePodcastEpisodeSource *result = NULL;
     uint32_t *parents = NULL, *folders = NULL, *ids = NULL;
@@ -539,11 +530,11 @@ int zune_get_podcast_episode_sources(ZuneDeviceHandle dev, ZunePodcastEpisodeSou
         (dev->device_family != ZUNE_FAMILY_KEEL && dev->device_family != ZUNE_FAMILY_PAVO &&
          dev->device_family != ZUNE_FAMILY_DRACO)) {
         zune_set_error("Podcast source inventory requires an authenticated active Zune 30, 80/120 or HD");
-        return -1;
+        return ZUNE_BLOWN;
     }
 #define SOURCE_CHECK(ok, why) do { if (!(ok)) { zune_set_error("%s", why); goto fail; } } while (0)
-    if (zune_get_podcast_series(dev, &series, &series_count)) return -1;
-    if (!series_count) return 0;
+    if (zune_get_podcast_series(dev, &series, &series_count)) return ZUNE_BLOWN;
+    if (!series_count) return ZUNE_OK;
     for (int i = 0; i < series_count; ++i)
         SOURCE_CHECK(series[i].item_id && series[i].item_id != UINT32_MAX &&
                      series[i].feed_url && *series[i].feed_url, "Invalid podcast series identity");
@@ -583,7 +574,7 @@ int zune_get_podcast_episode_sources(ZuneDeviceHandle dev, ZunePodcastEpisodeSou
             int rc = mtp_get_object_prop_value(&dev->ptp, ids[j], SERIES_HANDLE, &wire, &length);
             uint32_t sid = 0;
             if (!rc && wire && length == 4)
-                sid = (uint32_t)wire[0] | (uint32_t)wire[1]<<8 | (uint32_t)wire[2]<<16 | (uint32_t)wire[3]<<24;
+                sid = zune_le32(wire);
             int valid = !rc && wire && length == 4;
             free(wire);
             SOURCE_CHECK(valid, "Unreadable podcast series link");
@@ -629,11 +620,11 @@ int zune_get_podcast_episode_sources(ZuneDeviceHandle dev, ZunePodcastEpisodeSou
     if (!podcast_ready(dev)) goto fail;
     free(parents); free(folders); zune_free_podcast_series(series, series_count);
     *out = result; *count = written;
-    return 0;
+    return ZUNE_OK;
 fail:
     free(ids); free(parents); free(folders);
     zune_free_podcast_series(series, series_count);
     zune_free_podcast_episode_sources(result, written);
-    return -1;
+    return ZUNE_BLOWN;
 #undef SOURCE_CHECK
 }

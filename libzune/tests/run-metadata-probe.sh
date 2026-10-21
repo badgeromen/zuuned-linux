@@ -15,7 +15,11 @@ for entry in mp3:libmp3lame flac:flac m4a:aac ogg:libvorbis opus:libopus; do
     ffmpeg "${common[@]}" -c:a "$codec" "${tags[@]}" "$fixture_dir/tagged.$extension"
 done
 ffmpeg "${common[@]}" -c:a flac "$fixture_dir/missing.flac"
-ffmpeg "${common[@]}" -c:a libvorbis -metadata $'title= \t\n ' -metadata $'artist=\u00a0\u3000' \
+# U+00A0 and U+3000 as explicit UTF-8 bytes: bash's $'\u...' expands to the
+# literal text "\u00A0" in a non-UTF-8 locale (C/POSIX, as in bare CI
+# containers), which made this fixture locale-dependent.
+nbsp_ideographic=$(printf '\302\240\343\200\200')
+ffmpeg "${common[@]}" -c:a libvorbis -metadata $'title= \t\n ' -metadata "artist=$nbsp_ideographic" \
     -metadata 'album_artist=   ' -metadata 'album= ' -metadata 'genre=  ' \
     -metadata 'track= ' -metadata 'disc= ' -metadata 'date= ' "$fixture_dir/blank.ogg"
 ffmpeg "${common[@]}" -c:a libopus -metadata title='Valid title' -metadata 'track=-1/12' \
@@ -44,7 +48,7 @@ head -c 32 "$fixture_dir/tagged.ogg" > "$fixture_dir/truncated.ogg"
 
 read -r -a av_flags <<< "$(pkg-config --cflags --libs libavformat libavutil)"
 compile=(-std=c99 -D_GNU_SOURCE -O1 -g -Wall -Wextra -Wpedantic -Wno-unused-function
-    -ffunction-sections -fdata-sections -fsanitize=address,undefined -fno-omit-frame-pointer
+    -ffunction-sections -fdata-sections -fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer
     -Iinclude -Isrc -Wl,--gc-sections)
 ${CC:-cc} "${compile[@]}" -DUSE_LIBAV tests/metadata_probe.c "${av_flags[@]}" -o "$fixture_dir/probe-native"
 ${CC:-cc} "${compile[@]}" tests/metadata_probe.c -o "$fixture_dir/probe-fallback"

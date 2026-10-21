@@ -22,6 +22,9 @@ Popup {
     property var selectedArtworkMatch: null
     property string selectedArt: ""
     property bool artReset: false
+    property var hdArtDraft: ({})
+    property bool hdArtChanged: false
+    property int hdArtGeneration: 0
     property string artSource: ""
     property var artUrls: []
     property var results: []
@@ -55,7 +58,7 @@ Popup {
     readonly property bool squareArt: isMusic || kind === "genre"
     readonly property bool bulk: (current.ids || []).length > 1
     readonly property bool compact: width < Theme.customizeCompactAt
-    readonly property bool dirty: identityMode !== "keep" || selectedArt !== "" || artReset || selectedArtworkMatch !== null
+    readonly property bool dirty: identityMode !== "keep" || selectedArt !== "" || artReset || selectedArtworkMatch !== null || hdArtChanged
     readonly property var artworkDiscovery: {
         if (!isMusic) return ({})
         const states = kind === "album" ? service.albumArtworkStatus : service.artistArtworkStatus
@@ -98,6 +101,7 @@ Popup {
     function openFor(ctx) {
         if (busy) return
         ctx = service.customizeContext(ctx.kind, ctx)
+        hdArtGeneration++
         current = Object.assign({}, ctx)
         kind = ctx.kind
         identityFields = {
@@ -119,6 +123,16 @@ Popup {
         selectedArtworkMatch = null
         selectedArt = ""
         artReset = false
+        const hd = ctx.hdArtistArt || ({})
+        const fileUrl = path => path ? "file://" + path.split("/").map(encodeURIComponent).join("/") : ""
+        hdArtDraft = {
+            expectedRevision: hd.revision || "",
+            background: fileUrl((hd.background || {}).original),
+            thumbnail: fileUrl((hd.thumbnail || {}).original),
+            gallery: (hd.gallery || []).map(item => fileUrl(item.original)),
+            biography: hd.biography || ""
+        }
+        hdArtChanged = false
         errorMessage = ""
         artError = ""
         searchError = ""
@@ -359,7 +373,8 @@ Popup {
             tmdbId: selectedMatch ? selectedMatch.tmdbId : 0,
             musicIdentity: isMusic && selectedMatch ? selectedMatch : ({}),
             artworkMatch: selectedArtworkMatch,
-            tv: identityFields.type === "tv", artUrl: selectedArt, resetArt: artReset
+            tv: identityFields.type === "tv", artUrl: selectedArt, resetArt: artReset,
+            hdArtChanged: kind === "artist" && hdArtChanged, hdArtistArt: hdArtDraft
         })
     }
     function scrollCovers(direction) {
@@ -367,6 +382,7 @@ Popup {
                                     coverStrip.contentX + direction * (Theme.customizeThumbSize + Theme.spaceLg) * 2))
     }
     onClosed: {
+        hdArtGeneration++
         artRequest = ""; identityRequest = ""
         clearArtCache()
         artLoading = false; searching = false
@@ -672,7 +688,9 @@ Popup {
                         id: pivots
                         spacing: Theme.spaceXxl
                         Repeater {
-                            model: [{label:"identity",value:"ident"},{label:"artwork",value:"art"}]
+                            model: sheet.kind === "artist"
+                                ? [{label:"identity",value:"ident"},{label:"artwork",value:"art"},{label:"Zune HD",value:"hd"}]
+                                : [{label:"identity",value:"ident"},{label:"artwork",value:"art"}]
                             Button {
                                 id: pivot
                                 required property var modelData
@@ -706,7 +724,7 @@ Popup {
                 }
                 StackLayout {
                     Layout.fillWidth: true; Layout.fillHeight: true
-                    currentIndex: sheet.tab === "ident" ? 0 : 1
+                    currentIndex: sheet.tab === "ident" ? 0 : sheet.tab === "hd" ? 2 : 1
                     // Identity: video matching and manual liner notes.
                     Flickable {
                         id: identityScroll
@@ -1200,6 +1218,12 @@ Popup {
                                 wrapMode: Text.WordWrap
                             }
                         }
+                    }
+                    HdArtistArtEditor {
+                        draft: sheet.hdArtDraft
+                        busy: sheet.busy
+                        contextVersion: sheet.hdArtGeneration
+                        onEdited: next => { sheet.hdArtDraft = next; sheet.hdArtChanged = true }
                     }
                 }
             }

@@ -32,6 +32,8 @@ set_source_files_properties("${ZUUNED_SHARED_QML}/GradientText.qml" PROPERTIES
     QT_RESOURCE_ALIAS GradientText.qml)
 set_source_files_properties("${ZUUNED_SHARED_QML}/fonts/PermanentMarker-Regular.ttf" PROPERTIES
     QT_RESOURCE_ALIAS fonts/PermanentMarker-Regular.ttf)
+set_source_files_properties("${ZUUNED_SHARED_QML}/fonts/ZuunedSans-Regular.ttf" PROPERTIES
+    QT_RESOURCE_ALIAS fonts/ZuunedSans-Regular.ttf)
 set_source_files_properties("${ZUUNED_SHARED_QML}/fonts/SpecimenAlien-Regular.ttf" PROPERTIES
     QT_RESOURCE_ALIAS fonts/SpecimenAlien-Regular.ttf)
 
@@ -48,4 +50,5 @@ qt_add_qml_module(zuuned-artwork-preview
     RESOURCES
         "${ZUUNED_SHARED_QML}/fonts/PermanentMarker-Regular.ttf"
         "${ZUUNED_SHARED_QML}/fonts/SpecimenAlien-Regular.ttf"
+        "${ZUUNED_SHARED_QML}/fonts/ZuunedSans-Regular.ttf"
 )

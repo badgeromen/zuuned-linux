@@ -15,12 +15,18 @@ int main(int argc, char **argv)
         if (!passed) ++failures;
     };
     const bool restore = app.arguments().contains("--restore");
+    if (app.arguments().contains("--sans-restore")) {
+        check(settings.headerFont() == "zuunedSans", "Zuuned Sans survives a fresh process");
+        return failures ? 1 : 0;
+    }
     if (restore) {
         check(settings.headerFont() == "specimenAlien", "replacement font survives restart");
         check(settings.artworkStyle() == "halftone" && settings.artworkCleanDetail() == 73
               && settings.artworkHalftoneTexture() == 46 && settings.artworkHalftoneDotSize() == 62
               && settings.artworkHalftoneMonochrome() && settings.artworkWornTexture() == 29,
               "all look preferences survive a fresh process");
+        settings.setHeaderFont("zuunedSans");
+        check(settings.headerFont() == "zuunedSans", "third display font can be selected");
         return failures ? 1 : 0;
     }
 
