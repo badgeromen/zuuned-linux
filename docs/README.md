@@ -1,6 +1,6 @@
 # Documentation guide
 
-Updated for the 0.2.0 release candidate on October 14, 2026. Application source
+Updated for the 0.2.1 release candidate on October 21, 2026. Application source
 and downloads live at [badgeromen/zuuned-linux](https://github.com/badgeromen/zuuned-linux);
 shared protocol development lives at [badgeromen/libzune](https://github.com/badgeromen/libzune).
 This application snapshot includes libzune as ordinary source files.
@@ -19,6 +19,13 @@ This application snapshot includes libzune as ordinary source files.
 | Understand licensing scope | [COPYING](../COPYING.md) |
 
 ## Source versus downloadable versions
+
+The [0.2.1 candidate notes](releases/RELEASE_0.2.1.md) cover large podcast feeds,
+libzune 0.3.0 hardening and the additional Zuuned Sans font. This update targets
+x86_64; the previous ARM64 download remains at 0.2.0. The
+[HD pull test](releases/TESTER_HARDENING_2026-10-21.md#hd-device-to-library-pulls-in-the-normal-profile)
+records the video-import duplicate/count issue now in the
+[backlog](FEATURE_COMPLETION.md#backlog-device-video-imports-and-duplicate-counts).
 
 The [0.2.0 candidate notes](releases/RELEASE_0.2.0.md) cover podcasts, audiobooks,
 ARM64 packaging, the compact playback UI and Zune 80/120 spoken-media fixes.
